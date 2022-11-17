@@ -1,53 +1,74 @@
+from enum import Enum
 from inspect import iscoroutinefunction
-from typing import TypeVar, Callable, Optional, Iterable, AsyncIterable, List, Any, Awaitable
+from typing import TypeVar, Callable, Optional, Iterable, AsyncIterable, List, Any, Awaitable, Union, Dict
 
 T = TypeVar('T')
 U = TypeVar('U')
+
 Predicate = Callable[[T], bool]
-Filter = Callable[[T], T]
+Filterer = Callable[[T], T]
+Accumulator = Callable[[T], Union[T, U]]
 Mapper = Callable[[T], Optional[U]]
-Chainable = Callable[[Optional[Any]], Optional[Any]]
 
 
 class StreamInterrupt(Exception):
     pass
 
 
+class IntermediaryType(Enum):
+    FILTERER, MAPPER = range(0, 2)
+
+
+class Intermediary():
+    def __init__(self, fn: Callable, type: IntermediaryType) -> None:
+        self.fn = fn
+        self.type = type
+
+
 class Stream:
     def __init__(self, iterable: Iterable[Any]) -> None:
         self._iterable: Iterable[Any] = iterable
-        self._chain: List[Chainable] = []
+        self._chain: List[Intermediary] = []
 
-    def filter(self, predicate: Predicate) -> Filter:
-        if iscoroutinefunction(predicate):
-            async def fn(x: T) -> T:
-                if await predicate(x):
-                    return x
-                raise StreamInterrupt
-        else:
-            async def fn(x: T) -> T:
-                if predicate(x):
-                    return x
-                raise StreamInterrupt
-        self._chain.append(fn)
+    # Intermediaries
+    def filter(self, predicate: Predicate) -> Filterer:
+        self._chain.append(Intermediary(predicate, IntermediaryType.FILTERER))
         return self
 
     def map(self, mapper: Mapper) -> Mapper:
-        if iscoroutinefunction(mapper):
-            async def fn(x: T) -> U:
-                return await mapper(x)
-        else:
-            async def fn(x: T) -> U:
-                return mapper(x)
-        self._chain.append(fn)
+        self._chain.append(Intermediary(mapper, IntermediaryType.MAPPER))
         return self
 
-    def _compose(self, *funcs: Chainable) -> Awaitable:
+    def _compose(self, *intermediaries: Intermediary) -> Awaitable:
         async def apply(x):
-            for func in funcs:
-                x = await func(x)
+            for intermediary in intermediaries:
+                if intermediary.type == IntermediaryType.FILTERER:
+                    if iscoroutinefunction(intermediary.fn):
+                        keep = await intermediary.fn(x)
+                    else:
+                        keep = intermediary.fn(x)
+                    if not keep:
+                        raise StreamInterrupt
+                elif intermediary.type == IntermediaryType.MAPPER:
+                    if iscoroutinefunction(intermediary.fn):
+                        x = await intermediary.fn(x)
+                    else:
+                        x = intermediary.fn(x)
+                else:
+                    raise RuntimeError('Unknown intermediary type')
             return x
         return apply
+
+    # Terminals
+    async def reduce(self, identity: Union[T, U], accumulator: Accumulator) -> Union[T, U]:
+        composition = self._compose(*self._chain)
+        for n in self._iterable:
+            try:
+                value = await composition(n)
+            except StreamInterrupt:
+                next
+            identity = accumulator(identity, value)
+        return identity
 
     async def collect(self) -> AsyncIterable[Optional[Any]]:
         composition = self._compose(*self._chain)
@@ -60,4 +81,3 @@ class Stream:
 
 def stream(iterable: Iterable[T]):
     return Stream(iterable)
-

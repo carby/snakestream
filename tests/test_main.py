@@ -12,6 +12,12 @@ int_2_letter = {
     5: 'e',
 }
 
+coords = [
+    {'x': 1, 'y': 5},
+    {'x': 2, 'y': 6},
+    {'x': 3, 'y': 7},
+]
+
 
 async def slow_predicate(x: int) -> bool:
     await asyncio.sleep(1)
@@ -34,6 +40,14 @@ async def test_chained_filters() -> None:
         pass
     else:
         assert(1 == 0)
+
+@pytest.mark.asyncio
+async def test_reducer() -> None:
+    # when
+    it = stream([1, 2, 3, 4, 5, 6]) \
+        .reduce(0, lambda x, y: x + y)
+    # then
+    assert(await it == 21)
 
 
 @pytest.mark.asyncio
