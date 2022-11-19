@@ -19,8 +19,8 @@ coords = [
 ]
 
 
-async def slow_predicate(x: int) -> bool:
-    await asyncio.sleep(1)
+async def async_predicate(x: int) -> bool:
+    await asyncio.sleep(0.01)
     return x < 3
 
 
@@ -90,7 +90,7 @@ async def test_mixed_chain() -> None:
 async def test_async_function() -> None:
     # when
     it = stream([1, 2, 3, 4]) \
-        .filter(slow_predicate) \
+        .filter(async_predicate) \
         .collect()
 
     # then
