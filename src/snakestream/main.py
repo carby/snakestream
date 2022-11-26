@@ -58,6 +58,39 @@ class Stream:
         self._chain.append(fn)
         return self
 
+
+    def flat_map(self, flat_mapper: Mapper) -> Mapper:
+        async def fn(iterable: Iterable[Any]) -> Awaitable:
+            if isinstance(iterable, AsyncGenerator):
+                async for i in iterable:
+                    if isinstance(i, List):
+                        for j in i:
+                            if iscoroutinefunction(flat_mapper):
+                                yield await flat_mapper(j)
+                            else:
+                                yield flat_mapper(j)
+                    else:
+                        if iscoroutinefunction(flat_mapper):
+                            yield await flat_mapper(i)
+                        else:
+                            yield flat_mapper(i)
+            else:
+                for i in iterable:
+                    if isinstance(i, List):
+                        for j in i:
+                            if iscoroutinefunction(flat_mapper):
+                                yield await flat_mapper(j)
+                            else:
+                                yield flat_mapper(j)
+                    else:
+                        if iscoroutinefunction(flat_mapper):
+                            yield await flat_mapper(i)
+                        else:
+                            yield flat_mapper(i)
+        self._chain.append(fn)
+        return self
+
+
     def _compose(self, intermediaries: List[Awaitable], iterable: Iterable[Any]) -> Awaitable:
         if len(intermediaries) == 0:
             return iterable

@@ -112,3 +112,22 @@ async def test_async_function() -> None:
         pass
     else:
         assert(1 == 0)
+@pytest.mark.asyncio
+async def test_flat_map() -> None:
+    # when
+    it = stream([[1, 2], [3, 4], 5]) \
+        .flat_map(lambda x: x) \
+        .collect()
+
+    # then
+    assert(await it.__anext__() == 1)
+    assert(await it.__anext__() == 2)
+    assert(await it.__anext__() == 3)
+    assert(await it.__anext__() == 4)
+    assert(await it.__anext__() == 5)
+    try:
+        await it.__anext__()
+    except StopAsyncIteration:
+        pass
+    else:
+        assert(1 == 0)
