@@ -12,6 +12,8 @@ int_2_letter = {
     5: 'e',
 }
 
+letter_2_int = {v: k for k, v in int_2_letter.items()}
+
 coords = [
     {'x': 1, 'y': 5},
     {'x': 2, 'y': 6},
@@ -49,6 +51,14 @@ async def test_reducer() -> None:
     # then
     assert(await it == 21)
 
+@pytest.mark.asyncio
+async def test_mixed_chain_with_reducer_terminal() -> None:
+    # when
+    it = stream(['a', 'b', 'c', 'd']) \
+        .map(lambda x: letter_2_int[x]) \
+        .reduce(0, lambda x, y: x + y)
+    # then
+    assert(await it == 10)
 
 @pytest.mark.asyncio
 async def test_map() -> None:
