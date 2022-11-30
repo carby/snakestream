@@ -1,6 +1,7 @@
 from enum import Enum
 from inspect import iscoroutinefunction
-from typing import TypeVar, Callable, Optional, Iterable, AsyncIterable, List, Any, Awaitable, Union, Dict, AsyncGenerator
+from typing import TypeVar, Callable, Optional, Iterable, AsyncIterable, List, Any, Awaitable, Union, Dict, \
+    AsyncGenerator
 
 T = TypeVar('T')
 U = TypeVar('U')
@@ -9,6 +10,7 @@ Predicate = Callable[[T], bool]
 Filterer = Callable[[T], T]
 Accumulator = Callable[[T], Union[T, U]]
 Mapper = Callable[[T], Optional[U]]
+
 
 async def _normalize_iterator(iterable: Iterable[Any]) -> Awaitable:
     if isinstance(iterable, AsyncGenerator):
@@ -24,7 +26,6 @@ class Stream:
         self._iterable: Iterable[Any] = _normalize_iterator(iterable)
         self._chain: List[Awaitable] = []
 
-
     # Intermediaries
     def filter(self, predicate: Predicate) -> Filterer:
         async def fn(iterable: Iterable[Any]) -> Awaitable:
@@ -36,9 +37,9 @@ class Stream:
 
                 if keep:
                     yield i
+
         self._chain.append(fn)
         return self
-
 
     def map(self, mapper: Mapper) -> Mapper:
         async def fn(iterable: Iterable[Any]) -> Awaitable:
@@ -47,9 +48,9 @@ class Stream:
                     yield await mapper(i)
                 else:
                     yield mapper(i)
+
         self._chain.append(fn)
         return self
-
 
     def flat_map(self, flat_mapper: Mapper) -> Mapper:
         async def fn(iterable: Iterable[Any]) -> Awaitable:
@@ -65,9 +66,9 @@ class Stream:
                         yield await flat_mapper(i)
                     else:
                         yield flat_mapper(i)
+
         self._chain.append(fn)
         return self
-
 
     # Terminals
     def _compose(self, intermediaries: List[Awaitable], iterable: Iterable[Any]) -> Awaitable:
@@ -80,17 +81,16 @@ class Stream:
             fn = intermediaries.pop(0)
             return self._compose(intermediaries, fn(iterable))
 
-
     async def collect(self) -> AsyncIterable[Optional[Any]]:
         async for n in self._compose(self._chain, self._iterable):
             yield n
-
 
     async def reduce(self, identity: Union[T, U], accumulator: Accumulator) -> Union[T, U]:
         iterable = self._compose(self._chain, self._iterable)
         async for n in iterable:
             identity = accumulator(identity, n)
         return identity
+
 
 def stream(iterable: Iterable[T]):
     return Stream(iterable)

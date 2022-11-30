@@ -34,14 +34,15 @@ async def test_chained_filters() -> None:
         .filter(lambda x: x < 6) \
         .collect()
     # then
-    assert(await it.__anext__() == 4)
-    assert(await it.__anext__() == 5)
+    assert (await it.__anext__() == 4)
+    assert (await it.__anext__() == 5)
     try:
         await it.__anext__()
     except StopAsyncIteration:
         pass
     else:
-        assert(1 == 0)
+        assert (1 == 0)
+
 
 @pytest.mark.asyncio
 async def test_reducer() -> None:
@@ -49,7 +50,8 @@ async def test_reducer() -> None:
     it = stream([1, 2, 3, 4, 5, 6]) \
         .reduce(0, lambda x, y: x + y)
     # then
-    assert(await it == 21)
+    assert (await it == 21)
+
 
 @pytest.mark.asyncio
 async def test_mixed_chain_with_reducer_terminal() -> None:
@@ -58,7 +60,8 @@ async def test_mixed_chain_with_reducer_terminal() -> None:
         .map(lambda x: letter_2_int[x]) \
         .reduce(0, lambda x, y: x + y)
     # then
-    assert(await it == 10)
+    assert (await it == 10)
+
 
 @pytest.mark.asyncio
 async def test_map() -> None:
@@ -67,16 +70,16 @@ async def test_map() -> None:
         .map(lambda x: int_2_letter[x]) \
         .collect()
     # then
-    assert(await it.__anext__() == 'a')
-    assert(await it.__anext__() == 'b')
-    assert(await it.__anext__() == 'c')
-    assert(await it.__anext__() == 'd')
+    assert (await it.__anext__() == 'a')
+    assert (await it.__anext__() == 'b')
+    assert (await it.__anext__() == 'c')
+    assert (await it.__anext__() == 'd')
     try:
         await it.__anext__()
     except StopAsyncIteration:
         pass
     else:
-        assert(1 == 0)
+        assert (1 == 0)
 
 
 @pytest.mark.asyncio
@@ -87,14 +90,15 @@ async def test_mixed_chain() -> None:
         .map(lambda x: int_2_letter[x]) \
         .collect()
     # then
-    assert(await it.__anext__() == 'd')
-    assert(await it.__anext__() == 'e')
+    assert (await it.__anext__() == 'd')
+    assert (await it.__anext__() == 'e')
     try:
         await it.__anext__()
     except StopAsyncIteration:
         pass
     else:
-        assert(1 == 0)
+        assert (1 == 0)
+
 
 @pytest.mark.asyncio
 async def test_async_function() -> None:
@@ -104,14 +108,16 @@ async def test_async_function() -> None:
         .collect()
 
     # then
-    assert(await it.__anext__() == 1)
-    assert(await it.__anext__() == 2)
+    assert (await it.__anext__() == 1)
+    assert (await it.__anext__() == 2)
     try:
         await it.__anext__()
     except StopAsyncIteration:
         pass
     else:
-        assert(1 == 0)
+        assert (1 == 0)
+
+
 @pytest.mark.asyncio
 async def test_flat_map() -> None:
     # when
@@ -120,14 +126,14 @@ async def test_flat_map() -> None:
         .collect()
 
     # then
-    assert(await it.__anext__() == 1)
-    assert(await it.__anext__() == 2)
-    assert(await it.__anext__() == 3)
-    assert(await it.__anext__() == 4)
-    assert(await it.__anext__() == 5)
+    assert (await it.__anext__() == 1)
+    assert (await it.__anext__() == 2)
+    assert (await it.__anext__() == 3)
+    assert (await it.__anext__() == 4)
+    assert (await it.__anext__() == 5)
     try:
         await it.__anext__()
     except StopAsyncIteration:
         pass
     else:
-        assert(1 == 0)
+        assert (1 == 0)
