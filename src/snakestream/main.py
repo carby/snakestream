@@ -1,6 +1,5 @@
 from inspect import iscoroutinefunction
-from typing import TypeVar, Callable, Optional, Iterable, AsyncIterable, List, Any, Awaitable, Union, Dict, \
-    AsyncGenerator
+from typing import TypeVar, Callable, Optional, Iterable, AsyncIterable, List, Any, Awaitable, Union, AsyncGenerator
 
 T = TypeVar('T')
 U = TypeVar('U')
