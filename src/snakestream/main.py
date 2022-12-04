@@ -1,5 +1,5 @@
 from inspect import iscoroutinefunction
-from typing import TypeVar, Callable, Optional, Iterable, AsyncIterable, List, Any, Awaitable, Union, AsyncGenerator
+from typing import TypeVar, Callable, Optional, Iterable, AsyncIterable, List, Any, Awaitable, Union
 
 T = TypeVar('T')
 U = TypeVar('U')
@@ -11,12 +11,8 @@ Mapper = Callable[[T], Optional[U]]
 
 
 async def _normalize_iterator(iterable: Iterable[Any]) -> Awaitable:
-    if isinstance(iterable, AsyncGenerator):
-        async for i in iterable:
-            yield i
-    else:
-        for i in iterable:
-            yield i
+    for i in iterable:
+        yield i
 
 
 class Stream:
