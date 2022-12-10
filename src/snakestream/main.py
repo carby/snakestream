@@ -11,8 +11,12 @@ Mapper = Callable[[T], Optional[U]]
 
 
 async def _normalize_iterator(iterable: Iterable[Any]) -> Awaitable:
-    for i in iterable:
-        yield i
+    try:
+        for i in iterable:
+            yield i
+    except TypeError:
+        async for i in iterable:
+            yield i
 
 
 class Stream:
