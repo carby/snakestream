@@ -8,7 +8,7 @@ import asyncio
 from typing import AsyncGenerator
 import pytest
 
-from snakestream.main import stream
+from snakestream.main import stream, StreamBuildException
 
 int_2_letter = {
     1: 'a',
@@ -202,8 +202,8 @@ async def test_map_async_function() -> None:
 @pytest.mark.asyncio
 async def test_flat_map() -> None:
     # when
-    it = stream([[1, 2], [3, 4], 5]) \
-        .flat_map(lambda x: x) \
+    it = stream([[1, 2], [3, 4]]) \
+        .flat_map(lambda x: stream(x)) \
         .collect()
 
     # then
@@ -211,7 +211,6 @@ async def test_flat_map() -> None:
     assert await it.__anext__() == 2
     assert await it.__anext__() == 3
     assert await it.__anext__() == 4
-    assert await it.__anext__() == 5
     try:
         await it.__anext__()
     except StopAsyncIteration:
@@ -221,10 +220,9 @@ async def test_flat_map() -> None:
 
 
 @pytest.mark.asyncio
-async def test_flat_map_async_function() -> None:
-    # when
+async def test_flat_map_no_mixed_list() -> None:
     it = stream([[1, 2], [3, 4], 5]) \
-        .flat_map(async_flat_map) \
+        .flat_map(lambda x: stream(x)) \
         .collect()
 
     # then
@@ -232,10 +230,22 @@ async def test_flat_map_async_function() -> None:
     assert await it.__anext__() == 2
     assert await it.__anext__() == 3
     assert await it.__anext__() == 4
-    assert await it.__anext__() == 5
     try:
         await it.__anext__()
-    except StopAsyncIteration:
+    except TypeError:
+        pass
+    else:
+        assert False
+
+
+@pytest.mark.asyncio
+async def test_flat_map_async_function() -> None:
+    # when
+    try:
+        it = stream([[1, 2], [3, 4], 5]) \
+            .flat_map(async_flat_map) \
+            .collect()
+    except StreamBuildException:
         pass
     else:
         assert False

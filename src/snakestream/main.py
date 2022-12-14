@@ -5,13 +5,17 @@ from typing import TypeVar, Callable, Optional, Iterable, AsyncIterable, List, A
 T = TypeVar('T')
 U = TypeVar('U')
 
+Streamable = Union[Iterable, AsyncIterable, Generator, AsyncGenerator]
+
 Predicate = Callable[[T], Union[bool, Awaitable[bool]]]
 Filterer = Callable[[T], T]
 Accumulator = Callable[[T, Union[T, U]], Union[T, U]]
 Mapper = Callable[[T], Optional[U]]
+FlatMapper = Callable[[Streamable], 'Stream']
 
 
-Streamable = Union[Iterable, AsyncIterable, Generator, AsyncGenerator]
+class StreamBuildException(Exception):
+    pass
 
 
 async def _normalize(iterable: Streamable) -> Union[Generator, AsyncGenerator]:
@@ -54,20 +58,14 @@ class Stream:
         self._chain.append(fn)
         return self
 
-    def flat_map(self, flat_mapper: Mapper) -> 'Stream':
+    def flat_map(self, flat_mapper: FlatMapper) -> 'Stream':
+        if iscoroutinefunction(flat_mapper):
+            raise StreamBuildException("flat_map() does not support coroutines")
+
         async def fn(iterable: Union[Iterable, AsyncIterable]) -> Union[Iterable, AsyncIterable]:
             async for i in iterable:
-                if isinstance(i, List):
-                    for j in i:
-                        if iscoroutinefunction(flat_mapper):
-                            yield await flat_mapper(j)
-                        else:
-                            yield flat_mapper(j)
-                else:
-                    if iscoroutinefunction(flat_mapper):
-                        yield await flat_mapper(i)
-                    else:
-                        yield flat_mapper(i)
+                async for j in flat_mapper(i).collect():
+                    yield j
 
         self._chain.append(fn)
         return self
@@ -83,7 +81,7 @@ class Stream:
             fn = intermediaries.pop(0)
             return self._compose(intermediaries, fn(iterable))
 
-    async def collect(self) -> AsyncIterable[Optional[Any]]:
+    async def collect(self) -> AsyncIterable[Any]:
         async for n in self._compose(self._chain, self._stream):
             yield n
 
