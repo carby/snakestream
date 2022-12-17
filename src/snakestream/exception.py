@@ -1,0 +1,2 @@
+class StreamBuildException(Exception):
+    pass

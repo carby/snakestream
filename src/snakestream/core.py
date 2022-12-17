@@ -2,6 +2,8 @@ from inspect import iscoroutinefunction
 from typing import TypeVar, Callable, Optional, Iterable, AsyncIterable, List, Any, Awaitable, Union, Generator, \
     AsyncGenerator
 
+from snakestream.exception import StreamBuildException
+
 T = TypeVar('T')
 U = TypeVar('U')
 
@@ -14,8 +16,6 @@ Mapper = Callable[[T], Optional[U]]
 FlatMapper = Callable[[Streamable], 'Stream']
 
 
-class StreamBuildException(Exception):
-    pass
 
 
 async def _normalize(iterable: Streamable) -> Union[Generator, AsyncGenerator]:
@@ -92,5 +92,3 @@ class Stream:
         return identity
 
 
-def stream(iterable: Streamable):
-    return Stream(iterable)

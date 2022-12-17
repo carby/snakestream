@@ -8,7 +8,8 @@ import asyncio
 from typing import AsyncGenerator
 import pytest
 
-from snakestream.main import stream, StreamBuildException
+from snakestream import stream
+from snakestream.exception import StreamBuildException
 
 int_2_letter = {
     1: 'a',
