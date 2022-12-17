@@ -243,7 +243,7 @@ async def test_flat_map_no_mixed_list() -> None:
 async def test_flat_map_async_function() -> None:
     # when
     try:
-        it = stream([[1, 2], [3, 4], 5]) \
+        stream([[1, 2], [3, 4], 5]) \
             .flat_map(async_flat_map) \
             .collect()
     except StreamBuildException:
