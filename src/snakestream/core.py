@@ -1,5 +1,5 @@
 from inspect import iscoroutinefunction
-from typing import TypeVar, Callable, Optional, Iterable, AsyncIterable, List, Any, Awaitable, \
+from typing import TypeVar, Callable, Optional, Iterable, AsyncIterable, List, Awaitable, \
     Union, Generator, AsyncGenerator
 
 from snakestream.exception import StreamBuildException
@@ -17,7 +17,7 @@ FlatMapper = Callable[[Streamable], 'Stream']
 
 
 async def _normalize(iterable: Streamable) -> AsyncGenerator:
-    if (isinstance(iterable, AsyncGenerator) or isinstance(iterable, AsyncIterable)):
+    if isinstance(iterable, AsyncGenerator) or isinstance(iterable, AsyncIterable):
         async for i in iterable:
             yield i
     else:
