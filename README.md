@@ -17,6 +17,7 @@ This is a python streaming api with witch you can get a similar experience as wi
 ```python
 import asyncio
 from snakestream import stream
+from snakestream.collectors import to_generator
 
 
 int_2_letter = {
@@ -37,7 +38,7 @@ async def main():
     it = stream([1, 3, 4, 5, 6]) \
             .filter(lambda n: 3 < n < 6) \
             .map(async_int_to_letter) \
-            .collect()
+            .collect(to_generator)
 
     async for x in it:
         print(x)

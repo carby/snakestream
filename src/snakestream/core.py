@@ -1,7 +1,8 @@
 from inspect import iscoroutinefunction
 from typing import TypeVar, Callable, Optional, Iterable, AsyncIterable, List, Awaitable, \
-    Union, Generator, AsyncGenerator
+    Union, Generator, AsyncGenerator, Coroutine
 
+from snakestream.collectors import to_generator
 from snakestream.exception import StreamBuildException
 
 T = TypeVar('T')
@@ -61,7 +62,7 @@ class Stream:
 
         async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
             async for i in iterable:
-                async for j in flat_mapper(i).collect():
+                async for j in flat_mapper(i).collect(to_generator):
                     yield j
 
         self._chain.append(fn)
@@ -77,9 +78,8 @@ class Stream:
         fn = intermediaries.pop(0)
         return self._compose(intermediaries, fn(iterable))
 
-    async def collect(self) -> AsyncGenerator:
-        async for n in self._compose(self._chain, self._stream):
-            yield n
+    def collect(self, collector: Callable) -> AsyncGenerator:
+        return collector(self._compose(self._chain, self._stream))
 
     async def reduce(self, identity: Union[T, U], accumulator: Accumulator) -> Union[T, U]:
         async for n in self._compose(self._chain, self._stream):
