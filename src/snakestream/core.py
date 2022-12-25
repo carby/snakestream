@@ -1,6 +1,6 @@
 from inspect import iscoroutinefunction
 from typing import TypeVar, Callable, Optional, Iterable, AsyncIterable, List, Awaitable, \
-    Union, Generator, AsyncGenerator, Coroutine
+    Union, Generator, AsyncGenerator
 
 from snakestream.collectors import to_generator
 from snakestream.exception import StreamBuildException
