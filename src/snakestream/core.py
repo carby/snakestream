@@ -1,20 +1,24 @@
 from inspect import iscoroutinefunction
 from typing import TypeVar, Callable, Optional, Iterable, AsyncIterable, List, Awaitable, \
-    Union, Generator, AsyncGenerator
+    Union, Generator, AsyncGenerator, Any
 
 from snakestream.collectors import to_generator
 from snakestream.exception import StreamBuildException
 
 T = TypeVar('T')
-U = TypeVar('U')
+R = TypeVar('R')
 
 Streamable = Union[Iterable, AsyncIterable, Generator, AsyncGenerator]
 
 Predicate = Callable[[T], Union[bool, Awaitable[bool]]]
+
+# Intermediaries
 Filterer = Callable[[T], T]
-Accumulator = Callable[[T, Union[T, U]], Union[T, U]]
-Mapper = Callable[[T], Optional[U]]
+Mapper = Callable[[T], Optional[R]]
 FlatMapper = Callable[[Streamable], 'Stream']
+
+# Terminals
+Accumulator = Callable[[T, Union[T, R]], Union[T, R]]
 
 
 async def _normalize(iterable: Streamable) -> AsyncGenerator:
@@ -81,7 +85,7 @@ class Stream:
     def collect(self, collector: Callable) -> AsyncGenerator:
         return collector(self._compose(self._chain, self._stream))
 
-    async def reduce(self, identity: Union[T, U], accumulator: Accumulator) -> Union[T, U]:
+    async def reduce(self, identity: Union[T, R], accumulator: Accumulator) -> Union[T, R]:
         async for n in self._compose(self._chain, self._stream):
             identity = accumulator(identity, n)
         return identity
