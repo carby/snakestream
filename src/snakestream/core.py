@@ -89,3 +89,11 @@ class Stream:
         async for n in self._compose(self._chain, self._stream):
             identity = accumulator(identity, n)
         return identity
+
+    async def for_each(self, consumer: Callable[[T], Any]) -> None:
+        async for n in self._compose(self._chain, self._stream):
+            if iscoroutinefunction(consumer):
+                await consumer(n)
+            else:
+                consumer(n)
+        return None
