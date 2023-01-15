@@ -1,9 +1,10 @@
 name: Deliver
 
 on:
-  push:
+  pull_request:
     branches:
-      - master
+      - main
+    types: [closed]
 
 jobs:
   build:
