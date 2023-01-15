@@ -97,3 +97,7 @@ class Stream:
             else:
                 consumer(n)
         return None
+
+    async def find_first(self) -> Optional[Any]:
+        async for n in self._compose(self._chain, self._stream):
+            return n
