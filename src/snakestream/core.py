@@ -1,11 +1,14 @@
+from functools import cmp_to_key
 from inspect import iscoroutinefunction
 from typing import TypeVar, Callable, Optional, Iterable, AsyncIterable, List, Awaitable, \
     Union, Generator, AsyncGenerator, Any
 
 from snakestream.collectors import to_generator
 from snakestream.exception import StreamBuildException
+from snakestream.sort import merge_sort
 
 T = TypeVar('T')
+U = TypeVar('U')
 R = TypeVar('R')
 
 Streamable = Union[Iterable, AsyncIterable, Generator, AsyncGenerator]
@@ -16,6 +19,7 @@ Predicate = Callable[[T], Union[bool, Awaitable[bool]]]
 Filterer = Callable[[T], T]
 Mapper = Callable[[T], Optional[R]]
 FlatMapper = Callable[[Streamable], 'Stream']
+Comparator = Callable[[T, U], Union[bool, Awaitable[bool]]]
 
 # Terminals
 Accumulator = Callable[[T, Union[T, R]], Union[T, R]]
@@ -68,6 +72,32 @@ class Stream:
             async for i in iterable:
                 async for j in flat_mapper(i).collect(to_generator):
                     yield j
+
+        self._chain.append(fn)
+        return self
+
+    def sorted(self, comparator: Optional[Comparator] = None, reverse=False) -> 'Stream':
+        async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
+            # unfortunately I dont se now other way than to block the entire stream
+            # how can I otherwise know what is the first item out?
+            cache = []
+            async for i in iterable:
+                cache.append(i)
+            # sort
+            if comparator is not None:
+                if iscoroutinefunction(comparator):
+                    cache = await merge_sort(cache, comparator)
+                else:
+                    cache.sort(key=cmp_to_key(comparator))
+            else:
+                cache.sort()
+            # unblock the stream
+            if reverse:
+                for n in reversed(cache):
+                    yield n
+            else:
+                for n in cache:
+                    yield n
 
         self._chain.append(fn)
         return self
