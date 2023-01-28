@@ -102,6 +102,20 @@ class Stream:
         self._chain.append(fn)
         return self
 
+    def unique(self) -> 'Stream':
+        seen = set()
+
+        async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
+            async for i in iterable:
+                if i in seen:
+                    continue
+                else:
+                    seen.add(i)
+                    yield i
+
+        self._chain.append(fn)
+        return self
+
     # Terminals
     def _compose(self, intermediaries: List[Callable], iterable: AsyncGenerator) -> AsyncGenerator:
         if len(intermediaries) == 0:

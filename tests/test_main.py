@@ -29,6 +29,20 @@ coords = [
 ]
 
 
+class MyObject:
+    def __init__(self, identifier, name):
+        self.id = identifier
+        self.name = name
+
+    def __eq__(self, other):
+        if isinstance(other, MyObject):
+            return self.id == other.id and self.name == other.name
+        return False
+
+    def __hash__(self):
+        return hash((self.id, self.name))
+
+
 async def async_generator() -> AsyncGenerator:
     for i in range(1, 6):
         yield i
@@ -327,6 +341,49 @@ async def test_sorted_async_comparator_and_reverse() -> None:
         {'x': 2, 'y': 6},
         {'x': 1, 'y': 5},
     ]
+
+
+# UNIQUE
+@pytest.mark.asyncio
+async def test_unique() -> None:
+    # when
+    it = await stream([1, 7, 3, 7, 5, 6, 0, 6, 6]) \
+        .unique() \
+        .collect(to_list)
+    # then
+    assert it == [1, 7, 3, 5, 6, 0]
+
+
+@pytest.mark.asyncio
+async def test_unique_empty_list() -> None:
+    # when
+    it = await stream([]) \
+        .unique() \
+        .collect(to_list)
+    # then
+    assert it == []
+
+
+@pytest.mark.asyncio
+async def test_unique_list_with_no_dupes() -> None:
+    # when
+    it = await stream([1, 2, 3, 4]) \
+        .unique() \
+        .collect(to_list)
+    # then
+    assert it == [1, 2, 3, 4]
+
+
+@pytest.mark.asyncio
+async def test_unique_object_list() -> None:
+    # when
+    input_list = [MyObject(1, "object1"), MyObject(2, "object2"), MyObject(3, "object3"), MyObject(2, "object2"),
+                  MyObject(3, "object3")]
+    it = await stream(input_list) \
+        .unique() \
+        .collect(to_list)
+    # then
+    assert it == [MyObject(1, "object1"), MyObject(2, "object2"), MyObject(3, "object3")]
 
 
 # REDUCE
