@@ -9,7 +9,7 @@ from typing import AsyncGenerator
 import pytest
 
 from snakestream import stream
-from snakestream.collectors import to_generator, to_list
+from snakestream.collector import to_generator, to_list
 from snakestream.exception import StreamBuildException
 
 int_2_letter = {

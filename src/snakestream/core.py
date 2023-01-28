@@ -3,7 +3,7 @@ from inspect import iscoroutinefunction
 from typing import TypeVar, Callable, Optional, Iterable, AsyncIterable, List, Awaitable, \
     Union, Generator, AsyncGenerator, Any
 
-from snakestream.collectors import to_generator
+from snakestream.collector import to_generator
 from snakestream.exception import StreamBuildException
 from snakestream.sort import merge_sort
 
