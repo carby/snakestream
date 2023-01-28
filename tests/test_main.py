@@ -255,6 +255,7 @@ async def test_flat_map_async_function() -> None:
         assert False
 
 
+# SORTED
 @pytest.mark.asyncio
 async def test_sorted() -> None:
     outset = [1, 5, 3, 4, 5, 2]
@@ -327,9 +328,8 @@ async def test_sorted_async_comparator_and_reverse() -> None:
         {'x': 1, 'y': 5},
     ]
 
-    # REDUCE
 
-
+# REDUCE
 @pytest.mark.asyncio
 async def test_reducer() -> None:
     # when
