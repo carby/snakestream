@@ -8,7 +8,6 @@ from snakestream.exception import StreamBuildException
 from snakestream.sort import merge_sort
 
 T = TypeVar('T')
-U = TypeVar('U')
 R = TypeVar('R')
 
 Streamable = Union[Iterable, AsyncIterable, Generator, AsyncGenerator]
@@ -19,7 +18,7 @@ Predicate = Callable[[T], Union[bool, Awaitable[bool]]]
 Filterer = Callable[[T], T]
 Mapper = Callable[[T], Optional[R]]
 FlatMapper = Callable[[Streamable], 'Stream']
-Comparator = Callable[[T, U], Union[bool, Awaitable[bool]]]
+Comparator = Callable[[T, T], Union[bool, Awaitable[bool]]]
 
 # Terminals
 Accumulator = Callable[[T, Union[T, R]], Union[T, R]]
@@ -145,3 +144,18 @@ class Stream:
     async def find_first(self) -> Optional[Any]:
         async for n in self._compose(self._chain, self._stream):
             return n
+
+    async def max(self, comparator: Comparator) -> Optional[T]:
+        max = None
+        async for n in self._compose(self._chain, self._stream):
+            if max is None:
+                max = n
+                continue
+
+            if iscoroutinefunction(comparator):
+                if n and await comparator(n, max):
+                    max = n
+            else:
+                if n and comparator(n, max):
+                    max = n
+        return max
