@@ -146,16 +146,24 @@ class Stream:
             return n
 
     async def max(self, comparator: Comparator) -> Optional[T]:
-        max = None
+        return await self._min_max(comparator)
+
+    async def min(self, comparator: Comparator) -> Optional[T]:
+        def negative_comparator(x, y):
+            return not comparator(x, y)
+        return await self._min_max(negative_comparator)
+
+    async def _min_max(self, comparator: Comparator) -> Optional[T]:
+        found = None
         async for n in self._compose(self._chain, self._stream):
-            if max is None:
-                max = n
+            if found is None:
+                found = n
                 continue
 
             if iscoroutinefunction(comparator):
-                if n and await comparator(n, max):
-                    max = n
+                if n and await comparator(n, found):
+                    found = n
             else:
-                if n and comparator(n, max):
-                    max = n
-        return max
+                if n and comparator(n, found):
+                    found = n
+        return found
