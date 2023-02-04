@@ -18,5 +18,5 @@ finally:
     del version, PackageNotFoundError
 
 
-def stream(iterable: Streamable):
+def stream_of(iterable: Streamable):
     return Stream(iterable)

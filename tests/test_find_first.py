@@ -1,6 +1,6 @@
 import pytest
 
-from snakestream import stream
+from snakestream import stream_of
 
 
 @pytest.mark.asyncio
@@ -13,7 +13,7 @@ async def test_find_first() -> None:
         return c
 
     # when
-    it = await stream([1, 2, 3, 4, 5, 6, 1, 2, 3, 4, 5, 6]) \
+    it = await stream_of([1, 2, 3, 4, 5, 6, 1, 2, 3, 4, 5, 6]) \
         .map(incr_counter) \
         .filter(lambda x: x == 6) \
         .find_first()
@@ -33,7 +33,7 @@ async def test_find_first_found_none() -> None:
         return c
 
     # when
-    it = await stream([1, 2, 3, 4, 5, 6, 1, 2, 3, 4, 5, 6]) \
+    it = await stream_of([1, 2, 3, 4, 5, 6, 1, 2, 3, 4, 5, 6]) \
         .map(incr_counter) \
         .filter(lambda x: x == 100) \
         .find_first()
