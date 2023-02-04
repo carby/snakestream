@@ -19,6 +19,7 @@ Filterer = Callable[[T], T]
 Mapper = Callable[[T], Optional[R]]
 FlatMapper = Callable[[Streamable], 'Stream']
 Comparator = Callable[[T, T], Union[bool, Awaitable[bool]]]
+Consumer = Callable[[T], T]
 
 # Terminals
 Accumulator = Callable[[T, Union[T, R]], Union[T, R]]
@@ -111,6 +112,18 @@ class Stream:
                 else:
                     seen.add(i)
                     yield i
+
+        self._chain.append(fn)
+        return self
+
+    def peek(self, consumer: Consumer) -> 'Stream':
+        async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
+            async for i in iterable:
+                if iscoroutinefunction(consumer):
+                    await consumer(i)
+                else:
+                    consumer(i)
+                yield i
 
         self._chain.append(fn)
         return self
