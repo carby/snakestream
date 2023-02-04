@@ -1,13 +1,13 @@
 import pytest
 
-from snakestream import stream
+from snakestream import stream_of
 from snakestream.collector import to_list, to_generator
 
 
 @pytest.mark.asyncio
 async def test_to_generator() -> None:
     # when
-    it = stream([1, 2, 3, 4]) \
+    it = stream_of([1, 2, 3, 4]) \
         .collect(to_generator)
     # then
     assert await it.__anext__() == 1
@@ -25,7 +25,7 @@ async def test_to_generator() -> None:
 @pytest.mark.asyncio
 async def test_to_generator_with_empty_list_input() -> None:
     # when
-    it = stream([]) \
+    it = stream_of([]) \
         .collect(to_generator)
     # then
     try:
@@ -39,7 +39,7 @@ async def test_to_generator_with_empty_list_input() -> None:
 @pytest.mark.asyncio
 async def test_to_list() -> None:
     # when
-    it = await stream([1, 2, 3, 4]) \
+    it = await stream_of([1, 2, 3, 4]) \
         .collect(to_list)
     # then
     assert it == [1, 2, 3, 4]
@@ -59,7 +59,7 @@ async def test_to_list_with_nulls() -> None:
 @pytest.mark.asyncio
 async def test_to_list_with_empty_list_input() -> None:
     # when
-    it = await stream([]) \
+    it = await stream_of([]) \
         .collect(to_list)
     # then
     assert it == []

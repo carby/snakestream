@@ -1,14 +1,14 @@
 import pytest
 import asyncio
 
-from snakestream import stream
+from snakestream import stream_of
 from snakestream.collector import to_generator
 
 
 @pytest.mark.asyncio
 async def test_filter_multiple() -> None:
     # when
-    it = stream([1, 2, 3, 4, 5, 6]) \
+    it = stream_of([1, 2, 3, 4, 5, 6]) \
         .filter(lambda x: x > 3) \
         .filter(lambda x: x < 6) \
         .collect(to_generator)
@@ -32,7 +32,7 @@ async def test_filter_async_function() -> None:
         return x < 3
 
     # when
-    it = stream([1, 2, 3, 4]) \
+    it = stream_of([1, 2, 3, 4]) \
         .filter(async_predicate) \
         .collect(to_generator)
 

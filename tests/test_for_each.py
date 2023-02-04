@@ -1,7 +1,7 @@
 import pytest
 import asyncio
 
-from snakestream import stream
+from snakestream import stream_of
 
 
 coords = [
@@ -16,7 +16,7 @@ async def test_for_each() -> None:
     def incr_y(c) -> None:
         c['y'] = 1
 
-    await stream(coords) \
+    await stream_of(coords) \
         .for_each(incr_y)
 
     assert coords[0]['y'] == 1
@@ -30,7 +30,7 @@ async def test_for_each_async() -> None:
         await asyncio.sleep(0.01)
         c['y'] = 1
 
-    await stream(coords) \
+    await stream_of(coords) \
         .for_each(async_incr_y)
 
     assert coords[0]['y'] == 1
