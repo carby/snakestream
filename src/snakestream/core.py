@@ -39,6 +39,10 @@ class Stream:
         self._stream: AsyncGenerator = _normalize(streamable)
         self._chain: List[Callable] = []
 
+    @staticmethod
+    def empty() -> 'Stream':
+        return Stream([])
+
     # Intermediaries
     def filter(self, predicate: Predicate) -> 'Stream':
         async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
