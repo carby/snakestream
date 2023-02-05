@@ -8,9 +8,17 @@
 """
 from setuptools import setup
 
+from pathlib import Path
+this_directory = Path(__file__).parent
+long_description = (this_directory / "README.md").read_text()
+
 if __name__ == "__main__":
     try:
-        setup(use_scm_version={"version_scheme": "no-guess-dev"})
+        setup(
+            use_scm_version={"version_scheme": "no-guess-dev"},
+            long_description=long_description,
+            long_description_content_type='text/markdown',
+        )
     except:  # noqa
         print(
             "\n\nAn error occurred while building the project, "
