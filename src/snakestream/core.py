@@ -166,9 +166,14 @@ class Stream:
         return await self._min_max(comparator)
 
     async def min(self, comparator: Comparator) -> Optional[T]:
-        def negative_comparator(x, y):
-            return not comparator(x, y)
-        return await self._min_max(negative_comparator)
+        if iscoroutinefunction(comparator):
+            async def negative_comparator(x, y):
+                return not await comparator(x, y)
+            return await self._min_max(negative_comparator)
+        else:
+            def negative_comparator(x, y):
+                return not comparator(x, y)
+            return await self._min_max(negative_comparator)
 
     async def _min_max(self, comparator: Comparator) -> Optional[T]:
         found = None
