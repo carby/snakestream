@@ -189,3 +189,17 @@ class Stream:
                 if n and comparator(n, found):
                     found = n
         return found
+
+    async def all_match(self, predicate: Predicate) -> bool:
+        async for n in self._compose(self._chain, self._stream):
+            if iscoroutinefunction(predicate):
+                if await predicate(n):
+                    continue
+                else:
+                    return False
+            else:
+                if predicate(n):
+                    continue
+                else:
+                    return False
+        return True
