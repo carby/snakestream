@@ -231,3 +231,6 @@ class Stream:
                 else:
                     continue
         return False
+
+    async def count(self) -> int:
+        pass

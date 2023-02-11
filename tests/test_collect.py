@@ -14,12 +14,9 @@ async def test_to_generator() -> None:
     assert await it.__anext__() == 2
     assert await it.__anext__() == 3
     assert await it.__anext__() == 4
-    try:
+
+    with pytest.raises(StopAsyncIteration):
         await it.__anext__()
-    except StopAsyncIteration:
-        pass
-    else:
-        assert False
 
 
 @pytest.mark.asyncio
@@ -28,12 +25,8 @@ async def test_to_generator_with_empty_list_input() -> None:
     it = stream_of([]) \
         .collect(to_generator)
     # then
-    try:
+    with pytest.raises(StopAsyncIteration):
         await it.__anext__()
-    except StopAsyncIteration:
-        pass
-    else:
-        assert False
 
 
 @pytest.mark.asyncio
@@ -45,17 +38,6 @@ async def test_to_list() -> None:
     assert it == [1, 2, 3, 4]
 
 
-'''
-@pytest.mark.asyncio
-async def test_to_list_with_nulls() -> None:
-    # when
-    it = await stream([1, None, 3, 4]) \
-        .collect(to_list)
-    # then
-    assert it == [1, 3, 4]
-'''
-
-
 @pytest.mark.asyncio
 async def test_to_list_with_empty_list_input() -> None:
     # when
@@ -63,3 +45,11 @@ async def test_to_list_with_empty_list_input() -> None:
         .collect(to_list)
     # then
     assert it == []
+
+
+@pytest.mark.asyncio
+async def test_to_list_with_null_input() -> None:
+    # when
+    with pytest.raises(TypeError):
+        await stream_of(None) \
+            .collect(to_list)
