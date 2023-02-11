@@ -217,3 +217,17 @@ class Stream:
                 else:
                     continue
         return True
+
+    async def any_match(self, predicate: Predicate) -> bool:
+        async for n in self._compose(self._chain, self._stream):
+            if iscoroutinefunction(predicate):
+                if await predicate(n):
+                    return True
+                else:
+                    continue
+            else:
+                if predicate(n):
+                    return True
+                else:
+                    continue
+        return False
