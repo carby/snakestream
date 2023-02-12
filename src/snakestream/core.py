@@ -82,7 +82,7 @@ class Stream:
 
     def sorted(self, comparator: Optional[Comparator] = None, reverse=False) -> 'Stream':
         async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
-            # unfortunately I dont se now other way than to block the entire stream
+            # unfortunately I now don't see other way than to block the entire stream
             # how can I otherwise know what is the first item out?
             cache = []
             async for i in iterable:
