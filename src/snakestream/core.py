@@ -233,4 +233,7 @@ class Stream:
         return False
 
     async def count(self) -> int:
-        pass
+        c = 0
+        async for _ in self._compose(self._chain, self._stream):
+            c += 1
+        return c
