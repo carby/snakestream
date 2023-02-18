@@ -7,7 +7,7 @@ from typing import AsyncGenerator
 import pytest
 
 from snakestream import stream_of
-from snakestream.collector import to_generator
+from snakestream.collector import to_generator, to_list
 
 
 async def async_generator() -> AsyncGenerator:
@@ -86,3 +86,11 @@ async def test_input_async_iterator() -> None:
         pass
     else:
         assert False
+
+
+@pytest.mark.asyncio
+async def test_null_input() -> None:
+    # when
+    with pytest.raises(TypeError):
+        await stream_of(None) \
+            .collect(to_list)

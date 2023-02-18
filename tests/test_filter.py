@@ -2,7 +2,7 @@ import pytest
 import asyncio
 
 from snakestream import stream_of
-from snakestream.collector import to_generator
+from snakestream.collector import to_generator, to_list
 
 
 @pytest.mark.asyncio
@@ -22,6 +22,22 @@ async def test_filter_multiple() -> None:
         pass
     else:
         assert False
+
+
+@pytest.mark.asyncio
+async def test_filter_does_not_mutate_source() -> None:
+    source = [1, 2, 3, 4, 5, 6]
+
+    # when
+    it = await stream_of(source) \
+        .filter(lambda x: x > 3) \
+        .filter(lambda x: x < 6) \
+        .collect(to_list)
+
+    # then
+    assert source != it
+    assert len(source) == 6
+    assert len(it) == 2
 
 
 @pytest.mark.asyncio
