@@ -10,7 +10,7 @@ This is a python streaming api with witch you can get a similar experience as wi
 	- filter()
 	- flat_map()
     - sorted()
-    - unique()
+    - distinct()
     - peek()
 - Terminal functions include:
 	- collect()

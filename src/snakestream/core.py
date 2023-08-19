@@ -106,7 +106,7 @@ class Stream:
         self._chain.append(fn)
         return self
 
-    def unique(self) -> 'Stream':
+    def distinct(self) -> 'Stream':
         seen = set()
 
         async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
