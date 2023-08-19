@@ -9,7 +9,7 @@ from conftest import MyObject
 async def test_unique() -> None:
     # when
     it = await stream_of([1, 7, 3, 7, 5, 6, 0, 6, 6]) \
-        .unique() \
+        .distinct() \
         .collect(to_list)
     # then
     assert it == [1, 7, 3, 5, 6, 0]
@@ -19,7 +19,7 @@ async def test_unique() -> None:
 async def test_unique_empty_list() -> None:
     # when
     it = await stream_of([]) \
-        .unique() \
+        .distinct() \
         .collect(to_list)
     # then
     assert it == []
@@ -29,7 +29,7 @@ async def test_unique_empty_list() -> None:
 async def test_unique_list_with_no_dupes() -> None:
     # when
     it = await stream_of([1, 2, 3, 4]) \
-        .unique() \
+        .distinct() \
         .collect(to_list)
     # then
     assert it == [1, 2, 3, 4]
@@ -41,7 +41,7 @@ async def test_unique_object_list() -> None:
     input_list = [MyObject(1, "object1"), MyObject(2, "object2"), MyObject(3, "object3"), MyObject(2, "object2"),
                   MyObject(3, "object3")]
     it = await stream_of(input_list) \
-        .unique() \
+        .distinct() \
         .collect(to_list)
     # then
     assert it == [MyObject(1, "object1"), MyObject(2, "object2"), MyObject(3, "object3")]
