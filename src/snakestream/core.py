@@ -34,6 +34,13 @@ async def _normalize(iterable: Streamable) -> AsyncGenerator:
             yield i
 
 
+async def _concat(a: AsyncGenerator, b: AsyncGenerator) -> AsyncGenerator:
+    async for i in a:
+        yield i
+    async for j in b:
+        yield j
+
+
 class Stream:
     def __init__(self, streamable: Streamable) -> None:
         self._stream: AsyncGenerator = _normalize(streamable)
@@ -42,6 +49,11 @@ class Stream:
     @staticmethod
     def empty() -> 'Stream':
         return Stream([])
+
+    @staticmethod
+    def concat(a: 'Stream', b: 'Stream') -> 'Stream':
+        new_stream = _concat(a._stream, b._stream)
+        return Stream(new_stream)
 
     # Intermediaries
     def filter(self, predicate: Predicate) -> 'Stream':
