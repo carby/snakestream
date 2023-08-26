@@ -7,22 +7,44 @@ from snakestream.core import Stream
 
 
 @pytest.mark.asyncio
-async def test_to_generator() -> None:
+async def test_concat_simple() -> None:
     # when
     a = stream_of([1, 2, 3, 4])
     b = stream_of([5, 6, 7])
 
-    c = Stream.concat(a, b) \
+    generator = (await Stream.concat(a, b)) \
         .collect(to_generator)
 
     # then
-    assert await c.__anext__() == 1
-    assert await c.__anext__() == 2
-    assert await c.__anext__() == 3
-    assert await c.__anext__() == 4
-    assert await c.__anext__() == 5
-    assert await c.__anext__() == 6
-    assert await c.__anext__() == 7
+    assert await generator.__anext__() == 1
+    assert await generator.__anext__() == 2
+    assert await generator.__anext__() == 3
+    assert await generator.__anext__() == 4
+    assert await generator.__anext__() == 5
+    assert await generator.__anext__() == 6
+    assert await generator.__anext__() == 7
 
     with pytest.raises(StopAsyncIteration):
-        await c.__anext__()
+        await generator.__anext__()
+
+
+@pytest.mark.asyncio
+async def test_concat_with_intermediaries() -> None:
+    # when
+    a = stream_of([1, 2, 3, 4]) \
+        .filter(lambda x: x < 3)
+    b = stream_of([5, 6, 7, 7]) \
+        .distinct()
+
+    generator = (await Stream.concat(a, b)) \
+        .collect(to_generator)
+
+    # then
+    assert await generator.__anext__() == 1
+    assert await generator.__anext__() == 2
+    assert await generator.__anext__() == 5
+    assert await generator.__anext__() == 6
+    assert await generator.__anext__() == 7
+
+    with pytest.raises(StopAsyncIteration):
+        await generator.__anext__()
