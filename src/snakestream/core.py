@@ -152,7 +152,10 @@ class Stream(AbstractStream):
 
     async def reduce(self, identity: Union[T, R], accumulator: Accumulator) -> Union[T, R]:
         async for n in self._compose(self._chain, self._stream):
-            identity = accumulator(identity, n)
+            if iscoroutinefunction(accumulator):
+                identity = await accumulator(identity, n)
+            else:
+                identity = accumulator(identity, n)
         return identity
 
     async def for_each(self, consumer: Callable[[T], Any]) -> None:

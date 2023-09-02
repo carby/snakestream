@@ -29,8 +29,8 @@ async def test_reducer_associative() -> None:
 
 @pytest.mark.asyncio
 async def test_async_reducer() -> None:
-    def async_reducer(x: int, y: int):
-        asyncio.sleep(0.01)
+    async def async_reducer(x: int, y: int):
+        await asyncio.sleep(0.01)
         return x + y
 
     # when
