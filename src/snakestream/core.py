@@ -1,28 +1,13 @@
 from functools import cmp_to_key
 from inspect import iscoroutinefunction
-from typing import TypeVar, Callable, Optional, Iterable, AsyncIterable, List, Awaitable, \
-    Union, Generator, AsyncGenerator, Any
+from typing import Callable, Optional, AsyncIterable, List, \
+    Union, AsyncGenerator, Any
 
 from snakestream.collector import to_generator
 from snakestream.exception import StreamBuildException
 from snakestream.sort import merge_sort
-
-T = TypeVar('T')
-R = TypeVar('R')
-
-Streamable = Union[Iterable, AsyncIterable, Generator, AsyncGenerator]
-
-Predicate = Callable[[T], Union[bool, Awaitable[bool]]]
-
-# Intermediaries
-Filterer = Callable[[T], T]
-Mapper = Callable[[T], Optional[R]]
-FlatMapper = Callable[[Streamable], 'Stream']
-Comparator = Callable[[T, T], Union[bool, Awaitable[bool]]]
-Consumer = Callable[[T], T]
-
-# Terminals
-Accumulator = Callable[[T, Union[T, R]], Union[T, R]]
+from snakestream.stream_builder import StreamBuilder
+from snakestream.type import R, T, AbstractStream, Accumulator, Comparator, Consumer, FlatMapper, Mapper, Predicate, Streamable
 
 
 async def _normalize(iterable: Streamable) -> AsyncGenerator:
@@ -40,8 +25,10 @@ async def _concat(a: 'Stream', b: 'Stream') -> AsyncGenerator:
     async for j in b._compose(b._chain, b._stream):
         yield j
 
-
-class Stream:
+#
+# If you add a method here, also add it to AbstractStream
+#
+class Stream(AbstractStream):
     def __init__(self, streamable: Streamable) -> None:
         self._stream: AsyncGenerator = _normalize(streamable)
         self._chain: List[Callable] = []
