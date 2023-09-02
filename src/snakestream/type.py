@@ -1,5 +1,6 @@
 import abc
-from typing import Any, AsyncGenerator, AsyncIterable, Awaitable, Callable, Generator, Iterable, Optional, TypeVar, Union
+from typing import Any, AsyncGenerator, AsyncIterable, Awaitable, Callable, Generator, Iterable, List, Optional, TypeVar, Union
+
 
 # 
 # Generic types
@@ -50,6 +51,11 @@ class AbstractStream(metaclass=abc.ABCMeta):
     @staticmethod
     @abc.abstractclassmethod
     async def concat(a: 'AbstractStream', b: 'AbstractStream') -> 'AbstractStream':
+        raise NotImplementedError
+
+    @staticmethod
+    @abc.abstractclassmethod
+    def builder() -> 'AbstractStreamBuilder':
         raise NotImplementedError
 
     # Intermediaries
@@ -116,4 +122,19 @@ class AbstractStream(metaclass=abc.ABCMeta):
 
     @abc.abstractclassmethod
     async def count(self) -> int:
+        raise NotImplementedError
+
+
+class AbstractStreamBuilder(metaclass=abc.ABCMeta):
+
+    @abc.abstractclassmethod
+    def add(self, element: T) -> 'AbstractStreamBuilder':
+        raise NotImplementedError
+
+    @abc.abstractclassmethod
+    def accept(self, element: T) -> None:
+        raise NotImplementedError
+
+    @abc.abstractclassmethod
+    def build(self) -> 'AbstractStream':
         raise NotImplementedError
