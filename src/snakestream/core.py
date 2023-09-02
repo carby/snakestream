@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from functools import cmp_to_key
 from inspect import iscoroutinefunction
 from typing import Callable, Optional, AsyncIterable, List, \
@@ -6,8 +8,7 @@ from typing import Callable, Optional, AsyncIterable, List, \
 from snakestream.collector import to_generator
 from snakestream.exception import StreamBuildException
 from snakestream.sort import merge_sort
-from snakestream.stream_builder import StreamBuilder
-from snakestream.type import R, T, AbstractStream, Accumulator, Comparator, Consumer, FlatMapper, Mapper, Predicate, Streamable
+from snakestream.type import R, T, AbstractStream, AbstractStreamBuilder, Accumulator, Comparator, Consumer, FlatMapper, Mapper, Predicate, Streamable
 
 
 async def _normalize(iterable: Streamable) -> AsyncGenerator:
@@ -41,6 +42,11 @@ class Stream(AbstractStream):
     async def concat(a: 'Stream', b: 'Stream') -> 'Stream':
         new_stream = _concat(a, b)
         return Stream(new_stream)
+
+    @staticmethod
+    def builder() -> 'AbstractStreamBuilder':
+        from snakestream.stream_builder import StreamBuilder
+        return StreamBuilder()
 
     # Intermediaries
     def filter(self, predicate: Predicate) -> 'Stream':
