@@ -5,7 +5,6 @@ from snakestream.core import Stream
 from snakestream.type import T
 
 
-
 class StreamBuilder:
     def __init__(self) -> None:
         self._elements: List[T] = []
