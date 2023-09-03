@@ -1,8 +1,8 @@
 import abc
-from typing import Any, AsyncGenerator, AsyncIterable, Awaitable, Callable, Generator, Iterable, List, Optional, TypeVar, Union
+from typing import Any, AsyncGenerator, AsyncIterable, Awaitable, Callable, Generator, Iterable, Optional, TypeVar, Union
 
 
-# 
+#
 # Generic types
 #
 T = TypeVar('T')
@@ -23,31 +23,16 @@ Consumer = Callable[[T], T]
 Accumulator = Callable[[T, Union[T, R]], Union[T, R]]
 
 
-# 
+#
 # Classes
 #
 class AbstractStream(metaclass=abc.ABCMeta):
-
-    '''
-    @classmethod
-    def __subclasshook__(cls, subclass):
-        return (
-            hasattr(subclass, 'empty') and 
-            callable(subclass.empty) and 
-
-            hasattr(subclass, 'concat') and 
-            callable(subclass.concat) or 
-
-            NotImplemented
-        )
-    '''
 
     @staticmethod
     @abc.abstractclassmethod
     def empty() -> 'AbstractStream':
         raise NotImplementedError
 
-    
     @staticmethod
     @abc.abstractclassmethod
     async def concat(a: 'AbstractStream', b: 'AbstractStream') -> 'AbstractStream':

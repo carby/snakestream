@@ -8,7 +8,8 @@ from typing import Callable, Optional, AsyncIterable, List, \
 from snakestream.collector import to_generator
 from snakestream.exception import StreamBuildException
 from snakestream.sort import merge_sort
-from snakestream.type import R, T, AbstractStream, AbstractStreamBuilder, Accumulator, Comparator, Consumer, FlatMapper, Mapper, Predicate, Streamable
+from snakestream.type import R, T, AbstractStream, AbstractStreamBuilder, Accumulator, Comparator, Consumer, \
+    FlatMapper, Mapper, Predicate, Streamable
 
 
 async def _normalize(iterable: Streamable) -> AsyncGenerator:
@@ -25,6 +26,7 @@ async def _concat(a: 'Stream', b: 'Stream') -> AsyncGenerator:
         yield i
     async for j in b._compose(b._chain, b._stream):
         yield j
+
 
 #
 # If you add a method here, also add it to AbstractStream

@@ -3,6 +3,7 @@ from snakestream.collector import to_list
 
 from snakestream.core import Stream
 
+
 @pytest.mark.asyncio
 async def test_builder_simple() -> None:
     # given
@@ -17,6 +18,7 @@ async def test_builder_simple() -> None:
 
     # then
     assert it == [1, 5, 8]
+
 
 @pytest.mark.asyncio
 async def test_builder_empty() -> None:
