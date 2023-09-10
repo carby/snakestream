@@ -149,7 +149,7 @@ class Stream(AbstractStream):
         fn = intermediaries.pop(0)
         return self._compose(intermediaries, fn(iterable))
 
-    def collect(self, collector: Callable) -> AsyncGenerator:
+    def collect(self, collector: Callable) -> Union[List, AsyncGenerator]:
         return collector(self._compose(self._chain, self._stream))
 
     async def reduce(self, identity: Union[T, R], accumulator: Accumulator) -> Union[T, R]:

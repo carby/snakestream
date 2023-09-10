@@ -70,7 +70,7 @@ class AbstractStream(metaclass=abc.ABCMeta):
 
     # Terminals
     @abc.abstractclassmethod
-    def collect(self, collector: Callable) -> AsyncGenerator:
+    def collect(self, collector: Callable) -> Union[AsyncGenerator, List]:
         raise NotImplementedError
 
     @abc.abstractclassmethod
