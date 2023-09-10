@@ -1,5 +1,5 @@
 import abc
-from typing import Any, AsyncGenerator, AsyncIterable, Awaitable, Callable, Generator, Iterable, Optional, TypeVar, Union
+from typing import Any, AsyncGenerator, AsyncIterable, Awaitable, Callable, Generator, Iterable, Optional, TypeVar, Union, List
 
 
 #
@@ -70,7 +70,7 @@ class AbstractStream(metaclass=abc.ABCMeta):
 
     # Terminals
     @abc.abstractclassmethod
-    def collect(self, collector: Callable) -> AsyncGenerator:
+    def collect(self, collector: Callable) -> Union[AsyncGenerator, List]:
         raise NotImplementedError
 
     @abc.abstractclassmethod
