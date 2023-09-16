@@ -14,7 +14,7 @@ async def async_flat_map(x: int) -> int:
 @pytest.mark.asyncio
 async def test_flat_map() -> None:
     # when
-    it = stream_of([[1, 2], [3, 4]]) \
+    it = await stream_of([[1, 2], [3, 4]]) \
         .flat_map(lambda x: stream_of(x)) \
         .collect(to_generator)
 
@@ -33,7 +33,7 @@ async def test_flat_map() -> None:
 
 @pytest.mark.asyncio
 async def test_flat_map_no_mixed_list() -> None:
-    it = stream_of([[1, 2], [3, 4], 5]) \
+    it = await stream_of([[1, 2], [3, 4], 5]) \
         .flat_map(lambda x: stream_of(x)) \
         .collect(to_generator)
 

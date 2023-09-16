@@ -33,7 +33,7 @@ class AsyncIteratorImpl:
 @pytest.mark.asyncio
 async def test_input_list() -> None:
     # when
-    it = stream_of([1, 2, 3, 4]) \
+    it = await stream_of([1, 2, 3, 4]) \
         .collect(to_generator)
     # then
     assert await it.__anext__() == 1
@@ -51,7 +51,7 @@ async def test_input_list() -> None:
 @pytest.mark.asyncio
 async def test_input_async_generator() -> None:
     # when
-    it = stream_of(async_generator()) \
+    it = await stream_of(async_generator()) \
         .collect(to_generator)
 
     # then
@@ -71,7 +71,7 @@ async def test_input_async_generator() -> None:
 @pytest.mark.asyncio
 async def test_input_async_iterator() -> None:
     # when
-    it = stream_of(AsyncIteratorImpl(5)) \
+    it = await stream_of(AsyncIteratorImpl(5)) \
         .collect(to_generator)
 
     # then

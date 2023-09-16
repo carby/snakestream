@@ -12,8 +12,9 @@ async def test_concat_simple() -> None:
     a = stream_of([1, 2, 3, 4])
     b = stream_of([5, 6, 7])
 
-    generator = (await Stream.concat(a, b)) \
-        .collect(to_generator)
+    stream = await Stream.concat(a, b)
+
+    generator = await stream.collect(to_generator)
 
     # then
     assert await generator.__anext__() == 1
@@ -36,7 +37,7 @@ async def test_concat_with_intermediaries() -> None:
     b = stream_of([5, 6, 7, 7]) \
         .distinct()
 
-    generator = (await Stream.concat(a, b)) \
+    generator = await (await Stream.concat(a, b)) \
         .collect(to_generator)
 
     # then

@@ -1,14 +1,17 @@
 from __future__ import annotations
+import asyncio
 
 from functools import cmp_to_key
 from inspect import iscoroutinefunction
+from types import AsyncGeneratorType
 from typing import Callable, Optional, AsyncIterable, List, \
     Union, AsyncGenerator, Any
 
 from snakestream.collector import to_generator
 from snakestream.exception import StreamBuildException
 from snakestream.sort import merge_sort
-from snakestream.type import R, T, AbstractStream, AbstractStreamBuilder, Accumulator, Comparator, Consumer, \
+from snakestream.type import R, T, AbstractBaseStream, AbstractStream, \
+    AbstractStreamBuilder, Accumulator, Comparator, Consumer, \
     FlatMapper, Mapper, Predicate, Streamable
 
 
@@ -22,19 +25,44 @@ async def _normalize(iterable: Streamable) -> AsyncGenerator:
 
 
 async def _concat(a: 'Stream', b: 'Stream') -> AsyncGenerator:
-    async for i in a._compose(a._chain, a._stream):
+    async for i in await a._compose(a._chain, a._stream):
         yield i
-    async for j in b._compose(b._chain, b._stream):
+    async for j in await b._compose(b._chain, b._stream):
         yield j
 
 
-#
-# If you add a method here, also add it to AbstractStream
-#
-class Stream(AbstractStream):
+class BaseStream(AbstractBaseStream):
     def __init__(self, streamable: Streamable) -> None:
-        self._stream: AsyncGenerator = _normalize(streamable)
+        self._is_parallel = False
         self._chain: List[Callable] = []
+        self._stream: AsyncGenerator = _normalize(streamable)
+
+    def is_parallel(self) -> bool:
+        return self._is_parallel
+
+    # Intermediaries
+    def parallel(self) -> 'BaseStream':
+        self._is_parallel = True
+        return self
+
+    # Terminals
+    async def _sequential_compose(self, intermediaries: List[Callable], iterable: AsyncGenerator) -> AsyncGenerator:
+        if len(intermediaries) == 0:
+            return iterable
+        if len(intermediaries) == 1:
+            fn = intermediaries.pop(0)
+            return fn(iterable)
+        fn = intermediaries.pop(0)
+        return await self._sequential_compose(intermediaries, fn(iterable))
+
+    async def _compose(self, intermediaries: List[Callable], iterable: AsyncGenerator) -> AsyncGenerator:
+        if self.is_parallel:
+            return await self._sequential_compose(intermediaries=intermediaries, iterable=iterable)
+        else:
+            return await self._sequential_compose(intermediaries=intermediaries, iterable=iterable)
+
+
+class Stream(BaseStream, AbstractStream):
 
     @staticmethod
     def empty() -> 'Stream':
@@ -81,7 +109,7 @@ class Stream(AbstractStream):
 
         async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
             async for i in iterable:
-                async for j in flat_mapper(i).collect(to_generator):
+                async for j in await flat_mapper(i).collect(to_generator):
                     yield j
 
         self._chain.append(fn)
@@ -140,20 +168,16 @@ class Stream(AbstractStream):
         return self
 
     # Terminals
-    def _compose(self, intermediaries: List[Callable], iterable: AsyncGenerator) -> AsyncGenerator:
-        if len(intermediaries) == 0:
-            return iterable
-        if len(intermediaries) == 1:
-            fn = intermediaries.pop(0)
-            return fn(iterable)
-        fn = intermediaries.pop(0)
-        return self._compose(intermediaries, fn(iterable))
+    async def collect(self, collector: Callable) -> Union[List, AsyncGenerator]:
+        collection = collector(await self._compose(self._chain, self._stream))
+        if isinstance(collection, AsyncGeneratorType):
+            return collection
+        else:
+            return await collection
 
-    def collect(self, collector: Callable) -> Union[List, AsyncGenerator]:
-        return collector(self._compose(self._chain, self._stream))
 
     async def reduce(self, identity: Union[T, R], accumulator: Accumulator) -> Union[T, R]:
-        async for n in self._compose(self._chain, self._stream):
+        async for n in await self._compose(self._chain, self._stream):
             if iscoroutinefunction(accumulator):
                 identity = await accumulator(identity, n)
             else:
@@ -161,7 +185,7 @@ class Stream(AbstractStream):
         return identity
 
     async def for_each(self, consumer: Callable[[T], Any]) -> None:
-        async for n in self._compose(self._chain, self._stream):
+        async for n in await self._compose(self._chain, self._stream):
             if iscoroutinefunction(consumer):
                 await consumer(n)
             else:
@@ -169,7 +193,7 @@ class Stream(AbstractStream):
         return None
 
     async def find_first(self) -> Optional[Any]:
-        async for n in self._compose(self._chain, self._stream):
+        async for n in await self._compose(self._chain, self._stream):
             return n
 
     async def max(self, comparator: Comparator) -> Optional[T]:
@@ -187,7 +211,7 @@ class Stream(AbstractStream):
 
     async def _min_max(self, comparator: Comparator) -> Optional[T]:
         found = None
-        async for n in self._compose(self._chain, self._stream):
+        async for n in await self._compose(self._chain, self._stream):
             if found is None:
                 found = n
                 continue
@@ -201,7 +225,7 @@ class Stream(AbstractStream):
         return found
 
     async def all_match(self, predicate: Predicate) -> bool:
-        async for n in self._compose(self._chain, self._stream):
+        async for n in await self._compose(self._chain, self._stream):
             if iscoroutinefunction(predicate):
                 if await predicate(n):
                     continue
@@ -215,7 +239,7 @@ class Stream(AbstractStream):
         return True
 
     async def none_match(self, predicate: Predicate) -> bool:
-        async for n in self._compose(self._chain, self._stream):
+        async for n in await self._compose(self._chain, self._stream):
             if iscoroutinefunction(predicate):
                 if await predicate(n):
                     return False
@@ -229,7 +253,7 @@ class Stream(AbstractStream):
         return True
 
     async def any_match(self, predicate: Predicate) -> bool:
-        async for n in self._compose(self._chain, self._stream):
+        async for n in await self._compose(self._chain, self._stream):
             if iscoroutinefunction(predicate):
                 if await predicate(n):
                     return True
@@ -244,6 +268,6 @@ class Stream(AbstractStream):
 
     async def count(self) -> int:
         c = 0
-        async for _ in self._compose(self._chain, self._stream):
+        async for _ in await self._compose(self._chain, self._stream):
             c += 1
         return c

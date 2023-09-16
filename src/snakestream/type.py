@@ -1,5 +1,5 @@
 import abc
-from typing import Any, AsyncGenerator, AsyncIterable, Awaitable, Callable, Generator, Iterable, Optional, TypeVar, Union
+from typing import Any, AsyncGenerator, AsyncIterable, Awaitable, Callable, Generator, Iterable, List, Optional, TypeVar, Union
 
 
 #
@@ -26,6 +26,51 @@ Accumulator = Callable[[T, Union[T, R]], Union[T, R]]
 #
 # Classes
 #
+class AbstractBaseStream(metaclass=abc.ABCMeta):
+
+    @abc.abstractclassmethod
+    def parallel() -> 'AbstractStream':
+        raise NotImplementedError
+
+    @abc.abstractclassmethod
+    def is_parallel() -> bool:
+        raise NotImplementedError
+
+    '''
+    @abc.abstractclassmethod
+    def close() -> None:
+        raise NotImplementedError
+
+    @abc.abstractclassmethod
+    def is_parallel() -> bool:
+        raise NotImplementedError
+
+    @abc.abstractclassmethod
+    def iterator() -> Iterable:
+        raise NotImplementedError
+
+    @abc.abstractclassmethod
+    def on_close(close_handler: Callable) -> 'AbstractStream':
+        raise NotImplementedError
+
+    @abc.abstractclassmethod
+    def parallel() -> 'AbstractStream':
+        raise NotImplementedError
+
+    @abc.abstractclassmethod
+    def sequential() -> 'AbstractStream':
+        raise NotImplementedError
+
+    @abc.abstractclassmethod
+    def spliterator() -> 'Spliterator[T]':
+        raise NotImplementedError
+
+    @abc.abstractclassmethod
+    def unordered() -> 'AbstractStream':
+        raise NotImplementedError
+    '''
+
+
 class AbstractStream(metaclass=abc.ABCMeta):
 
     @staticmethod
@@ -70,7 +115,7 @@ class AbstractStream(metaclass=abc.ABCMeta):
 
     # Terminals
     @abc.abstractclassmethod
-    def collect(self, collector: Callable) -> Union[AsyncGenerator, List]:
+    async def collect(self, collector: Callable) -> Union[AsyncGenerator, List]:
         raise NotImplementedError
 
     @abc.abstractclassmethod
@@ -108,6 +153,47 @@ class AbstractStream(metaclass=abc.ABCMeta):
     @abc.abstractclassmethod
     async def count(self) -> int:
         raise NotImplementedError
+
+    '''
+    @staticmethod
+    @abc.abstractclassmethod
+    async def of(self, *args: T) -> 'AbstractStream':
+        raise NotImplementedError
+
+    @staticmethod
+    @abc.abstractclassmethod
+    async def of(self, single_value: T) -> 'AbstractStream':
+        raise NotImplementedError
+
+
+    @abc.abstractclassmethod
+    async def skip(self, n: int) -> 'AbstractStream':
+        raise NotImplementedError
+
+    @abc.abstractclassmethod
+    async def to_array(self) -> List[Any]:
+        raise NotImplementedError
+
+    @abc.abstractclassmethod
+    async def flat_map_to_int(self, mapper: Callable[[T], int]) -> 'AbstractStream':
+        raise NotImplementedError
+
+    Supplier = Callable[[T], T]
+
+    @abc.abstractclassmethod
+    async def generate(self, s: Supplier) -> 'AbstractStream':
+        raise NotImplementedError
+
+    UnaryOperator = Callable[[T], T]
+
+    @abc.abstractclassmethod
+    async def iterate(self, seed: T, f: UnaryOperator) -> 'AbstractStream':
+        raise NotImplementedError
+
+    @abc.abstractclassmethod
+    async def limit(self, max_size: int) -> 'AbstractStream':
+        raise NotImplementedError
+    '''
 
 
 class AbstractStreamBuilder(metaclass=abc.ABCMeta):

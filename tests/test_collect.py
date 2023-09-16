@@ -7,7 +7,7 @@ from snakestream.collector import to_list, to_generator
 @pytest.mark.asyncio
 async def test_to_generator() -> None:
     # when
-    it = stream_of([1, 2, 3, 4]) \
+    it = await stream_of([1, 2, 3, 4]) \
         .collect(to_generator)
     # then
     assert await it.__anext__() == 1
@@ -22,7 +22,7 @@ async def test_to_generator() -> None:
 @pytest.mark.asyncio
 async def test_to_generator_with_null_in_stream() -> None:
     # when
-    it = stream_of([1, 2, None, 4]) \
+    it = await stream_of([1, 2, None, 4]) \
         .collect(to_generator)
     # then
     assert await it.__anext__() == 1
@@ -37,7 +37,7 @@ async def test_to_generator_with_null_in_stream() -> None:
 @pytest.mark.asyncio
 async def test_to_generator_with_empty_list_input() -> None:
     # when
-    it = stream_of([]) \
+    it = await stream_of([]) \
         .collect(to_generator)
     # then
     with pytest.raises(StopAsyncIteration):
