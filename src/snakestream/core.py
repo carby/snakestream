@@ -226,7 +226,14 @@ class Stream(BaseStream, AbstractStream):
                 consumer(n)
         return None
 
+    '''
     async def find_first(self) -> Optional[Any]:
+        # until we have ordered parallel stream then we
+        # cant do this one
+        return await self.find_any()
+    '''
+
+    async def find_any(self) -> Optional[Any]:
         async for n in self._compose():
             return n
 

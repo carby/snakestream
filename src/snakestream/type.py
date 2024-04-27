@@ -82,7 +82,7 @@ class AbstractStream(metaclass=abc.ABCMeta):
         raise NotImplementedError
 
     @abc.abstractclassmethod
-    async def find_first(self) -> Optional[Any]:
+    async def find_any(self) -> Optional[Any]:
         raise NotImplementedError
 
     @abc.abstractclassmethod

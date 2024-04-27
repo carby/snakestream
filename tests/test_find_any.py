@@ -4,7 +4,7 @@ from snakestream import stream_of
 
 
 @pytest.mark.asyncio
-async def test_find_first() -> None:
+async def test_find_any() -> None:
     counter = 0
 
     def incr_counter(c):
@@ -16,7 +16,7 @@ async def test_find_first() -> None:
     it = await stream_of([1, 2, 3, 4, 5, 6, 1, 2, 3, 4, 5, 6]) \
         .map(incr_counter) \
         .filter(lambda x: x == 6) \
-        .find_first()
+        .find_any()
 
     # then
     assert it == 6
@@ -24,7 +24,7 @@ async def test_find_first() -> None:
 
 
 @pytest.mark.asyncio
-async def test_find_first_found_none() -> None:
+async def test_find_any_found_none() -> None:
     counter = 0
 
     def incr_counter(c):
@@ -36,7 +36,7 @@ async def test_find_first_found_none() -> None:
     it = await stream_of([1, 2, 3, 4, 5, 6, 1, 2, 3, 4, 5, 6]) \
         .map(incr_counter) \
         .filter(lambda x: x == 100) \
-        .find_first()
+        .find_any()
 
     # then
     assert it is None
