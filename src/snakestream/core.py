@@ -17,12 +17,8 @@ PROCESSES: int = 4
 
 
 async def _normalize(iterable: Streamable) -> AsyncGenerator:
-    if isinstance(iterable, AsyncGenerator) or isinstance(iterable, AsyncIterable):
-        async for i in iterable:
-            yield i
-    else:
-        for i in iterable:
-            yield i
+    for i in iterable:
+        yield i
 
 
 async def _concat(a: 'Stream', b: 'Stream') -> AsyncGenerator:
@@ -34,7 +30,10 @@ async def _concat(a: 'Stream', b: 'Stream') -> AsyncGenerator:
 
 class BaseStream():
     def __init__(self, streamable: Streamable) -> None:
-        self._stream: AsyncGenerator = _normalize(streamable)
+        if isinstance(streamable, AsyncGenerator) or isinstance(streamable, AsyncIterable):
+            self._stream = streamable
+        else:
+            self._stream: AsyncGenerator = _normalize(streamable)
         self._chain: List[Callable] = []
         self.is_parallel = False
 
