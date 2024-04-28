@@ -69,3 +69,34 @@ e
 These are a list of the known breaking changes. Until release 1.0.0 focus will be on implementing features and changing things that does not align with how streams work in java.
 - **0.0.5 -> 0.0.6:** The `stream()` function has been renamed `stream_of()`. So rename all imports of that function, and it should be OK
 - **0.1.0 -> 0.2.0:** The `unique()` function has been renamed `distinct()`. So rename all imports of that function, and it should be OK
+
+### Left to do:
+
+BaseStream:
+close()
+isParallel()
+iterator()
+onClose(Runnable closeHandler)
+spliterator()
+unordered()
+
+Stream:
+collect(Supplier<R> supplier, BiConsumer<R,? super T> accumulator, BiConsumer<R,R> combiner)
+flatMapToDouble(Function<? super T,? extends DoubleStream> mapper)
+flatMapToInt(Function<? super T,? extends IntStream> mapper)
+flatMapToLong(Function<? super T,? extends LongStream> mapper)
+forEachOrdered(Consumer<? super T> action)
+generate(Supplier<T> s)
+iterate(T seed, UnaryOperator<T> f)
+limit(long maxSize)
+mapToDouble(ToDoubleFunction<? super T> mapper)
+mapToInt(ToIntFunction<? super T> mapper)
+mapToLong(ToLongFunction<? super T> mapper)
+of(T... values)
+of(T t)
+
+reduce(BinaryOperator<T> accumulator) // have done the one with the identity
+skip(long n)
+sorted() // have done the one with a comparator
+toArray()
+toArray(IntFunction<A[]> generator)
