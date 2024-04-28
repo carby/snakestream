@@ -3,7 +3,7 @@ import asyncio
 import pytest
 
 from conftest import MyObject
-from snakestream import stream_of
+from snakestream import Stream
 from snakestream.collector import to_list
 
 obj1 = MyObject(1, "Object1")
@@ -23,7 +23,7 @@ input_list = [
 @pytest.mark.asyncio
 async def test_ok() -> None:
     # when
-    it = await stream_of(input_list) \
+    it = await Stream.of(input_list) \
         .peek(lambda x: x) \
         .collect(to_list)
     # then
@@ -45,7 +45,7 @@ async def test_ok_async_function() -> None:
         return
 
     # when
-    it = await stream_of(input_list) \
+    it = await Stream.of(input_list) \
         .peek(some_func) \
         .collect(to_list)
     # then
@@ -62,7 +62,7 @@ async def test_ok_async_function() -> None:
 @pytest.mark.asyncio
 async def test_empty_stream() -> None:
     # when
-    it = await stream_of([]) \
+    it = await Stream.of([]) \
         .peek(lambda x: x) \
         .collect(to_list)
     # then
@@ -72,7 +72,7 @@ async def test_empty_stream() -> None:
 @pytest.mark.asyncio
 async def test_multiple_calls() -> None:
     # when
-    it = await stream_of(input_list) \
+    it = await Stream.of(input_list) \
         .peek(lambda x: x) \
         .peek(lambda x: x) \
         .collect(to_list)
@@ -91,7 +91,7 @@ async def test_mutate_internal_state() -> None:
         x.name = x.name.lower()
 
     # when
-    it = await stream_of(input_list) \
+    it = await Stream.of(input_list) \
         .peek(lower_name) \
         .collect(to_list)
     # then

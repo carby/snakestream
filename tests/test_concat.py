@@ -1,7 +1,6 @@
 
 import pytest
 
-from snakestream import stream_of
 from snakestream.collector import to_generator
 from snakestream.core import Stream
 
@@ -9,8 +8,8 @@ from snakestream.core import Stream
 @pytest.mark.asyncio
 async def test_concat_simple() -> None:
     # when
-    a = stream_of([1, 2, 3, 4])
-    b = stream_of([5, 6, 7])
+    a = Stream.of([1, 2, 3, 4])
+    b = Stream.of([5, 6, 7])
 
     generator = (await Stream.concat(a, b)) \
         .collect(to_generator)
@@ -31,9 +30,9 @@ async def test_concat_simple() -> None:
 @pytest.mark.asyncio
 async def test_concat_with_intermediaries() -> None:
     # when
-    a = stream_of([1, 2, 3, 4]) \
+    a = Stream.of([1, 2, 3, 4]) \
         .filter(lambda x: x < 3)
-    b = stream_of([5, 6, 7, 7]) \
+    b = Stream.of([5, 6, 7, 7]) \
         .distinct()
 
     generator = (await Stream.concat(a, b)) \
