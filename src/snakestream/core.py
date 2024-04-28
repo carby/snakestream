@@ -104,6 +104,10 @@ class Stream(BaseStream, AbstractStream):
         super().__init__(streamable)
 
     @staticmethod
+    def of(iterable: Streamable) -> 'Stream':
+        return Stream(iterable)
+
+    @staticmethod
     def empty() -> 'Stream':
         return Stream([])
 

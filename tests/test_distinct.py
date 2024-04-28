@@ -1,6 +1,6 @@
 import pytest
 
-from snakestream import stream_of
+from snakestream import Stream
 from snakestream.collector import to_list
 from conftest import MyObject
 
@@ -8,7 +8,7 @@ from conftest import MyObject
 @pytest.mark.asyncio
 async def test_unique() -> None:
     # when
-    it = await stream_of([1, 7, 3, 7, 5, 6, 0, 6, 6]) \
+    it = await Stream.of([1, 7, 3, 7, 5, 6, 0, 6, 6]) \
         .distinct() \
         .collect(to_list)
     # then
@@ -18,7 +18,7 @@ async def test_unique() -> None:
 @pytest.mark.asyncio
 async def test_unique_empty_list() -> None:
     # when
-    it = await stream_of([]) \
+    it = await Stream.of([]) \
         .distinct() \
         .collect(to_list)
     # then
@@ -28,7 +28,7 @@ async def test_unique_empty_list() -> None:
 @pytest.mark.asyncio
 async def test_unique_list_with_no_dupes() -> None:
     # when
-    it = await stream_of([1, 2, 3, 4]) \
+    it = await Stream.of([1, 2, 3, 4]) \
         .distinct() \
         .collect(to_list)
     # then
@@ -40,7 +40,7 @@ async def test_unique_object_list() -> None:
     # when
     input_list = [MyObject(1, "object1"), MyObject(2, "object2"), MyObject(3, "object3"), MyObject(2, "object2"),
                   MyObject(3, "object3")]
-    it = await stream_of(input_list) \
+    it = await Stream.of(input_list) \
         .distinct() \
         .collect(to_list)
     # then

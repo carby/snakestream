@@ -1,7 +1,7 @@
 import pytest
 import asyncio
 
-from snakestream import stream_of
+from snakestream import Stream
 from snakestream.collector import to_generator
 from snakestream.exception import StreamBuildException
 
@@ -14,8 +14,8 @@ async def async_flat_map(x: int) -> int:
 @pytest.mark.asyncio
 async def test_flat_map() -> None:
     # when
-    it = stream_of([[1, 2], [3, 4]]) \
-        .flat_map(lambda x: stream_of(x)) \
+    it = Stream.of([[1, 2], [3, 4]]) \
+        .flat_map(lambda x: Stream.of(x)) \
         .collect(to_generator)
 
     # then
@@ -33,8 +33,8 @@ async def test_flat_map() -> None:
 
 @pytest.mark.asyncio
 async def test_flat_map_no_mixed_list() -> None:
-    it = stream_of([[1, 2], [3, 4], 5]) \
-        .flat_map(lambda x: stream_of(x)) \
+    it = Stream.of([[1, 2], [3, 4], 5]) \
+        .flat_map(lambda x: Stream.of(x)) \
         .collect(to_generator)
 
     # then
@@ -54,7 +54,7 @@ async def test_flat_map_no_mixed_list() -> None:
 async def test_flat_map_async_function() -> None:
     # when
     try:
-        stream_of([[1, 2], [3, 4], 5]) \
+        Stream.of([[1, 2], [3, 4], 5]) \
             .flat_map(async_flat_map) \
             .collect(to_generator)
     except StreamBuildException:

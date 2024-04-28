@@ -1,7 +1,7 @@
 import pytest
 import asyncio
 
-from snakestream import stream_of
+from snakestream import Stream
 from snakestream.collector import to_list
 
 
@@ -9,7 +9,7 @@ from snakestream.collector import to_list
 async def test_sorted() -> None:
     outset = [1, 5, 3, 4, 5, 2]
 
-    actual = await stream_of(outset) \
+    actual = await Stream.of(outset) \
         .sorted() \
         .collect(to_list)
 
@@ -20,7 +20,7 @@ async def test_sorted() -> None:
 async def test_sorted_reverse() -> None:
     outset = [1, 5, 3, 4, 5, 2]
 
-    actual = await stream_of(outset) \
+    actual = await Stream.of(outset) \
         .sorted(reverse=True) \
         .collect(to_list)
 
@@ -43,7 +43,7 @@ async def test_sorted_comparator() -> None:
         else:
             return 0
 
-    actual = await stream_of(outset) \
+    actual = await Stream.of(outset) \
         .sorted(comparator=compare) \
         .collect(to_list)
 
@@ -67,7 +67,7 @@ async def test_sorted_async_comparator_and_reverse() -> None:
         else:
             return -1
 
-    actual = await stream_of(outset) \
+    actual = await Stream.of(outset) \
         .sorted(comparator=compare_async, reverse=True) \
         .collect(to_list)
 

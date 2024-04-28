@@ -2,14 +2,14 @@ import time
 import pytest
 import asyncio
 
-from snakestream import stream_of
+from snakestream import Stream
 from snakestream.collector import to_list
 
 
 @pytest.mark.asyncio
 async def test_parallel_simple(int_2_letter) -> None:
     # when
-    it = await stream_of([1, 2, 3, 4, 1, 2, 3, 4]) \
+    it = await Stream.of([1, 2, 3, 4, 1, 2, 3, 4]) \
         .parallel() \
         .map(lambda x: int_2_letter[x]) \
         .distinct() \
@@ -30,7 +30,7 @@ async def test_parallel_is_faster_than_sequential() -> None:
 
     # when
     start_parallel = time.time()
-    await stream_of([1, 2, 3, 4, 1, 2, 3, 4]) \
+    await Stream.of([1, 2, 3, 4, 1, 2, 3, 4]) \
         .parallel() \
         .map(sleep) \
         .distinct() \
@@ -39,7 +39,7 @@ async def test_parallel_is_faster_than_sequential() -> None:
     time_parallel = end_parallel - start_parallel
 
     start_sequential = time.time()
-    await stream_of([1, 2, 3, 4, 1, 2, 3, 4]) \
+    await Stream.of([1, 2, 3, 4, 1, 2, 3, 4]) \
         .map(sleep) \
         .distinct() \
         .collect(to_list)

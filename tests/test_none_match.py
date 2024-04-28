@@ -2,26 +2,26 @@ import asyncio
 
 import pytest
 
-from snakestream import stream_of
+from snakestream import Stream
 
 
 @pytest.mark.asyncio
 async def test_empty_stream() -> None:
-    it = await stream_of([]) \
+    it = await Stream.of([]) \
         .none_match(lambda x: x > 5)
     assert it is True
 
 
 @pytest.mark.asyncio
 async def test_simple() -> None:
-    it = await stream_of([1, 2, 3, 2, 3, 1, 2]) \
+    it = await Stream.of([1, 2, 3, 2, 3, 1, 2]) \
         .none_match(lambda x: x > 5)
     assert it is True
 
 
 @pytest.mark.asyncio
 async def test_some_matches() -> None:
-    it = await stream_of([1, 2, 3, 2, 3, 1, 2, 5, 6, 7]) \
+    it = await Stream.of([1, 2, 3, 2, 3, 1, 2, 5, 6, 7]) \
         .none_match(lambda x: x < 5)
     assert it is False
 
@@ -32,13 +32,13 @@ async def test_simple_async() -> None:
         await asyncio.sleep(0.01)
         return x > 5
 
-    it = await stream_of([1, 2, 3, 2, 3, 1, 2]) \
+    it = await Stream.of([1, 2, 3, 2, 3, 1, 2]) \
         .none_match(async_predicate)
     assert it is True
 
 
 @pytest.mark.asyncio
 async def test_all_matches() -> None:
-    it = await stream_of([1, 2, 3, 2, 3, 1, 2]) \
+    it = await Stream.of([1, 2, 3, 2, 3, 1, 2]) \
         .none_match(lambda x: x < 5)
     assert it is False
