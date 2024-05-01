@@ -10,15 +10,24 @@ from snakestream.collector import to_generator
 from snakestream.exception import StreamBuildException
 from snakestream.sort import merge_sort
 from snakestream.type import R, T, AbstractStream, AbstractStreamBuilder, Accumulator, Comparator, Consumer, \
-    FlatMapper, Mapper, Predicate, Streamable
+    FlatMapper, Mapper, Predicate
 
 
 PROCESSES: int = 4
 
 
-async def _normalize(iterable: Streamable) -> AsyncGenerator:
-    for i in iterable:
-        yield i
+async def _normalize(source: Any) -> AsyncGenerator:
+    if hasattr(source, '__iter__') or hasattr(source, '__next__'):
+        for i in source:
+            yield i
+    else:
+        yield source
+
+
+def _accept(source: Any) -> Optional[AsyncGenerator]:
+    if isinstance(source, AsyncGenerator) or isinstance(source, AsyncIterable):
+        return source
+    return None
 
 
 async def _concat(a: 'Stream', b: 'Stream') -> AsyncGenerator:
@@ -29,11 +38,8 @@ async def _concat(a: 'Stream', b: 'Stream') -> AsyncGenerator:
 
 
 class BaseStream():
-    def __init__(self, streamable: Streamable) -> None:
-        if isinstance(streamable, AsyncGenerator) or isinstance(streamable, AsyncIterable):
-            self._stream = streamable
-        else:
-            self._stream: AsyncGenerator = _normalize(streamable)
+    def __init__(self, source: Any) -> None:
+        self._stream = _accept(source) or _normalize(source)
         self._chain: List[Callable] = []
         self.is_parallel = False
 
@@ -100,12 +106,12 @@ class BaseStream():
 # If you add a method here, also add it to AbstractStream
 #
 class Stream(BaseStream, AbstractStream):
-    def __init__(self, streamable: Streamable) -> None:
-        super().__init__(streamable)
+    def __init__(self, source: Any) -> None:
+        super().__init__(source)
 
     @staticmethod
-    def of(iterable: Streamable) -> 'Stream':
-        return Stream(iterable)
+    def of(source: Any) -> 'Stream':
+        return Stream(source)
 
     @staticmethod
     def empty() -> 'Stream':

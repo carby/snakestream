@@ -8,14 +8,12 @@ from typing import Any, AsyncGenerator, AsyncIterable, Awaitable, Callable, Gene
 T = TypeVar('T')
 R = TypeVar('R')
 
-Streamable = Union[Iterable, AsyncIterable, Generator, AsyncGenerator]
-
 Predicate = Callable[[T], Union[bool, Awaitable[bool]]]
 
 # Intermediaries
 Filterer = Callable[[T], T]
 Mapper = Callable[[T], Optional[R]]
-FlatMapper = Callable[[Streamable], 'AbstractStream']
+FlatMapper = Callable[[Union[Iterable, AsyncIterable, Generator, AsyncGenerator]], 'AbstractStream']
 Comparator = Callable[[T, T], Union[bool, Awaitable[bool]]]
 Consumer = Callable[[T], T]
 
@@ -27,6 +25,11 @@ Accumulator = Callable[[T, Union[T, R]], Union[T, R]]
 # Classes
 #
 class AbstractStream(metaclass=abc.ABCMeta):
+
+    @staticmethod
+    @abc.abstractclassmethod
+    def of(source: Any) -> 'AbstractStream':
+        raise NotImplementedError
 
     @staticmethod
     @abc.abstractclassmethod
