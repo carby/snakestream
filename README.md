@@ -93,7 +93,6 @@ limit(long maxSize)
 mapToDouble(ToDoubleFunction<? super T> mapper)
 mapToInt(ToIntFunction<? super T> mapper)
 mapToLong(ToLongFunction<? super T> mapper)
-of(T t)
 
 reduce(BinaryOperator<T> accumulator) // have done the one with the identity
 skip(long n)

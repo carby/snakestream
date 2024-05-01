@@ -32,8 +32,8 @@ async def test_flat_map() -> None:
 
 
 @pytest.mark.asyncio
-async def test_flat_map_no_mixed_list() -> None:
-    it = Stream.of([[1, 2], [3, 4], 5]) \
+async def test_flat_map_mixed_list() -> None:
+    it = Stream.of([[1, 2], [3, 4], 5, [6, 7], 8]) \
         .flat_map(lambda x: Stream.of(x)) \
         .collect(to_generator)
 
@@ -42,9 +42,13 @@ async def test_flat_map_no_mixed_list() -> None:
     assert await it.__anext__() == 2
     assert await it.__anext__() == 3
     assert await it.__anext__() == 4
+    assert await it.__anext__() == 5
+    assert await it.__anext__() == 6
+    assert await it.__anext__() == 7
+    assert await it.__anext__() == 8
     try:
         await it.__anext__()
-    except TypeError:
+    except StopAsyncIteration:
         pass
     else:
         assert False
