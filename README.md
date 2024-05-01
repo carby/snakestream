@@ -67,7 +67,7 @@ e
 
 ### Migration
 These are a list of the known breaking changes. Until release 1.0.0 focus will be on implementing features and changing things that does not align with how streams work in java.
-- **0.2.4 -> 0.2.5:** stream_of() has been removed in favour of Stream.of() for getting closer to the java api.
+- **0.2.4 -> 0.3.0:** stream_of() has been removed in favour of Stream.of() for getting closer to the java api.
 - **0.1.0 -> 0.2.0:** The `unique()` function has been renamed `distinct()`. So rename all imports of that function, and it should be OK
 - **0.0.5 -> 0.0.6:** The `stream()` function has been renamed `stream_of()`. So rename all imports of that function, and it should be OK
 
