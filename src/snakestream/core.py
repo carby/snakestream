@@ -52,54 +52,16 @@ class BaseStream():
         fn = intermediaries.pop(0)
         return self._sequential(intermediaries, fn(iterable))
 
-    async def _parallel(
-        self,
-        intermediaries: List[Callable],
-        iterable: AsyncGenerator,
-        processes: int = PROCESSES
-    ) -> AsyncGenerator:
-        async_iterators = [self._sequential(intermediaries[:], iterable) for n in range(processes)]
-        tasks = [asyncio.ensure_future(n.__anext__()) for n in async_iterators]
-
-        while any([n is not None for n in tasks]):
-
-            waitlist = filter(lambda n: n is not None, tasks)
-            done, _ = await asyncio.wait(waitlist, return_when=asyncio.FIRST_COMPLETED)
-
-            for task in done:
-                task_idx = tasks.index(task)
-                try:
-                    result = tasks[task_idx].result()
-                    tasks[task_idx] = asyncio.ensure_future(async_iterators[task_idx].__anext__())
-                    yield result
-                except StopAsyncIteration:
-                    tasks[task_idx] = None
-
     def _compose(self) -> AsyncGenerator:
-        if self.is_parallel:
-            return self._parallel(self._chain, self._stream)
-        else:
-            return self._sequential(self._chain, self._stream)
+        return self._sequential(self._chain, self._stream)
 
     def sequential(self) -> 'Stream':
-        self.stream = self._compose()
-        self.is_parallel = False
-
-        async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
-            async for i in iterable:
-                yield i
-        self._chain = [fn]
-        return self
+        new_source = self._compose()
+        return Stream(new_source);
 
     def parallel(self) -> 'Stream':
-        self.stream = self._compose()
-        self.is_parallel = True
-
-        async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
-            async for i in iterable:
-                yield i
-        self._chain = [fn]
-        return self
+        new_source = self._compose()
+        return ParallelStream(new_source);
 
 
 #
@@ -322,3 +284,35 @@ class Stream(BaseStream, AbstractStream):
         async for _ in self._compose():
             c += 1
         return c
+
+
+class ParallelStream(Stream):
+    def __init__(self, source: Any) -> None:
+        super().__init__(source)
+        self.is_parallel = True
+
+    def _compose(self) -> AsyncGenerator:
+        return self._parallel(self._chain, self._stream)
+
+    async def _parallel(
+        self,
+        intermediaries: List[Callable],
+        iterable: AsyncGenerator,
+        processes: int = PROCESSES
+    ) -> AsyncGenerator:
+        async_iterators = [self._sequential(intermediaries[:], iterable) for n in range(processes)]
+        tasks = [asyncio.ensure_future(n.__anext__()) for n in async_iterators]
+
+        while any([n is not None for n in tasks]):
+
+            waitlist = filter(lambda n: n is not None, tasks)
+            done, _ = await asyncio.wait(waitlist, return_when=asyncio.FIRST_COMPLETED)
+
+            for task in done:
+                task_idx = tasks.index(task)
+                try:
+                    result = tasks[task_idx].result()
+                    tasks[task_idx] = asyncio.ensure_future(async_iterators[task_idx].__anext__())
+                    yield result
+                except StopAsyncIteration:
+                    tasks[task_idx] = None

@@ -49,3 +49,20 @@ async def test_parallel_is_faster_than_sequential() -> None:
     # then
     # usually something like 0,2 compared to 0.8
     assert (time_parallel) < (time_sequential)
+
+
+@pytest.mark.asyncio
+async def test_sequential_switch_to_sequential(int_2_letter) -> None:
+    # when
+    it = await Stream.of([1, 2, 3, 4, 1, 2, 3, 4]) \
+        .sequential() \
+        .map(lambda x: int_2_letter[x]) \
+        .parallel() \
+        .distinct() \
+        .collect(to_list)
+    # then
+    assert 4 == len(it)
+    assert 'a' in it
+    assert 'b' in it
+    assert 'c' in it
+    assert 'd' in it
