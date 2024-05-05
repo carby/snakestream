@@ -65,6 +65,21 @@ d
 e
 ```
 
+### Auto Close
+Contextlib already supports something that is very similar to the AutoClose from Java. Just as long as your class has the .close() attribute it will be called. In this case it's very fortunate that the Java API and contextlib play so nice together. Here is an example:
+
+```
+from contextlib import closing
+
+with closing(Stream.of([1, 2, 3, 4, 1, 2, 3, 4])) as stream:
+    it = await stream \
+        .map(lambda x: int_2_letter[x]) \
+        .distinct() \
+        .collect(to_list)
+```
+
+This can be especially useful if you are subclassing Stream to do something that is kinda like IO related and you have some resource that needs to get relased after the stream. You would then just add the logic to do that in your .close() method and contextlib will handle the rest
+
 ### Migration
 These are a list of the known breaking changes. Until release 1.0.0 focus will be on implementing features and changing things that does not align with how streams work in java.
 - **0.2.4 -> 0.3.0:** stream_of() has been removed in favour of Stream.of() for getting closer to the java api.
@@ -74,10 +89,8 @@ These are a list of the known breaking changes. Until release 1.0.0 focus will b
 ### Left to do:
 
 BaseStream:
-close()
 isParallel()
 iterator()
-onClose(Runnable closeHandler)
 spliterator()
 unordered()
 

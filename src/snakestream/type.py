@@ -16,6 +16,7 @@ Mapper = Callable[[T], Optional[R]]
 FlatMapper = Callable[[Union[Iterable, AsyncIterable, Generator, AsyncGenerator]], 'AbstractStream']
 Comparator = Callable[[T, T], Union[bool, Awaitable[bool]]]
 Consumer = Callable[[T], T]
+CloseHandler = Callable[[], None]
 
 # Terminals
 Accumulator = Callable[[T, Union[T, R]], Union[T, R]]

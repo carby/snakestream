@@ -13,4 +13,5 @@ pyparsing
 pytest
 pytest-asyncio
 pytest-cov
+pytest-mock
 tomli
