@@ -9,7 +9,7 @@ from typing import Callable, Optional, AsyncIterable, List, \
 from snakestream.collector import to_generator
 from snakestream.exception import StreamBuildException
 from snakestream.sort import merge_sort
-from snakestream.type import R, T, AbstractStream, AbstractStreamBuilder, Accumulator, Comparator, Consumer, \
+from snakestream.type import R, T, AbstractStream, AbstractStreamBuilder, Accumulator, CloseHandler, Comparator, Consumer, \
     FlatMapper, Mapper, Predicate
 
 
@@ -42,6 +42,7 @@ class BaseStream():
         self._stream = _accept(source) or _normalize(source)
         self._chain: List[Callable] = []
         self.is_parallel = False
+        self._close_handlers = []
 
     def _sequential(self, intermediaries: List[Callable], iterable: AsyncGenerator) -> AsyncGenerator:
         if len(intermediaries) == 0:
@@ -57,19 +58,28 @@ class BaseStream():
 
     def sequential(self) -> 'Stream':
         new_source = self._compose()
-        return Stream(new_source);
+        return Stream(new_source, self._close_handlers)
 
     def parallel(self) -> 'Stream':
         new_source = self._compose()
-        return ParallelStream(new_source);
+        return ParallelStream(new_source, self._close_handlers)
+
+    def on_close(self, close_handler: CloseHandler) -> 'Stream':
+        self._close_handlers.append(close_handler)
+        return self
+
+    def close(self) -> None:
+        for close_handler in self._close_handlers:
+            close_handler()
 
 
 #
 # If you add a method here, also add it to AbstractStream
 #
 class Stream(BaseStream, AbstractStream):
-    def __init__(self, source: Any) -> None:
+    def __init__(self, source: Any, close_handlers: Optional[List[CloseHandler]] = None) -> None:
         super().__init__(source)
+        self._close_handlers = close_handlers or []
 
     @staticmethod
     def of(source: Any) -> 'Stream':
@@ -287,9 +297,9 @@ class Stream(BaseStream, AbstractStream):
 
 
 class ParallelStream(Stream):
-    def __init__(self, source: Any) -> None:
+    def __init__(self, source: Any, close_handlers: Optional[List[CloseHandler]] = None) -> None:
         super().__init__(source)
-        self.is_parallel = True
+        self._close_handlers = close_handlers or []
 
     def _compose(self) -> AsyncGenerator:
         return self._parallel(self._chain, self._stream)
