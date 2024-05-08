@@ -1,35 +1,13 @@
 # Snakestream
-**Java like streams for snakes**
+*Streams like in java, but for snakes*
 
-This is a python streaming api with witch you can get a similar experience as with the Java streams api from Java 8. There is no feature parity, what has been done so far is a beginning, and we will see where the road takes us.
-
-### Features
-- Create a stream from a List, Generator or AsyncGenerator.
-- Process your stream with both synchronous or asynchronous functions.
-	- map()
-	- filter()
-	- flat_map()
-    - sorted()
-    - distinct()
-    - peek()
-- Terminal functions include:
-	- collect()
-	- reduce()
-    - for_each()
-    - max()
-    - min()
-    - find_fist()
-    - all_match()
-
-### Observe
-This library is currently under heavy development and there will be breakage in the current phase. When version 1.0.0 is realeased, only then will backwards compatability be the top priority. Please refer to [Migration](#migration).
+This is a python streaming api with witch you can get a similar experience as with the Java streams api from Java 8. Once we reach some sort of feature parity with Java 8 then maybe we move on to implement the improvements in Java 9. However there will not be a complete feature parity because the languages are different. Prime example is that we dont really speak about arrays in python but, there we use lists or sets. Another example in java streams a major point are the functional interfaces, however python is a functional language, that means that Suppliers and Consumers and all of that stuff can be simply implemented in python with just regular functional programming. So that's the road map as of now, we will get as close as we can with a reasonable effort put into it. Let's go straight to it now and look at some example code.
 
 
-### Usage
-A simple int stream with `.map()` and `.filter()`
+## Usage
 ```python
 import asyncio
-from snakestream import stream_of
+from snakestream import Stream
 from snakestream.collector import to_generator
 
 int_2_letter = {
@@ -58,17 +36,43 @@ async def main():
 asyncio.run(main())
 
 ```
-Then in the shell
-```shell
+Notice how the stream returns a generator. We could also have awaited the stream and collected to a list just to give an idea of what could be done.
+
+When we run this code the output becomes:
+
+```bash
 ~/t/test> python test.py
 d
 e
 ```
 
+### Features
+- Create a stream from a List, Generator, AsyncGenerator, Itertor, AsyncIterator or just an object
+- Process your stream with both synchronous or asynchronous functions.
+	- map()
+	- filter()
+	- flat_map()
+    - sorted()
+    - distinct()
+    - peek()
+- Terminal functions include:
+	- collect()
+	- reduce()
+    - for_each()
+    - max()
+    - min()
+    - find_fist()
+    - all_match()
+
+### Observe
+This library is currently under heavy development and there will be breakage in the current phase. When version 1.0.0 is realeased, only then will backwards compatability be the top priority. Please refer to [Migration](#migration).
+
+
+
 ### Auto Close
 Contextlib already supports something that is very similar to the AutoClose from Java. Just as long as your class has the .close() attribute it will be called. In this case it's very fortunate that the Java API and contextlib play so nice together. Here is an example:
 
-```
+```python
 from contextlib import closing
 
 with closing(Stream.of([1, 2, 3, 4, 1, 2, 3, 4])) as stream:
