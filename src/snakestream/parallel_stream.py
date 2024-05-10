@@ -34,3 +34,6 @@ class ParallelStream(Stream):
                     yield result
                 except StopAsyncIteration:
                     tasks[task_idx] = None
+
+    def is_parallel(self) -> bool:
+        return True

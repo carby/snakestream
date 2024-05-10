@@ -24,7 +24,6 @@ class BaseStream():
     def __init__(self, source: Any) -> None:
         self._stream = _accept(source) or _normalize(source)
         self._chain: List[Callable] = []
-        self.is_parallel = False
         self._close_handlers = []
 
     def _sequential(self, intermediaries: List[Callable], iterable: AsyncGenerator) -> AsyncGenerator:
@@ -56,3 +55,6 @@ class BaseStream():
     def close(self) -> None:
         for close_handler in self._close_handlers:
             close_handler()
+
+    def is_parallel(self) -> bool:
+        return False

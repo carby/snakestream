@@ -54,26 +54,14 @@ Once we reach some sort of feature parity with Java 8 then maybe we move on to i
 
 ## Features
 
+> [!NOTE]
+> This library is under development and has not reached version 1.0 yet. Backwards compatability can still be broken.
+
 - Create a stream from a List, Generator, AsyncGenerator, Itertor, AsyncIterator or just an object
 - Process your stream with both synchronous or asynchronous functions.
-	- map()
-	- filter()
-	- flat_map()
-    - sorted()
-    - distinct()
-    - peek()
-- Terminal functions include:
-	- collect()
-	- reduce()
-    - for_each()
-    - max()
-    - min()
-    - find_fist()
-    - all_match()
-
-### Observe!
-
-This library is currently under development and there will be breakage in the current phase. When version 1.0.0 is realeased, only then will backwards compatability be the top priority. Please refer to [Migration](#migration).
+- Switch between parallel and sequential mode
+- [Autoclose](#auto-close) streams with `contextlib`
+- Generate indefinite streams [simpler than in Java](#the-generate-function)
 
 ### Auto Close
 
@@ -95,6 +83,19 @@ This can be especially useful if you are subclassing Stream to do something that
 
 In snakestream this has been omitted since python has generators and those can be sent in as a source with `Stream.of()`
 
+## API
+### BaseStream
+
+| function      | type     | summary                                                                                             |
+| ------------- | ---------| --------------------------------------------------------------------------------------------------- |
+| is_parallel() | instance | Returns whether this stream, if a terminal operation were to be executed, would execute in parallel |
+
+### Stream
+
+| function       | type   | summary                                                                     |
+| -------------- | ------ | --------------------------------------------------------------------------- |
+| ~~generate()~~ | static | Not implemented because we can send in generators directly to `Stream.of()` |
+
 ## Migration
 These are a list of the known breaking changes. Until release 1.0.0 focus will be on implementing features and changing things that does not align with how streams work in java.
 - **0.2.4 -> 0.3.0:** `stream_of()` has been removed in favour of `Stream.of()` for getting closer to the java api.
@@ -104,7 +105,6 @@ These are a list of the known breaking changes. Until release 1.0.0 focus will b
 ## Left to do:
 
 BaseStream:
-- isParallel()
 - iterator()
 - spliterator()
 - unordered()
@@ -115,7 +115,6 @@ Stream:
 - flatMapToInt(Function<? super T,? extends IntStream> mapper)
 - flatMapToLong(Function<? super T,? extends LongStream> mapper)
 - forEachOrdered(Consumer<? super T> action)
-- generate(Supplier<T> s)
 - iterate(T seed, UnaryOperator<T> f)
 - limit(long maxSize)
 - mapToDouble(ToDoubleFunction<? super T> mapper)
