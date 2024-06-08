@@ -3,7 +3,7 @@ from contextlib import closing
 import pytest
 
 from snakestream.collector import to_list
-from snakestream.core import Stream
+from snakestream.stream import Stream
 
 
 @pytest.mark.asyncio
