@@ -1,11 +1,10 @@
-
 from typing import List
 
-from snakestream.core import Stream
+from snakestream.stream import Stream
 from snakestream.type import T
 
 
-class StreamBuilder:
+class StreamBuilder():
     def __init__(self) -> None:
         self._elements: List[T] = []
 
