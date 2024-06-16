@@ -86,15 +86,32 @@ In snakestream this has been omitted since python has generators and those can b
 ## API
 ### BaseStream
 
-| function      | type     | summary                                                                                             |
-| ------------- | ---------| --------------------------------------------------------------------------------------------------- |
-| is_parallel() | instance | Returns whether this stream, if a terminal operation were to be executed, would execute in parallel |
+| function       | returns  | type     | summary                                                                                             |
+| -------------- | -------- | ---------| --------------------------------------------------------------------------------------------------- |
+| is_parallel()  | bool     | instance | Returns whether this stream, if a terminal operation were to be executed, would execute in parallel |
 
 ### Stream
 
-| function       | type   | summary                                                                     |
-| -------------- | ------ | --------------------------------------------------------------------------- |
-| ~~generate()~~ | static | Not implemented because we can send in generators directly to `Stream.of()` |
+| done | function                        | returns                     | type     | summary                                                                                 |
+| ---- | ------------------------------- | --------------------------- | ---------|---------------------------------------------------------------------------------------- |
+| [x] | all_match(predicate: Predicate) | bool                        | instance | Returns whether all elements of this stream match the provided predicate                |
+| [x] | any_match(predicate: Predicate) | bool                        | instance | Returns whether any elements of this stream match the provided predicate                |
+| [x] | builder()                       | StreamBuilder               | static   | Returns a builder for a Stream                                                          |
+| [x] | collect(collector: Callable)    | Union[List, AsyncGenerator] | instance | Performs a mutable reduction operation on the elements of this stream using a Collector |
+| [x] | concat(a: Stream, b: Stream)    | Stream                      | static   | Creates a lazily concatenated stream whose elements are all the elements of the first stream followed by all the elements of the second stream |
+| [x] | count()                         | int                         | instance | Returns the count of elements in this stream                                            |
+| [x] | distinct()                      | Stream                      | instance | Returns a stream consisting of the distinct elements (using ==) of this stream          |
+| [x] | empty()                         | Stream                      | static   | Returns an empty sequential Stream                                                      |
+| [x] | filter(predicate: Predicate)    | Stream                      | instance | Returns a stream consisting of the elements of this stream that match the given predicate |
+| [x] | find_any()                      | Optional[Any]               | instance | Returns an Optional describing some element of the stream, or an empty Optional if the stream is empty |
+| [_] | _find_first()_                | Optional[Any]             | instance | Not implemented yet, depends on the implementaton of `ordered()` |
+| [x] | flat_map(flat_mapper: FlatMapper) | Stream                    | instance | Returns a stream consisting of the results of replacing each element of this stream with the contents of a mapped stream produced by applying the provided mapping function to each element |
+| [_] | _flat_map_to_double(flat_mapper: FlatMapper)_ | Stream    | instance | Not implemented yet | 
+| [_] | _flat_map_to_int(flat_mapper: FlatMapper)_ | Stream       | instance | Not implemented yet | 
+| [_] | _flat_map_to_long(flat_mapper: FlatMapper)_ | Stream      | instance | Not implemented yet | 
+| [x] | for_each(consumer: Callable[T]) | Any                         | instance | Performs an action for each element of this stream | 
+| [_] | _for_each_ordered(consumer: Callable[T])_ | Any           | instance | Not implemented yet, depends on the implementaton of `ordered()` | 
+| [_] | ~~generate(supplier: Callable[T])~~           | Stream        | static   | Not relevant. We can send in generators directly to `Stream.of()` already|
 
 ## Migration
 These are a list of the known breaking changes. Until release 1.0.0 focus will be on implementing features and changing things that does not align with how streams work in java.
