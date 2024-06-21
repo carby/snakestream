@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from functools import cmp_to_key
 from inspect import iscoroutinefunction
-from typing import TYPE_CHECKING, Callable, Optional, List, \
+from typing import TYPE_CHECKING, Callable, Generator, Optional, List, \
     Union, AsyncGenerator, Any
 
 from snakestream.base_stream import BaseStream
@@ -49,6 +49,16 @@ class Stream(BaseStream):
     def builder() -> 'StreamBuilder':
         from snakestream.stream_builder import StreamBuilder
         return StreamBuilder()
+
+    @staticmethod
+    def iterate(seed: T, nxt: Callable[[T], T]):
+        def _make_iterator(seed: T, nxt: Callable[[T], T]) -> Generator[T, None, None]:
+            yield seed
+            while True:
+                seed = nxt(seed)
+                yield seed
+
+        return Stream.of(_make_iterator(seed, nxt))
 
     # Intermediaries
     def filter(self, predicate: Predicate) -> 'Stream':
