@@ -149,6 +149,21 @@ class Stream(BaseStream):
         self._chain.append(fn)
         return self
 
+    def limit(self, max_size: int) -> 'Stream':
+        size = 0
+
+        async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
+            nonlocal size
+            async for i in iterable:
+                if size >= max_size:
+                    await iterable.aclose()
+                else:
+                    size += 1
+                    yield i
+
+        self._chain.append(fn)
+        return self
+
     # Terminals
     def collect(self, collector: Callable) -> Union[List, AsyncGenerator]:
         return collector(self._compose())
