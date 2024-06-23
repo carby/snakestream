@@ -94,26 +94,33 @@ In snakestream this has been omitted since python has generators and those can b
 
 | done | function                        | returns                     | type     | summary                                                                                 |
 | ---- | ------------------------------- | --------------------------- | ---------|---------------------------------------------------------------------------------------- |
-| [x] | all_match(predicate: Predicate) | bool                        | instance | Returns whether all elements of this stream match the provided predicate                |
-| [x] | any_match(predicate: Predicate) | bool                        | instance | Returns whether any elements of this stream match the provided predicate                |
-| [x] | builder()                       | StreamBuilder               | static   | Returns a builder for a Stream                                                          |
-| [x] | collect(collector: Callable)    | Union[List, AsyncGenerator] | instance | Performs a mutable reduction operation on the elements of this stream using a Collector |
-| [x] | concat(a: Stream, b: Stream)    | Stream                      | static   | Creates a lazily concatenated stream whose elements are all the elements of the first stream followed by all the elements of the second stream |
-| [x] | count()                         | int                         | instance | Returns the count of elements in this stream                                            |
-| [x] | distinct()                      | Stream                      | instance | Returns a stream consisting of the distinct elements (using ==) of this stream          |
-| [x] | empty()                         | Stream                      | static   | Returns an empty sequential Stream                                                      |
-| [x] | filter(predicate: Predicate)    | Stream                      | instance | Returns a stream consisting of the elements of this stream that match the given predicate |
-| [x] | find_any()                      | Optional[Any]               | instance | Returns an Optional describing some element of the stream, or an empty Optional if the stream is empty |
-| [_] | _find_first()_                | Optional[Any]             | instance | Not implemented yet, depends on the implementaton of `ordered()` |
-| [x] | flat_map(flat_mapper: FlatMapper) | Stream                    | instance | Returns a stream consisting of the results of replacing each element of this stream with the contents of a mapped stream produced by applying the provided mapping function to each element |
-| [_] | _flat_map_to_double(flat_mapper: FlatMapper)_ | Stream    | instance | Not implemented yet | 
-| [_] | _flat_map_to_int(flat_mapper: FlatMapper)_ | Stream       | instance | Not implemented yet | 
-| [_] | _flat_map_to_long(flat_mapper: FlatMapper)_ | Stream      | instance | Not implemented yet | 
-| [x] | for_each(consumer: Callable[T]) | Any                         | instance | Performs an action for each element of this stream | 
-| [_] | _for_each_ordered(consumer: Callable[T])_ | Any           | instance | Not implemented yet, depends on the implementaton of `ordered()` | 
-| [_] | ~~generate(supplier: Callable[T])~~           | Stream        | static   | Not relevant. We can send in generators directly to `Stream.of()` already|
-| [x] | iterate(seed: T, nxt: Callable[[T], T]) | Stream | static | Returns an infinite sequential ordered Stream produced by iterative application of a function f to an initial element seed, producing a Stream consisting of seed, f(seed), f(f(seed)), etc. |
-| [x] | limit(max_size: int)                    | Stream | instance | Returns a stream consisting of the elements of this stream, truncated to be no longer than max_size() in length. |
+| x | all_match(predicate: Predicate) | bool                        | instance | Returns whether all elements of this stream match the provided predicate                |
+| x | any_match(predicate: Predicate) | bool                        | instance | Returns whether any elements of this stream match the provided predicate                |
+| x | builder()                       | StreamBuilder               | static   | Returns a builder for a Stream                                                          |
+| x | collect(collector: Callable)    | Union[List, AsyncGenerator] | instance | Performs a mutable reduction operation on the elements of this stream using a Collector |
+| x | concat(a: Stream, b: Stream)    | Stream                      | static   | Creates a lazily concatenated stream whose elements are all the elements of the first stream followed by all the elements of the second stream |
+| x | count()                         | int                         | instance | Returns the count of elements in this stream                                            |
+| x | distinct()                      | Stream                      | instance | Returns a stream consisting of the distinct elements (using ==) of this stream          |
+| x | empty()                         | Stream                      | static   | Returns an empty sequential Stream                                                      |
+| x | filter(predicate: Predicate)    | Stream                      | instance | Returns a stream consisting of the elements of this stream that match the given predicate |
+| x | find_any()                      | Optional[T]               | instance | Returns an Optional describing some element of the stream, or an empty Optional if the stream is empty |
+|   | _find_first()_                | Optional[T]             | instance | Not implemented yet, depends on the implementaton of `ordered()` |
+| x | flat_map(flat_mapper: FlatMapper) | Stream                    | instance | Returns a stream consisting of the results of replacing each element of this stream with the contents of a mapped stream produced by applying the provided mapping function to each element |
+|   | _flat_map_to_double(flat_mapper: FlatMapper)_ | Stream    | instance | Not implemented yet | 
+|   | _flat_map_to_int(flat_mapper: FlatMapper)_ | Stream       | instance | Not implemented yet | 
+|   | ~~flat_map_to_long(flat_mapper: FlatMapper)~~ | Stream      | instance | Not relevant. The interpreter automatically handles larger than 32bit numbers. | 
+| x | for_each(consumer: Callable[T]) | Any                         | instance | Performs an action for each element of this stream | 
+|   | _for_each_ordered(consumer: Callable[T])_ | Any           | instance | Not implemented yet, depends on the implementaton of `ordered()` | 
+|   | ~~generate(supplier: Callable[T])~~           | Stream        | static   | Not relevant. We can send in generators directly to `Stream.of()` already|
+| x | iterate(seed: T, nxt: Callable[[T], T]) | Stream | static | Returns an infinite sequential ordered Stream produced by iterative application of a function f to an initial element seed, producing a Stream consisting of seed, f(seed), f(f(seed)), etc. |
+| x | limit(max_size: int)                    | Stream | instance | Returns a stream consisting of the elements of this stream, truncated to be no longer than max_size() in length. |
+| x | map(mapper: Mapper)                     | Stream | instance | Returns a stream consisting of the results of applying the given function to the elements of this stream. |
+|   | _map_to_double(mapper: ToDoubleMapper)_  | Stream | instance | Returns a DoubleStream consisting of the results of applying the given function to the elements of this stream. |
+|   | _map_to_int(mapper: ToIntMapper)_       | Stream | instance | Returns an IntStream consisting of the results of applying the given function to the elements of this stream. |
+|   | ~~map_to_long(mapper: ToLongMapper)~~   | Stream | instance | Not relevant. The interpreter automatically handles larger than 32bit numbers. |
+| x | max(comparator: Comparator)             | Optional[T] | instance | Returns the maximum element of this stream according to the provided Comparator. |
+| x | min(comparator: Comparator)             | Optional[T] | instance | Returns the minimum element of this stream according to the provided Comparator. |
+| x | none_match(predicate: Predicate)        | bool | instance | Returns whether no elements of this stream match the provided predicate. |
 
 ## Migration
 These are a list of the known breaking changes. Until release 1.0.0 focus will be on implementing features and changing things that does not align with how streams work in java.
