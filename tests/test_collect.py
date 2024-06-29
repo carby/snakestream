@@ -1,7 +1,36 @@
+from typing import AsyncGenerator
 import pytest
 
 from snakestream import Stream
 from snakestream.collector import to_list, to_generator
+
+
+async def async_generator() -> AsyncGenerator:
+    for i in range(1, 6):
+        yield i
+
+
+@pytest.mark.asyncio
+async def test_to_list_simple() -> None:
+    # when
+    actual = await to_list(async_generator())
+    # then
+    assert [1, 2, 3, 4, 5] == actual
+
+
+@pytest.mark.asyncio
+async def test_to_generator_simple() -> None:
+    # when
+    actual = to_generator(async_generator())
+    # then
+    assert await actual.__anext__() == 1
+    assert await actual.__anext__() == 2
+    assert await actual.__anext__() == 3
+    assert await actual.__anext__() == 4
+    assert await actual.__anext__() == 5
+
+    with pytest.raises(StopAsyncIteration):
+        await actual.__anext__()
 
 
 @pytest.mark.asyncio
