@@ -118,8 +118,116 @@ async def test_single_generator_input() -> None:
 
 
 @pytest.mark.asyncio
-async def test_single_list_input() -> None:
+async def test_single_empty_stream_no_ref() -> None:
     # when
-    it = await Stream.of([4, 3, 2, 1]) \
+    actual = await Stream.of() \
         .collect(to_list)
-    assert [4, 3, 2, 1] == it
+
+    assert [] == actual
+
+
+@pytest.mark.asyncio
+async def test_single_empty_list() -> None:
+    # when
+    actual = await Stream.of([]) \
+        .collect(to_list)
+
+    assert [] == actual
+
+
+@pytest.mark.asyncio
+async def test_single_empty_dict() -> None:
+    # when
+    actual = await Stream.of({}) \
+        .collect(to_list)
+
+    assert [{}] == actual
+
+
+@pytest.mark.asyncio
+async def test_single_kw_arg() -> None:
+    # when
+    actual = await Stream.of(a=1) \
+        .collect(to_list)
+
+    assert [('a', 1)] == actual
+
+
+@pytest.mark.asyncio
+async def test_kw_and_regular_arg() -> None:
+    # when
+    actual = await Stream.of(3, a=1) \
+        .collect(to_list)
+
+    assert [3, ('a', 1)] == actual
+
+
+@pytest.mark.asyncio
+async def test_multiple_kw() -> None:
+    # when
+    actual = await Stream.of(a=1, b=2) \
+        .collect(to_list)
+
+    assert [('a', 1), ('b', 2)] == actual
+
+
+@pytest.mark.asyncio
+async def test_multiple_kw_mixed() -> None:
+    # when
+    actual = await Stream.of(3, a=1, b=2) \
+        .collect(to_list)
+
+    assert [3, ('a', 1), ('b', 2)] == actual
+
+
+@pytest.mark.asyncio
+async def test_single_populated_dict() -> None:
+    # when
+    actual = await Stream.of({'a': 1, 'b': 2}) \
+        .collect(to_list)
+
+    assert [{'a': 1, 'b': 2}] == actual
+
+
+@pytest.mark.asyncio
+async def test_populated_dict_and_some_other_literals() -> None:
+    # when
+    actual = await Stream.of({'a': 1, 'b': 2}, {}, [], [1, 2]) \
+        .collect(to_list)
+
+    assert [{'a': 1, 'b': 2}, {}, [], [1, 2]] == actual
+
+
+@pytest.mark.asyncio
+async def test_double_empty_lists() -> None:
+    # when
+    actual = await Stream.of([], []) \
+        .collect(to_list)
+
+    assert [[], []] == actual
+
+
+@pytest.mark.asyncio
+async def test_dual_list_stream() -> None:
+    actual = await Stream.of([1, 2], [2, 3, 4]) \
+        .collect(to_list)
+
+    assert [[1, 2], [2, 3, 4]] == actual
+
+
+@pytest.mark.asyncio
+async def test_single_args_stream() -> None:
+    actual = await Stream.of(1, 2, 2, 3, 4) \
+        .collect(to_list)
+
+    assert [1, 2, 2, 3, 4] == actual
+
+
+@pytest.mark.asyncio
+async def test_multiple_args_stream() -> None:
+    arr1 = [1, 2, 2]
+    arr2 = [3, 4]
+    actual = await Stream.of(*arr1, *arr2) \
+        .collect(to_list)
+
+    assert [1, 2, 2, 3, 4] == actual
