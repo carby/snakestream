@@ -7,7 +7,9 @@ if TYPE_CHECKING:
 
 
 async def _normalize(source: Any) -> AsyncGenerator:
-    if hasattr(source, '__iter__') or hasattr(source, '__next__'):
+    if isinstance(source, dict):
+        yield source
+    elif hasattr(source, '__iter__') or hasattr(source, '__next__'):
         for i in source:
             yield i
     else:

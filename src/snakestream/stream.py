@@ -33,7 +33,29 @@ class Stream(BaseStream):
         self._close_handlers = close_handlers or []
 
     @staticmethod
-    def of(source: Any) -> 'Stream':
+    def of(*args, **kwargs) -> 'Stream':
+        source = []
+
+        if args and len(args) == 0:
+            pass
+        elif args and len(args) == 1:
+            if isinstance(args[0], dict):
+                source.append(args[0])
+            elif isinstance(args[0], list):
+                source = args[0]
+            else:
+                source.append(args[0])
+        else:
+            source += list(args)
+
+        if kwargs and len(kwargs.items()):
+            if len(source):
+                source += list(kwargs.items())
+            else:
+                return Stream(list(kwargs.items()))
+
+        if len(source) == 1:
+            return Stream(source[0])
         return Stream(source)
 
     @staticmethod
