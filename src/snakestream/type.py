@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING, AsyncGenerator, \
     AsyncIterable, Awaitable, Callable, Generator, Iterable, Optional, TypeVar, Union
 
 if TYPE_CHECKING:
-    from snakestream.stream import Stream
+    from snakestream.stream import Stream  # pragma: no cover
 
 T = TypeVar('T')
 R = TypeVar('R')
