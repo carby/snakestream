@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING, Any, AsyncGenerator, AsyncIterable, Callable, 
 from snakestream.type import CloseHandler
 
 if TYPE_CHECKING:
-    from snakestream.stream import Stream
+    from snakestream.stream import Stream  # pragma: no cover
 
 
 async def _normalize(source: Any) -> AsyncGenerator:
