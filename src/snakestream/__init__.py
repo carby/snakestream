@@ -1,6 +1,4 @@
-import sys
-
-from snakestream.stream import Stream
+from snakestream.stream import Stream  # flake8: noqa
 from importlib.metadata import PackageNotFoundError, version  # pragma: no cover
 
 try:
