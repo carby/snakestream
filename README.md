@@ -122,6 +122,7 @@ In snakestream this has been omitted since python has generators and those can b
 | x | min(comparator: Comparator)             | Optional[T] | instance | Returns the minimum element of this stream according to the provided Comparator. |
 | x | none_match(predicate: Predicate)        | bool | instance | Returns whether no elements of this stream match the provided predicate. |
 | x | of(*args, *kwargs)                      | Stream | static | Returns a sequential ordered stream whose elements are the specified values |
+| x | peek(self, consumer: Consumer)          | Stream | instance | Returns a stream consisting of the elements of this stream, additionally performing the provided action on each element as elements are consumed from the resulting stream. |
 
 ## Migration
 These are a list of the known breaking changes. Until release 1.0.0 focus will be on implementing features and changing things that does not align with how streams work in java.
