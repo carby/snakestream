@@ -77,6 +77,26 @@ async def test_find_min_value_custom_comparator():
 
 
 @pytest.mark.asyncio
+async def test_find_min_value_with_falsy_values():
+    input_list = [5, 3, 0, 4]
+    # when
+    it = await Stream.of(input_list) \
+        .min(lambda x, y: x > y)
+    # then
+    assert it == 0
+
+
+@pytest.mark.asyncio
+async def test_find_min_value_single_falsy_value():
+    input_list = [0]
+    # when
+    it = await Stream.of(input_list) \
+        .min(lambda x, y: x > y)
+    # then
+    assert it == 0
+
+
+@pytest.mark.asyncio
 async def test_find_min_value_object_comparator() -> None:
     # when
     input_list = [MyObject(1, "object1"), MyObject(2, "object2"), MyObject(3, "object3"), MyObject(2, "object2"),

@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 
 PROCESSES: int = 4
+_UNSET = object()
 
 
 async def _concat(a: 'Stream', b: 'Stream') -> AsyncGenerator:
@@ -231,19 +232,19 @@ class Stream(BaseStream):
             return await self._min_max(negative_comparator)
 
     async def _min_max(self, comparator: Comparator) -> Optional[T]:
-        found = None
+        found = _UNSET
         async for n in self._compose():
-            if found is None:
+            if found is _UNSET:
                 found = n
                 continue
 
             if iscoroutinefunction(comparator):
-                if n and await comparator(n, found):
+                if await comparator(n, found):
                     found = n
             else:
-                if n and comparator(n, found):
+                if comparator(n, found):
                     found = n
-        return found
+        return None if found is _UNSET else found
 
     async def all_match(self, predicate: Predicate) -> bool:
         async for n in self._compose():

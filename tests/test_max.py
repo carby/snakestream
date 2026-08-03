@@ -77,6 +77,26 @@ async def test_find_max_value_custom_comparator():
 
 
 @pytest.mark.asyncio
+async def test_find_max_value_with_falsy_values():
+    input_list = [5, 0, 3, 4]
+    # when
+    it = await Stream.of(input_list) \
+        .max(lambda x, y: x > y)
+    # then
+    assert it == 5
+
+
+@pytest.mark.asyncio
+async def test_find_max_value_single_falsy_value():
+    input_list = [0]
+    # when
+    it = await Stream.of(input_list) \
+        .max(lambda x, y: x > y)
+    # then
+    assert it == 0
+
+
+@pytest.mark.asyncio
 async def test_find_max_value_object_comparator() -> None:
     # when
     input_list = [MyObject(1, "object1"), MyObject(2, "object2"), MyObject(3, "object3"), MyObject(2, "object2"),

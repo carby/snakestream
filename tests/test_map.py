@@ -26,8 +26,6 @@ async def test_map(int_2_letter) -> None:
 
 @pytest.mark.asyncio
 async def test_map_async_function(async_int_to_letter) -> None:
-    async_int_to_letter = await async_int_to_letter
-
     # when
     it = Stream.of([1, 2, 3, 4]) \
         .map(async_int_to_letter) \

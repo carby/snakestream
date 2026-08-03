@@ -10,6 +10,7 @@ import asyncio
 import sys
 
 import pytest
+import pytest_asyncio
 
 sys.path.append("src")
 
@@ -44,7 +45,7 @@ def letter_2_int(int_2_letter):
     return {v: k for k, v in int_2_letter.items()}
 
 
-@pytest.fixture(scope='function')
+@pytest_asyncio.fixture(scope='function')
 async def async_int_to_letter(int_2_letter):
     async def inner(x: int) -> str:
         await asyncio.sleep(0.01)
