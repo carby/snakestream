@@ -14,7 +14,7 @@ from snakestream.type import R, T, Accumulator, CloseHandler, Comparator, Consum
 
 
 if TYPE_CHECKING:
-    from stream_builder import StreamBuilder
+    from snakestream.stream_builder import StreamBuilder
 
 
 PROCESSES: int = 4
@@ -37,9 +37,7 @@ class Stream(BaseStream):
     def of(*args, **kwargs) -> 'Stream':
         source = []
 
-        if args and len(args) == 0:
-            pass
-        elif args and len(args) == 1:
+        if args and len(args) == 1:
             if isinstance(args[0], dict):
                 source.append(args[0])
             elif isinstance(args[0], list):
