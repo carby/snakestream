@@ -17,6 +17,13 @@ grouped by status.
   fixture in `conftest.py` wasn't decorated for strict-mode `pytest-asyncio`.
   Both fixed; added regression tests for the two bugs above
   (`test_min.py`, `test_max.py`, `test_exception.py`).
+- `Stream.of()` had a dead branch, `if args and len(args) == 0: pass`
+  (`stream.py:40-41`), which could never be true and just duplicated the
+  no-op fallthrough of the `else` branch. Removed.
+- The `TYPE_CHECKING`-only import in `stream.py:17` used an unqualified
+  `from stream_builder import StreamBuilder`, which would fail if ever
+  actually evaluated. Fixed to `from snakestream.stream_builder import
+  StreamBuilder`.
 
 ## To revisit
 
@@ -43,3 +50,34 @@ grouped by status.
   once chaining has started. Worth deciding explicitly whether this is
   intended behavior (and documenting it) or worth changing to return new
   instances per intermediate op.
+
+## Testing & verification
+
+Coverage is already strong (120 tests, 98% line/branch), so these are about
+closing the remaining gaps and hardening the process, not building from
+scratch.
+
+- **Untested async-predicate branches in `stream.py`.**
+  - `stream.py:255,267,283` — the async-predicate branches of `all_match`,
+    `none_match`, and `any_match` that short-circuit (`return False`/`True`
+    mid-loop) aren't covered; only the synchronous-predicate and
+    fall-through paths are tested.
+
+- **No CI coverage gate.** `pytest-cov` reports coverage but nothing fails
+  the build if it regresses. Add `--cov-fail-under` (e.g. 98) to
+  `setup.cfg`'s `addopts` now, while it's cheap, rather than after it erodes.
+
+- **`deliver.yml` likely never runs.** It triggers on `pull_request` /
+  `closed` targeting `main`, but the repo's default branch is `master`.
+  Should be updated to target `master` (or whichever branch PRs actually
+  merge into).
+
+- **No static type checking in CI.** The codebase is fully type-hinted
+  (`type.py`, generics in `Stream`/`ParallelStream`) but nothing runs
+  `mypy`/`pyright`, so annotations can drift from reality unnoticed. Worth
+  adding a `mypy` step to `check.yml`.
+
+- **No property-based testing.** For a streams library (`map`, `filter`,
+  `reduce`, `sort`, `distinct`), `hypothesis` would cheaply catch edge cases
+  hand-written tests tend to miss — empty inputs, duplicate keys,
+  non-comparable types, single-element streams.
