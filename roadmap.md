@@ -81,3 +81,18 @@ scratch.
   `reduce`, `sort`, `distinct`), `hypothesis` would cheaply catch edge cases
   hand-written tests tend to miss — empty inputs, duplicate keys,
   non-comparable types, single-element streams.
+
+- **No install/import smoke test across the Python matrix.** `check.yml`
+  runs `pytest` against the checked-out source on Python 3.8–3.12, but
+  never does a `pip install .` + bare `import snakestream` on each version.
+  A packaging mistake (e.g. a missing entry in `packages.find`, a
+  Python-version-conditional import) could pass CI while breaking for
+  actual installs.
+
+- **Line coverage is gated, branch coverage isn't (once `--cov-fail-under`
+  is added).** `.coveragerc` sets `branch = True`, so branch coverage is
+  already measured, but a single `--cov-fail-under` threshold on total
+  coverage can mask a drop in branch coverage specifically (e.g. an
+  untested `if`/`else` side) as long as line coverage stays high. Worth
+  confirming the fail-under threshold is read against combined
+  line+branch, or gating branch coverage explicitly.
