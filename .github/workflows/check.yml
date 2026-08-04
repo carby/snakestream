@@ -43,3 +43,13 @@ jobs:
     - name: Test with pytest
       run: |
         pytest
+
+    # Branch-coverage arcs for async for-loops compile differently across
+    # CPython versions, which makes coverage.py report spurious partial
+    # branches on 3.8/3.9. Only gate on the newest matrix version, where
+    # the numbers are accurate, so the older interpreters don't fail CI
+    # on a measurement artifact rather than a real regression.
+    - name: Enforce coverage threshold
+      if: matrix.python-version == '3.12'
+      run: |
+        pytest --cov-fail-under=98
