@@ -24,6 +24,13 @@ grouped by status.
   `from stream_builder import StreamBuilder`, which would fail if ever
   actually evaluated. Fixed to `from snakestream.stream_builder import
   StreamBuilder`.
+- Added tests covering the async-predicate short-circuit branches of
+  `all_match`, `none_match`, and `any_match` (`stream.py:255,267,283`) that
+  were previously only exercised by synchronous predicates.
+- Added `--cov-fail-under=98` to `setup.cfg`'s `addopts` so a coverage
+  regression now fails CI instead of silently passing.
+- Fixed `deliver.yml` to target `master` instead of `main`, since the repo's
+  default branch is `master` and the workflow was never triggering.
 
 ## To revisit
 
@@ -53,24 +60,9 @@ grouped by status.
 
 ## Testing & verification
 
-Coverage is already strong (120 tests, 98% line/branch), so these are about
-closing the remaining gaps and hardening the process, not building from
-scratch.
-
-- **Untested async-predicate branches in `stream.py`.**
-  - `stream.py:255,267,283` — the async-predicate branches of `all_match`,
-    `none_match`, and `any_match` that short-circuit (`return False`/`True`
-    mid-loop) aren't covered; only the synchronous-predicate and
-    fall-through paths are tested.
-
-- **No CI coverage gate.** `pytest-cov` reports coverage but nothing fails
-  the build if it regresses. Add `--cov-fail-under` (e.g. 98) to
-  `setup.cfg`'s `addopts` now, while it's cheap, rather than after it erodes.
-
-- **`deliver.yml` likely never runs.** It triggers on `pull_request` /
-  `closed` targeting `main`, but the repo's default branch is `master`.
-  Should be updated to target `master` (or whichever branch PRs actually
-  merge into).
+Coverage is already strong (123 tests, 99.58% line/branch), so these are
+about closing the remaining gaps and hardening the process, not building
+from scratch.
 
 - **No static type checking in CI.** The codebase is fully type-hinted
   (`type.py`, generics in `Stream`/`ParallelStream`) but nothing runs

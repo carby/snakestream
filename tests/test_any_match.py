@@ -42,3 +42,14 @@ async def test_simple_async() -> None:
     it = await Stream.of([1, 2, 3, 2, 3, 1, 2, 5, 6, 7]) \
         .any_match(async_predicate)
     assert it is True
+
+
+@pytest.mark.asyncio
+async def test_none_matches_async() -> None:
+    async def async_predicate(x: int) -> bool:
+        await asyncio.sleep(0.01)
+        return x > 5
+
+    it = await Stream.of([1, 2, 3, 2, 3, 1, 2]) \
+        .any_match(async_predicate)
+    assert it is False
