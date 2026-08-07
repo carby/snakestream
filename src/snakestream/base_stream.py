@@ -1,4 +1,7 @@
-from typing import TYPE_CHECKING, Any, AsyncGenerator, AsyncIterable, Callable, List, Optional
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import AsyncGenerator, AsyncIterable
 
 from snakestream.type import CloseHandler
 
@@ -16,19 +19,19 @@ async def _normalize(source: Any) -> AsyncGenerator:
         yield source
 
 
-def _accept(source: Any) -> Optional[AsyncGenerator]:
+def _accept(source: Any) -> AsyncGenerator | None:
     if isinstance(source, AsyncGenerator) or isinstance(source, AsyncIterable):
         return source
     return None
 
 
-class BaseStream():
+class BaseStream:
     def __init__(self, source: Any) -> None:
         self._stream = _accept(source) or _normalize(source)
-        self._chain: List[Callable] = []
+        self._chain: list[Callable] = []
         self._close_handlers = []
 
-    def _sequential(self, intermediaries: List[Callable], iterable: AsyncGenerator) -> AsyncGenerator:
+    def _sequential(self, intermediaries: list[Callable], iterable: AsyncGenerator) -> AsyncGenerator:
         if len(intermediaries) == 0:
             return iterable
         if len(intermediaries) == 1:
@@ -40,17 +43,17 @@ class BaseStream():
     def _compose(self) -> AsyncGenerator:
         return self._sequential(self._chain, self._stream)
 
-    def sequential(self) -> 'Stream':
+    def sequential(self) -> Stream:
         from .stream import Stream
         new_source = self._compose()
         return Stream(new_source, self._close_handlers)
 
-    def parallel(self) -> 'Stream':
+    def parallel(self) -> Stream:
         from .parallel_stream import ParallelStream
         new_source = self._compose()
         return ParallelStream(new_source, self._close_handlers)
 
-    def on_close(self, close_handler: CloseHandler) -> 'Stream':
+    def on_close(self, close_handler: CloseHandler) -> Stream:
         self._close_handlers.append(close_handler)
         return self
 

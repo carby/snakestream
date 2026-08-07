@@ -1,5 +1,5 @@
-from typing import TYPE_CHECKING, AsyncGenerator, \
-    AsyncIterable, Awaitable, Callable, Generator, Iterable, Optional, TypeVar, Union
+from typing import TYPE_CHECKING, Callable, Optional, TypeVar, Union
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Generator, Iterable
 
 if TYPE_CHECKING:
     from snakestream.stream import Stream  # pragma: no cover

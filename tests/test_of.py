@@ -3,7 +3,7 @@
 # pylint: disable=missing-function-docstring
 # pylint: disable=invalid-name
 
-from typing import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Generator
 import pytest
 
 from snakestream import Stream
@@ -16,8 +16,7 @@ async def async_generator() -> AsyncGenerator:
 
 
 def generator() -> Generator:
-    for i in range(1, 6):
-        yield i
+    yield from range(1, 6)
 
 
 class AsyncIteratorImpl:
