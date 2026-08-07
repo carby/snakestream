@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from functools import cmp_to_key
 from inspect import iscoroutinefunction
-from typing import TYPE_CHECKING, Callable, Any
-from collections.abc import Generator, AsyncGenerator
+from typing import TYPE_CHECKING, Any
+from collections.abc import AsyncGenerator, Callable, Generator
 
 from snakestream.base_stream import BaseStream
 from snakestream.collector import to_generator

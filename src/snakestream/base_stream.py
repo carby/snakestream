@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable
-from collections.abc import AsyncGenerator, AsyncIterable
+from typing import TYPE_CHECKING, Any
+from collections.abc import AsyncGenerator, AsyncIterable, Callable
 
 from snakestream.type import CloseHandler
 
