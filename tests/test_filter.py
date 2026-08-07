@@ -8,10 +8,7 @@ from snakestream.collector import to_generator, to_list
 @pytest.mark.asyncio
 async def test_filter_multiple() -> None:
     # when
-    it = Stream.of([1, 2, 3, 4, 5, 6]) \
-        .filter(lambda x: x > 3) \
-        .filter(lambda x: x < 6) \
-        .collect(to_generator)
+    it = Stream.of([1, 2, 3, 4, 5, 6]).filter(lambda x: x > 3).filter(lambda x: x < 6).collect(to_generator)
 
     # then
     assert await it.__anext__() == 4
@@ -29,10 +26,7 @@ async def test_filter_does_not_mutate_source() -> None:
     source = [1, 2, 3, 4, 5, 6]
 
     # when
-    it = await Stream.of(source) \
-        .filter(lambda x: x > 3) \
-        .filter(lambda x: x < 6) \
-        .collect(to_list)
+    it = await Stream.of(source).filter(lambda x: x > 3).filter(lambda x: x < 6).collect(to_list)
 
     # then
     assert source != it
@@ -48,9 +42,7 @@ async def test_filter_async_function() -> None:
         return x < 3
 
     # when
-    it = Stream.of([1, 2, 3, 4]) \
-        .filter(async_predicate) \
-        .collect(to_generator)
+    it = Stream.of([1, 2, 3, 4]).filter(async_predicate).collect(to_generator)
 
     # then
     assert await it.__anext__() == 1

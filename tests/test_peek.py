@@ -23,9 +23,7 @@ input_list = [
 @pytest.mark.asyncio
 async def test_ok() -> None:
     # when
-    it = await Stream.of(input_list) \
-        .peek(lambda x: x) \
-        .collect(to_list)
+    it = await Stream.of(input_list).peek(lambda x: x).collect(to_list)
     # then
     assert it == input_list
     assert it[0] is input_list[0]
@@ -45,9 +43,7 @@ async def test_ok_async_function() -> None:
         return
 
     # when
-    it = await Stream.of(input_list) \
-        .peek(some_func) \
-        .collect(to_list)
+    it = await Stream.of(input_list).peek(some_func).collect(to_list)
     # then
     assert it == input_list
     assert it[0] is input_list[0]
@@ -56,15 +52,19 @@ async def test_ok_async_function() -> None:
     assert it[3] is input_list[3]
     assert it[4] is input_list[4]
 
-    assert names == ['Object1', 'Object2', 'Object3', 'Object2', 'Object3',]
+    assert names == [
+        "Object1",
+        "Object2",
+        "Object3",
+        "Object2",
+        "Object3",
+    ]
 
 
 @pytest.mark.asyncio
 async def test_empty_stream() -> None:
     # when
-    it = await Stream.of([]) \
-        .peek(lambda x: x) \
-        .collect(to_list)
+    it = await Stream.of([]).peek(lambda x: x).collect(to_list)
     # then
     assert it == []
 
@@ -72,10 +72,7 @@ async def test_empty_stream() -> None:
 @pytest.mark.asyncio
 async def test_multiple_calls() -> None:
     # when
-    it = await Stream.of(input_list) \
-        .peek(lambda x: x) \
-        .peek(lambda x: x) \
-        .collect(to_list)
+    it = await Stream.of(input_list).peek(lambda x: x).peek(lambda x: x).collect(to_list)
     # then
     assert it == input_list
     assert it[0] is input_list[0]
@@ -91,9 +88,7 @@ async def test_mutate_internal_state() -> None:
         x.name = x.name.lower()
 
     # when
-    it = await Stream.of(input_list) \
-        .peek(lower_name) \
-        .collect(to_list)
+    it = await Stream.of(input_list).peek(lower_name).collect(to_list)
     # then
     assert it == input_list
     assert it[0] is input_list[0]
@@ -102,8 +97,8 @@ async def test_mutate_internal_state() -> None:
     assert it[3] is input_list[3]
     assert it[4] is input_list[4]
 
-    assert it[0].name == 'object1'
-    assert it[1].name == 'object2'
-    assert it[2].name == 'object3'
-    assert it[3].name == 'object2'
-    assert it[4].name == 'object3'
+    assert it[0].name == "object1"
+    assert it[1].name == "object2"
+    assert it[2].name == "object3"
+    assert it[3].name == "object2"
+    assert it[4].name == "object3"

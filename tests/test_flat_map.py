@@ -14,9 +14,7 @@ async def async_flat_map(x: int) -> int:
 @pytest.mark.asyncio
 async def test_flat_map() -> None:
     # when
-    it = Stream.of([[1, 2], [3, 4]]) \
-        .flat_map(lambda x: Stream.of(x)) \
-        .collect(to_generator)
+    it = Stream.of([[1, 2], [3, 4]]).flat_map(lambda x: Stream.of(x)).collect(to_generator)
 
     # then
     assert await it.__anext__() == 1
@@ -33,9 +31,7 @@ async def test_flat_map() -> None:
 
 @pytest.mark.asyncio
 async def test_flat_map_mixed_list() -> None:
-    it = Stream.of([[1, 2], [3, 4], 5, [6, 7], 8]) \
-        .flat_map(lambda x: Stream.of(x)) \
-        .collect(to_generator)
+    it = Stream.of([[1, 2], [3, 4], 5, [6, 7], 8]).flat_map(lambda x: Stream.of(x)).collect(to_generator)
 
     # then
     assert await it.__anext__() == 1
@@ -58,9 +54,7 @@ async def test_flat_map_mixed_list() -> None:
 async def test_flat_map_async_function() -> None:
     # when
     try:
-        Stream.of([[1, 2], [3, 4], 5]) \
-            .flat_map(async_flat_map) \
-            .collect(to_generator)
+        Stream.of([[1, 2], [3, 4], 5]).flat_map(async_flat_map).collect(to_generator)
     except StreamBuildException:
         pass
     else:

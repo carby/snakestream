@@ -1,4 +1,3 @@
-
 import pytest
 
 from snakestream.collector import to_generator
@@ -8,8 +7,7 @@ from snakestream.stream import Stream
 @pytest.mark.asyncio
 async def test_iterate_simple() -> None:
     # when
-    it = Stream.iterate(0, lambda n: n + 1) \
-        .collect(to_generator)
+    it = Stream.iterate(0, lambda n: n + 1).collect(to_generator)
 
     # then
     assert await it.__anext__() == 0
@@ -23,8 +21,7 @@ async def test_iterate_simple() -> None:
 @pytest.mark.asyncio
 async def test_iterate_fib() -> None:
     # when
-    it = Stream.iterate((0, 1), lambda n: (n[1], n[0] + n[1])) \
-        .collect(to_generator)
+    it = Stream.iterate((0, 1), lambda n: (n[1], n[0] + n[1])).collect(to_generator)
 
     # then
     assert (await it.__anext__())[0] == 0

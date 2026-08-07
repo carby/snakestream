@@ -13,10 +13,7 @@ async def test_find_any() -> None:
         return c
 
     # when
-    it = await Stream.of([1, 2, 3, 4, 5, 6, 1, 2, 3, 4, 5, 6]) \
-        .map(incr_counter) \
-        .filter(lambda x: x == 6) \
-        .find_any()
+    it = await Stream.of([1, 2, 3, 4, 5, 6, 1, 2, 3, 4, 5, 6]).map(incr_counter).filter(lambda x: x == 6).find_any()
 
     # then
     assert it == 6
@@ -33,10 +30,7 @@ async def test_find_any_found_none() -> None:
         return c
 
     # when
-    it = await Stream.of([1, 2, 3, 4, 5, 6, 1, 2, 3, 4, 5, 6]) \
-        .map(incr_counter) \
-        .filter(lambda x: x == 100) \
-        .find_any()
+    it = await Stream.of([1, 2, 3, 4, 5, 6, 1, 2, 3, 4, 5, 6]).map(incr_counter).filter(lambda x: x == 100).find_any()
 
     # then
     assert it is None
@@ -53,9 +47,7 @@ async def test_find_any_empty_stream() -> None:
         return c
 
     # when
-    it = await Stream.of([]) \
-        .map(incr_counter) \
-        .find_any()
+    it = await Stream.of([]).map(incr_counter).find_any()
 
     # then
     assert it is None

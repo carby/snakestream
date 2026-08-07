@@ -9,8 +9,7 @@ from snakestream.base_stream import BaseStream
 from snakestream.collector import to_generator
 from snakestream.exception import StreamBuildException
 from snakestream.sort import merge_sort
-from snakestream.type import R, T, Accumulator, CloseHandler, Comparator, Consumer, \
-    FlatMapper, Mapper, Predicate
+from snakestream.type import R, T, Accumulator, CloseHandler, Comparator, Consumer, FlatMapper, Mapper, Predicate
 
 
 if TYPE_CHECKING:
@@ -69,6 +68,7 @@ class Stream(BaseStream):
     @staticmethod
     def builder() -> StreamBuilder:
         from snakestream.stream_builder import StreamBuilder
+
         return StreamBuilder()
 
     @staticmethod
@@ -205,12 +205,12 @@ class Stream(BaseStream):
                 consumer(n)
         return None
 
-    '''
+    """
     async def find_first(self) -> Optional[Any]:
         # until we have ordered parallel stream then we
         # cant do this one
         return await self.find_any()
-    '''
+    """
 
     async def find_any(self) -> Any | None:
         async for n in self._compose():
@@ -221,12 +221,16 @@ class Stream(BaseStream):
 
     async def min(self, comparator: Comparator) -> T | None:
         if iscoroutinefunction(comparator):
+
             async def negative_comparator(x, y):
                 return not await comparator(x, y)
+
             return await self._min_max(negative_comparator)
         else:
+
             def negative_comparator(x, y):
                 return not comparator(x, y)
+
             return await self._min_max(negative_comparator)
 
     async def _min_max(self, comparator: Comparator) -> T | None:
