@@ -9,11 +9,11 @@ from snakestream import Stream
 from snakestream.collector import to_generator
 
 int_2_letter = {
-    1: 'a',
-    2: 'b',
-    3: 'c',
-    4: 'd',
-    5: 'e',
+    1: "a",
+    2: "b",
+    3: "c",
+    4: "d",
+    5: "e",
 }
 
 
@@ -23,16 +23,13 @@ async def async_int_to_letter(x: int) -> str:
 
 
 async def main():
-    it = Stream.of([1, 3, 4, 5, 6]) \
-        .filter(lambda n: 3 < n < 6) \
-        .map(async_int_to_letter) \
-        .collect(to_generator)
+    it = Stream.of([1, 3, 4, 5, 6]).filter(lambda n: 3 < n < 6).map(async_int_to_letter).collect(to_generator)
 
     async for x in it:
         print(x)
 
-asyncio.run(main())
 
+asyncio.run(main())
 ```
 Notice how the stream returns a generator. We could also have awaited the stream and collected to a list just to give an idea of what could be done.
 
@@ -71,10 +68,7 @@ Contextlib already supports something that is very similar to the AutoClose from
 from contextlib import closing
 
 with closing(Stream.of([1, 2, 3, 4, 1, 2, 3, 4])) as stream:
-    it = await stream \
-        .map(lambda x: int_2_letter[x]) \
-        .distinct() \
-        .collect(to_list)
+    it = await stream.map(lambda x: int_2_letter[x]).distinct().collect(to_list)
 ```
 
 This can be especially useful if you are subclassing Stream to do something that is kinda like IO related and you have some resource that needs to get relased after the stream. You would then just add the logic to do that in your .close() method and contextlib will handle the rest

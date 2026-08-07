@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 async def _normalize(source: Any) -> AsyncGenerator:
     if isinstance(source, dict):
         yield source
-    elif hasattr(source, '__iter__') or hasattr(source, '__next__'):
+    elif hasattr(source, "__iter__") or hasattr(source, "__next__"):
         for i in source:
             yield i
     else:
@@ -45,11 +45,13 @@ class BaseStream:
 
     def sequential(self) -> Stream:
         from .stream import Stream
+
         new_source = self._compose()
         return Stream(new_source, self._close_handlers)
 
     def parallel(self) -> Stream:
         from .parallel_stream import ParallelStream
+
         new_source = self._compose()
         return ParallelStream(new_source, self._close_handlers)
 

@@ -8,7 +8,7 @@ from snakestream.collector import to_list
 async def test_map_exception_propagates_sequential() -> None:
     def boom(x):
         if x == 3:
-            raise ValueError('boom')
+            raise ValueError("boom")
         return x
 
     with pytest.raises(ValueError):
@@ -19,7 +19,7 @@ async def test_map_exception_propagates_sequential() -> None:
 async def test_map_exception_propagates_parallel() -> None:
     def boom(x):
         if x == 3:
-            raise ValueError('boom')
+            raise ValueError("boom")
         return x
 
     with pytest.raises(ValueError):
@@ -30,7 +30,7 @@ async def test_map_exception_propagates_parallel() -> None:
 async def test_filter_exception_propagates_sequential() -> None:
     def boom(x):
         if x == 3:
-            raise ValueError('boom')
+            raise ValueError("boom")
         return True
 
     with pytest.raises(ValueError):
