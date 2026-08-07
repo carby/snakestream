@@ -10,7 +10,7 @@ license = { file = "LICENSE.txt" }
 authors = [
     { name = "Tommy Derngren", email = "tommy.derngren@hiq.se" },
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Programming Language :: Python",
@@ -61,7 +61,7 @@ exclude_lines = [
 
 [tool.ruff]
 line-length = 127
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "C90", "UP"]

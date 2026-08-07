@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Callable
-from collections.abc import AsyncGenerator
+from typing import Any
+from collections.abc import AsyncGenerator, Callable
 from snakestream.stream import PROCESSES, Stream
 from snakestream.type import CloseHandler
 
