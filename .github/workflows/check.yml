@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
 
     steps:
     - name: Check out the repo
@@ -42,9 +42,10 @@ jobs:
 
     # Branch-coverage arcs for async for-loops compile differently across
     # CPython versions, which makes coverage.py report spurious partial
-    # branches on 3.8/3.9. Only gate on the newest matrix version, where
-    # the numbers are accurate, so the older interpreters don't fail CI
-    # on a measurement artifact rather than a real regression.
+    # branches on older interpreters (e.g. 3.9). Only gate on the newest
+    # matrix version, where the numbers are accurate, so the older
+    # interpreters don't fail CI on a measurement artifact rather than a
+    # real regression.
     - name: Enforce coverage threshold
-      if: matrix.python-version == '3.12'
+      if: matrix.python-version == '3.14'
       run: uv run pytest --cov-fail-under=98
