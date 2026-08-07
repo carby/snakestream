@@ -1,11 +1,14 @@
+from __future__ import annotations
+
 import asyncio
-from typing import Any, AsyncGenerator, Callable, List, Optional
+from typing import Any, Callable
+from collections.abc import AsyncGenerator
 from snakestream.stream import PROCESSES, Stream
 from snakestream.type import CloseHandler
 
 
 class ParallelStream(Stream):
-    def __init__(self, source: Any, close_handlers: Optional[List[CloseHandler]] = None) -> None:
+    def __init__(self, source: Any, close_handlers: list[CloseHandler] | None = None) -> None:
         super().__init__(source)
         self._close_handlers = close_handlers or []
 
@@ -14,7 +17,7 @@ class ParallelStream(Stream):
 
     async def _parallel(
         self,
-        intermediaries: List[Callable],
+        intermediaries: list[Callable],
         iterable: AsyncGenerator,
         processes: int = PROCESSES
     ) -> AsyncGenerator:

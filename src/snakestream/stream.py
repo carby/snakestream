@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from functools import cmp_to_key
 from inspect import iscoroutinefunction
-from typing import TYPE_CHECKING, Callable, Generator, Optional, List, \
-    Union, AsyncGenerator, Any
+from typing import TYPE_CHECKING, Callable, Any
+from collections.abc import Generator, AsyncGenerator
 
 from snakestream.base_stream import BaseStream
 from snakestream.collector import to_generator
@@ -21,7 +21,7 @@ PROCESSES: int = 4
 _UNSET = object()
 
 
-async def _concat(a: 'Stream', b: 'Stream') -> AsyncGenerator:
+async def _concat(a: Stream, b: Stream) -> AsyncGenerator:
     async for i in a._compose():
         yield i
     async for j in b._compose():
@@ -29,12 +29,12 @@ async def _concat(a: 'Stream', b: 'Stream') -> AsyncGenerator:
 
 
 class Stream(BaseStream):
-    def __init__(self, source: Any, close_handlers: Optional[List[CloseHandler]] = None) -> None:
+    def __init__(self, source: Any, close_handlers: list[CloseHandler] | None = None) -> None:
         super().__init__(source)
         self._close_handlers = close_handlers or []
 
     @staticmethod
-    def of(*args, **kwargs) -> 'Stream':
+    def of(*args, **kwargs) -> Stream:
         source = []
 
         if args and len(args) == 1:
@@ -58,16 +58,16 @@ class Stream(BaseStream):
         return Stream(source)
 
     @staticmethod
-    def empty() -> 'Stream':
+    def empty() -> Stream:
         return Stream([])
 
     @staticmethod
-    async def concat(a: 'Stream', b: 'Stream') -> 'Stream':
+    async def concat(a: Stream, b: Stream) -> Stream:
         new_stream = _concat(a, b)
         return Stream(new_stream)
 
     @staticmethod
-    def builder() -> 'StreamBuilder':
+    def builder() -> StreamBuilder:
         from snakestream.stream_builder import StreamBuilder
         return StreamBuilder()
 
@@ -82,7 +82,7 @@ class Stream(BaseStream):
         return Stream.of(_make_iterator(seed, nxt))
 
     # Intermediaries
-    def filter(self, predicate: Predicate) -> 'Stream':
+    def filter(self, predicate: Predicate) -> Stream:
         async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
             async for i in iterable:
                 if iscoroutinefunction(predicate):
@@ -95,7 +95,7 @@ class Stream(BaseStream):
         self._chain.append(fn)
         return self
 
-    def map(self, mapper: Mapper) -> 'Stream':
+    def map(self, mapper: Mapper) -> Stream:
         async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
             async for i in iterable:
                 if iscoroutinefunction(mapper):
@@ -106,7 +106,7 @@ class Stream(BaseStream):
         self._chain.append(fn)
         return self
 
-    def flat_map(self, flat_mapper: FlatMapper) -> 'Stream':
+    def flat_map(self, flat_mapper: FlatMapper) -> Stream:
         if iscoroutinefunction(flat_mapper):
             raise StreamBuildException("flat_map() does not support coroutines")
 
@@ -118,7 +118,7 @@ class Stream(BaseStream):
         self._chain.append(fn)
         return self
 
-    def sorted(self, comparator: Optional[Comparator] = None, reverse=False) -> 'Stream':
+    def sorted(self, comparator: Comparator | None = None, reverse=False) -> Stream:
         async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
             # unfortunately I now don't see other way than to block the entire stream
             # how can I otherwise know what is the first item out?
@@ -144,7 +144,7 @@ class Stream(BaseStream):
         self._chain.append(fn)
         return self
 
-    def distinct(self) -> 'Stream':
+    def distinct(self) -> Stream:
         seen = set()
 
         async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
@@ -158,7 +158,7 @@ class Stream(BaseStream):
         self._chain.append(fn)
         return self
 
-    def peek(self, consumer: Consumer) -> 'Stream':
+    def peek(self, consumer: Consumer) -> Stream:
         async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
             async for i in iterable:
                 if iscoroutinefunction(consumer):
@@ -170,7 +170,7 @@ class Stream(BaseStream):
         self._chain.append(fn)
         return self
 
-    def limit(self, max_size: int) -> 'Stream':
+    def limit(self, max_size: int) -> Stream:
         size = 0
 
         async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
@@ -186,10 +186,10 @@ class Stream(BaseStream):
         return self
 
     # Terminals
-    def collect(self, collector: Callable) -> Union[List, AsyncGenerator]:
+    def collect(self, collector: Callable) -> list | AsyncGenerator:
         return collector(self._compose())
 
-    async def reduce(self, identity: Union[T, R], accumulator: Accumulator) -> Union[T, R]:
+    async def reduce(self, identity: T | R, accumulator: Accumulator) -> T | R:
         async for n in self._compose():
             if iscoroutinefunction(accumulator):
                 identity = await accumulator(identity, n)
@@ -212,14 +212,14 @@ class Stream(BaseStream):
         return await self.find_any()
     '''
 
-    async def find_any(self) -> Optional[Any]:
+    async def find_any(self) -> Any | None:
         async for n in self._compose():
             return n
 
-    async def max(self, comparator: Comparator) -> Optional[T]:
+    async def max(self, comparator: Comparator) -> T | None:
         return await self._min_max(comparator)
 
-    async def min(self, comparator: Comparator) -> Optional[T]:
+    async def min(self, comparator: Comparator) -> T | None:
         if iscoroutinefunction(comparator):
             async def negative_comparator(x, y):
                 return not await comparator(x, y)
@@ -229,7 +229,7 @@ class Stream(BaseStream):
                 return not comparator(x, y)
             return await self._min_max(negative_comparator)
 
-    async def _min_max(self, comparator: Comparator) -> Optional[T]:
+    async def _min_max(self, comparator: Comparator) -> T | None:
         found = _UNSET
         async for n in self._compose():
             if found is _UNSET:
