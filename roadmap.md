@@ -1,7 +1,38 @@
 # Roadmap
 
-Notes from a review pass on test coverage and general code clarity. Items are
-grouped by status.
+Now/Next/Later view of open code-quality and test-rigor items, generated from
+the review-pass notes below. Completed items from that review remain in
+**Done** for history.
+
+## Now
+
+Small, low-risk, high-confidence — no public API impact.
+
+| Item | Why now |
+|---|---|
+| **Gate branch coverage, not just line coverage** — `--cov-fail-under=98` checks combined coverage; confirm it's actually reading line+branch together, or add an explicit branch-coverage gate. `.coveragerc` already has `branch = true`, so the data exists, it's just not separately enforced. | Config-only change; closes a blind spot the line-coverage gate can hide (an untested `if`/`else` side). |
+| **Add `mypy` (or `pyright`) to CI** | Codebase is fully type-hinted already; nothing currently checks that the hints stay true. Cheap to add, catches drift immediately. |
+| **Add an install/import smoke test across the Python matrix** — `pip install .` + bare `import snakestream` on each of 3.10–3.14, not just running pytest against checked-out source. | A packaging mistake could pass CI today while breaking real installs. Low effort, closes a real gap. |
+
+## Next
+
+Real design/implementation work, but contained — mostly additive or scoped to
+one area.
+
+| Item | Why next |
+|---|---|
+| **Add property-based tests with `hypothesis`** for `map`, `filter`, `reduce`, `sorted`, `distinct` | Cheaply catches edge cases hand-written tests miss (empty inputs, duplicate keys, non-comparable types, single-element streams). Needs some setup but no API changes. |
+| **Simplify `Stream.of()`** — currently branches on dict vs. list vs. multiple positional args vs. kwargs into one `source` list (`stream.py:36-59`); unclear what `Stream.of(1, [2, 3])` or `Stream.of(a=1, b=2)` produce without tracing the logic. | Worth splitting into narrower, clearer construction paths. Touches public API — needs a design decision on the replacement shape before implementation. |
+| **Rename or re-scope `.parallel()` / `PROCESSES`** — currently just `asyncio` tasks racing over a shared generator (I/O-bound only, GIL-bound, no multiprocessing), but the naming implies real OS-thread parallelism like Java's `parallelStream()`. | Misleading naming is a correctness-of-understanding risk for callers. Decide: rename/docstring to set correct expectations, or build an actual multiprocessing-backed implementation. Either path is a breaking-rename candidate — track in README's pre-1.0 migration log per `CLAUDE.md`. |
+
+## Later
+
+Bigger, structural — needs explicit buy-in before starting since it changes a
+core semantic.
+
+| Item | Why later |
+|---|---|
+| **Decide mutable-builder vs. immutable-pipeline semantics** — every intermediate op (`filter`, `map`, `distinct`, etc.) does `self._chain.append(fn); return self`, mutating the instance rather than returning a new one. Diverges from Java's immutable stream semantics; a `Stream` reference can't be safely reused or forked once chaining starts. | Highest blast radius of any item here — affects every consumer of the chain-of-closures model described in `CLAUDE.md`. Needs an explicit decision (keep and document current behavior vs. change to return-new-instance-per-op) before any code moves, since it's a breaking change either way. |
 
 ## Done
 
@@ -34,60 +65,7 @@ grouped by status.
   across CPython versions and produced spurious failures on 3.8/3.9.
 - Fixed `deliver.yml` to target `master` instead of `main`, since the repo's
   default branch is `master` and the workflow was never triggering.
-
-## To revisit
-
-- **`Stream.of()` is overloaded and hard to reason about.** It branches on
-  dict vs. list vs. multiple positional args vs. kwargs, all folded into one
-  `source` list with special-casing (`stream.py:36-59`). Not obvious what
-  `Stream.of(1, [2, 3])` or `Stream.of(a=1, b=2)` produce without tracing the
-  logic by hand. Also has a dead branch (`args and len(args) == 0` can never
-  be true). Worth splitting into clearer, narrower construction paths.
-
-- **"Parallel" is misleading naming.** `.parallel()` and the `PROCESSES`
-  constant suggest real CPU parallelism (as in Java's `parallelStream()`,
-  which uses multiple OS threads), but this is just `asyncio` tasks racing
-  over a shared generator — useful for I/O-bound coroutines, but it won't
-  speed up CPU-bound work at all (GIL-bound), and there's no multiprocessing
-  anywhere in the codebase. Needs either a rename/docstring to set correct
-  expectations, or an actual multiprocessing-backed implementation.
-
-- **Streams are mutable builders, not immutable pipelines.** Every
-  intermediate op (`filter`, `map`, `distinct`, etc.) does
-  `self._chain.append(fn); return self` — mutating the same instance rather
-  than returning a new one. This diverges from Java's immutable stream
-  semantics and means a `Stream` reference can't be safely reused or forked
-  once chaining has started. Worth deciding explicitly whether this is
-  intended behavior (and documenting it) or worth changing to return new
-  instances per intermediate op.
-
-## Testing & verification
-
-Coverage is already strong (123 tests, 99.58% line/branch), so these are
-about closing the remaining gaps and hardening the process, not building
-from scratch.
-
-- **No static type checking in CI.** The codebase is fully type-hinted
-  (`type.py`, generics in `Stream`/`ParallelStream`) but nothing runs
-  `mypy`/`pyright`, so annotations can drift from reality unnoticed. Worth
-  adding a `mypy` step to `check.yml`.
-
-- **No property-based testing.** For a streams library (`map`, `filter`,
-  `reduce`, `sort`, `distinct`), `hypothesis` would cheaply catch edge cases
-  hand-written tests tend to miss — empty inputs, duplicate keys,
-  non-comparable types, single-element streams.
-
-- **No install/import smoke test across the Python matrix.** `check.yml`
-  runs `pytest` against the checked-out source on Python 3.8–3.12, but
-  never does a `pip install .` + bare `import snakestream` on each version.
-  A packaging mistake (e.g. a missing entry in `packages.find`, a
-  Python-version-conditional import) could pass CI while breaking for
-  actual installs.
-
-- **Line coverage is gated, branch coverage isn't (once `--cov-fail-under`
-  is added).** `.coveragerc` sets `branch = True`, so branch coverage is
-  already measured, but a single `--cov-fail-under` threshold on total
-  coverage can mask a drop in branch coverage specifically (e.g. an
-  untested `if`/`else` side) as long as line coverage stays high. Worth
-  confirming the fail-under threshold is read against combined
-  line+branch, or gating branch coverage explicitly.
+- Pinned GitHub Actions to commit SHAs and added concurrency guards to CI
+  workflows.
+- Added `pip-audit` dependency-vulnerability scanning and `ruff format`
+  enforcement to CI.
