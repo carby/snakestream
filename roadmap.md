@@ -10,7 +10,6 @@ Small, low-risk, high-confidence — no public API impact.
 
 | Item | Why now |
 |---|---|
-| **Gate branch coverage, not just line coverage** — `--cov-fail-under=98` checks combined coverage; confirm it's actually reading line+branch together, or add an explicit branch-coverage gate. `.coveragerc` already has `branch = true`, so the data exists, it's just not separately enforced. | Config-only change; closes a blind spot the line-coverage gate can hide (an untested `if`/`else` side). |
 | **Add `mypy` (or `pyright`) to CI** | Codebase is fully type-hinted already; nothing currently checks that the hints stay true. Cheap to add, catches drift immediately. |
 | **Add an install/import smoke test across the Python matrix** — `pip install .` + bare `import snakestream` on each of 3.10–3.14, not just running pytest against checked-out source. | A packaging mistake could pass CI today while breaking real installs. Low effort, closes a real gap. |
 
@@ -36,6 +35,12 @@ core semantic.
 
 ## Done
 
+- Verified `--cov-fail-under=98` already enforces combined line+branch
+  coverage, not line coverage alone: `[tool.coverage.run] branch = true`
+  folds branch-arc misses into the same "percent covered" figure the gate
+  reads, confirmed by observing a deliberately partial branch drop the
+  reported percentage. No code change needed; added a comment in
+  `pyproject.toml` recording the finding so it doesn't need re-deriving.
 - `min()`/`max()` used to silently skip falsy candidate values (`0`, `""`,
   `False`) because of a truthiness check in `Stream._min_max`. Fixed by
   replacing the `None`-as-sentinel logic with a proper `_UNSET` sentinel.

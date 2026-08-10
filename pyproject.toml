@@ -42,6 +42,9 @@ norecursedirs = ["dist", "build", ".tox", ".virtualenv"]
 testpaths = ["tests"]
 
 [tool.coverage.run]
+# branch = true folds branch-arc coverage into the same "percent covered"
+# figure as line coverage, so CI's --cov-fail-under=98 (see check.yml)
+# already gates on combined line+branch coverage, not line coverage alone.
 branch = true
 source = ["snakestream"]
 
