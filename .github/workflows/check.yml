@@ -46,6 +46,13 @@ jobs:
     - name: Test with pytest
       run: uv run pytest
 
+    # Type-checking results don't meaningfully vary across CPython versions
+    # the way branch-coverage measurement does, so only run it once on the
+    # newest matrix version instead of redundantly on every job.
+    - name: Type check with ty
+      if: matrix.python-version == '3.14'
+      run: uv run ty check src
+
     # Vulnerability data doesn't vary by interpreter version, so only
     # audit once on the newest matrix version instead of redundantly
     # hitting the advisory database from every job.

@@ -10,7 +10,6 @@ Small, low-risk, high-confidence — no public API impact.
 
 | Item | Why now |
 |---|---|
-| **Add `mypy` (or `pyright`) to CI** | Codebase is fully type-hinted already; nothing currently checks that the hints stay true. Cheap to add, catches drift immediately. |
 | **Add an install/import smoke test across the Python matrix** — `pip install .` + bare `import snakestream` on each of 3.10–3.14, not just running pytest against checked-out source. | A packaging mistake could pass CI today while breaking real installs. Low effort, closes a real gap. |
 
 ## Next
@@ -35,6 +34,16 @@ core semantic.
 
 ## Done
 
+- Added static type checking to CI using `ty`, Astral's newer Rust-based
+  type checker — chosen over `mypy`/`pyright` since it fit the existing
+  `uv`/`ruff` toolchain and handled the codebase's `Awaitable`-union type
+  aliases without issue. Fixed the 6 genuine type errors it surfaced
+  (`BaseStream.on_close`'s return type, `ParallelStream`'s task-list
+  typing, `StreamBuilder`'s unbound `TypeVar`, `Stream.collect`'s generic
+  return type, and `Stream._min_max`'s sentinel-return typing), plus one
+  scoped `ty: ignore` for a case the checker can't narrow via the
+  runtime `iscoroutinefunction()` check in `Stream.sorted`. Gated to the
+  3.14 matrix leg only, matching the coverage-gate precedent.
 - Verified `--cov-fail-under=98` already enforces combined line+branch
   coverage, not line coverage alone: `[tool.coverage.run] branch = true`
   folds branch-arc misses into the same "percent covered" figure the gate

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from functools import cmp_to_key
 from inspect import iscoroutinefunction
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from collections.abc import AsyncGenerator, Callable, Generator
 
 from snakestream.base_stream import BaseStream
@@ -130,7 +130,10 @@ class Stream(BaseStream):
                 if iscoroutinefunction(comparator):
                     cache = await merge_sort(cache, comparator)
                 else:
-                    cache.sort(key=cmp_to_key(comparator))
+                    # ty can't narrow `comparator`'s type via the runtime
+                    # iscoroutinefunction() check above; this branch only
+                    # runs for the sync `bool`-returning half of the union.
+                    cache.sort(key=cmp_to_key(comparator))  # ty: ignore[invalid-argument-type]
             else:
                 cache.sort()
             # unblock the stream
@@ -186,7 +189,7 @@ class Stream(BaseStream):
         return self
 
     # Terminals
-    def collect(self, collector: Callable) -> list | AsyncGenerator:
+    def collect(self, collector: Callable[[AsyncGenerator], R]) -> R:
         return collector(self._compose())
 
     async def reduce(self, identity: T | R, accumulator: Accumulator) -> T | R:
@@ -246,7 +249,7 @@ class Stream(BaseStream):
             else:
                 if comparator(n, found):
                     found = n
-        return None if found is _UNSET else found
+        return None if found is _UNSET else cast(T, found)
 
     async def all_match(self, predicate: Predicate) -> bool:
         async for n in self._compose():
