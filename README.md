@@ -83,6 +83,8 @@ In snakestream this has been omitted since python has generators and those can b
 | function       | returns  | type     | summary                                                                                             |
 | -------------- | -------- | ---------| --------------------------------------------------------------------------------------------------- |
 | is_parallel()  | bool     | instance | Returns whether this stream, if a terminal operation were to be executed, would execute in parallel |
+| parallel()     | Stream   | instance | Composes the current chain and returns an equivalent stream that will execute in parallel           |
+| sequential()   | Stream   | instance | Composes the current chain and returns an equivalent stream that will execute sequentially          |
 
 ### Stream
 
@@ -117,6 +119,7 @@ In snakestream this has been omitted since python has generators and those can b
 | x | none_match(predicate: Predicate)        | bool | instance | Returns whether no elements of this stream match the provided predicate. |
 | x | of(*args, *kwargs)                      | Stream | static | Returns a sequential ordered stream whose elements are the specified values |
 | x | peek(self, consumer: Consumer)          | Stream | instance | Returns a stream consisting of the elements of this stream, additionally performing the provided action on each element as elements are consumed from the resulting stream. |
+| x | reduce(identity: T \| R, accumulator: Accumulator) | T \| R | instance | Performs a reduction on the elements of this stream, using the provided identity value and an associative accumulation function, and returns the reduced value. |
 
 ## Migration
 These are a list of the known breaking changes. Until release 1.0.0 focus will be on implementing features and changing things that does not align with how streams work in java.
@@ -135,16 +138,12 @@ Stream:
 - collect(Supplier<R> supplier, BiConsumer<R,? super T> accumulator, BiConsumer<R,R> combiner)
 - flatMapToDouble(Function<? super T,? extends DoubleStream> mapper)
 - flatMapToInt(Function<? super T,? extends IntStream> mapper)
-- flatMapToLong(Function<? super T,? extends LongStream> mapper)
 - forEachOrdered(Consumer<? super T> action)
-- iterate(T seed, UnaryOperator<T> f)
-- limit(long maxSize)
 - mapToDouble(ToDoubleFunction<? super T> mapper)
 - mapToInt(ToIntFunction<? super T> mapper)
-- mapToLong(ToLongFunction<? super T> mapper)
 
+- reduce(T identity, BinaryOperator<T> accumulator, BinaryOperator<T> combiner) // have done the one without a combiner
 - reduce(BinaryOperator<T> accumulator) // have done the one with the identity
 - skip(long n)
-- sorted() // have done the one with a comparator
 - toArray()
 - toArray(IntFunction<A[]> generator)
