@@ -102,8 +102,8 @@ In snakestream this has been omitted since python has generators and those can b
 | x | find_any()                      | Optional[T]               | instance | Returns an Optional describing some element of the stream, or an empty Optional if the stream is empty |
 |   | _find_first()_                | Optional[T]             | instance | Not implemented yet, depends on the implementaton of `ordered()` |
 | x | flat_map(flat_mapper: FlatMapper) | Stream                    | instance | Returns a stream consisting of the results of replacing each element of this stream with the contents of a mapped stream produced by applying the provided mapping function to each element |
-|   | _flat_map_to_double(flat_mapper: FlatMapper)_ | Stream    | instance | Not implemented yet | 
-|   | _flat_map_to_int(flat_mapper: FlatMapper)_ | Stream       | instance | Not implemented yet | 
+|   | ~~flat_map_to_double(flat_mapper: FlatMapper)~~ | Stream    | instance | Not relevant. Exists in Java to avoid autoboxing `double`s and to expose numeric-only ops (`sum()`, `average()`) that a generic `Stream<T>` can't offer. Python numbers are already objects with no boxing cost, and `sum()`/`min()`/`max()` work on any iterable, so there's no equivalent problem to solve. | 
+|   | ~~flat_map_to_int(flat_mapper: FlatMapper)~~ | Stream       | instance | Not relevant, same reasoning as `flat_map_to_double`. | 
 |   | ~~flat_map_to_long(flat_mapper: FlatMapper)~~ | Stream      | instance | Not relevant. The interpreter automatically handles larger than 32bit numbers. | 
 | x | for_each(consumer: Callable[T]) | Any                         | instance | Performs an action for each element of this stream | 
 |   | _for_each_ordered(consumer: Callable[T])_ | Any           | instance | Not implemented yet, depends on the implementaton of `ordered()` | 
@@ -111,8 +111,8 @@ In snakestream this has been omitted since python has generators and those can b
 | x | iterate(seed: T, nxt: Callable[[T], T]) | Stream | static | Returns an infinite sequential ordered Stream produced by iterative application of a function f to an initial element seed, producing a Stream consisting of seed, f(seed), f(f(seed)), etc. |
 | x | limit(max_size: int)                    | Stream | instance | Returns a stream consisting of the elements of this stream, truncated to be no longer than max_size() in length. |
 | x | map(mapper: Mapper)                     | Stream | instance | Returns a stream consisting of the results of applying the given function to the elements of this stream. |
-|   | _map_to_double(mapper: ToDoubleMapper)_  | Stream | instance | Returns a DoubleStream consisting of the results of applying the given function to the elements of this stream. |
-|   | _map_to_int(mapper: ToIntMapper)_       | Stream | instance | Returns an IntStream consisting of the results of applying the given function to the elements of this stream. |
+|   | ~~map_to_double(mapper: ToDoubleMapper)~~  | Stream | instance | Not relevant, same reasoning as `flat_map_to_double`. |
+|   | ~~map_to_int(mapper: ToIntMapper)~~       | Stream | instance | Not relevant, same reasoning as `flat_map_to_double`. |
 |   | ~~map_to_long(mapper: ToLongMapper)~~   | Stream | instance | Not relevant. The interpreter automatically handles larger than 32bit numbers. |
 | x | max(comparator: Comparator)             | Optional[T] | instance | Returns the maximum element of this stream according to the provided Comparator. |
 | x | min(comparator: Comparator)             | Optional[T] | instance | Returns the minimum element of this stream according to the provided Comparator. |
@@ -136,12 +136,7 @@ BaseStream:
 
 Stream:
 - collect(Supplier<R> supplier, BiConsumer<R,? super T> accumulator, BiConsumer<R,R> combiner)
-- flatMapToDouble(Function<? super T,? extends DoubleStream> mapper)
-- flatMapToInt(Function<? super T,? extends IntStream> mapper)
 - forEachOrdered(Consumer<? super T> action)
-- mapToDouble(ToDoubleFunction<? super T> mapper)
-- mapToInt(ToIntFunction<? super T> mapper)
-
 - reduce(T identity, BinaryOperator<T> accumulator, BinaryOperator<T> combiner) // have done the one without a combiner
 - reduce(BinaryOperator<T> accumulator) // have done the one with the identity
 - skip(long n)
