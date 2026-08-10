@@ -20,6 +20,7 @@ __pycache__/*
 .settings
 .idea
 .vscode
+.claude
 tags
 
 # Package files

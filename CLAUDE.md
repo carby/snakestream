@@ -19,10 +19,11 @@ uv run pytest --cov-fail-under=98          # enforce coverage threshold (as CI d
 uv run ruff check .                        # lint
 uv run ruff format --check .               # verify formatting
 uv run ruff format .                       # apply formatting
+uv run ty check src                        # static type check
 uv run --with pip-audit pip-audit          # dependency vulnerability audit
 ```
 
-CI (`.github/workflows/check.yml`) runs the ruff checks, `uv run pytest`, `pip-audit` and the coverage gate across Python 3.10–3.14; `pip-audit` and the coverage gate only run on the 3.14 leg. Match that when validating changes.
+CI (`.github/workflows/check.yml`) runs the ruff checks, `uv run pytest`, `ty`, `pip-audit` and the coverage gate across Python 3.10–3.14; `ty`, `pip-audit`, and the coverage gate only run on the 3.14 leg. Match that when validating changes.
 
 ## Architecture
 

@@ -55,7 +55,7 @@ class BaseStream:
         new_source = self._compose()
         return ParallelStream(new_source, self._close_handlers)
 
-    def on_close(self, close_handler: CloseHandler) -> Stream:
+    def on_close(self, close_handler: CloseHandler) -> BaseStream:
         self._close_handlers.append(close_handler)
         return self
 

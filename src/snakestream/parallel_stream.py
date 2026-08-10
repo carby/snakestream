@@ -19,17 +19,17 @@ class ParallelStream(Stream):
         self, intermediaries: list[Callable], iterable: AsyncGenerator, processes: int = PROCESSES
     ) -> AsyncGenerator:
         async_iterators = [self._sequential(intermediaries[:], iterable) for n in range(processes)]
-        tasks = [asyncio.ensure_future(n.__anext__()) for n in async_iterators]
+        tasks: list[asyncio.Task[Any] | None] = [asyncio.ensure_future(n.__anext__()) for n in async_iterators]
 
         try:
             while any([n is not None for n in tasks]):
-                waitlist = filter(lambda n: n is not None, tasks)
+                waitlist: list[asyncio.Task[Any]] = [t for t in tasks if t is not None]
                 done, _ = await asyncio.wait(waitlist, return_when=asyncio.FIRST_COMPLETED)
 
                 for task in done:
                     task_idx = tasks.index(task)
                     try:
-                        result = tasks[task_idx].result()
+                        result = task.result()
                         tasks[task_idx] = asyncio.ensure_future(async_iterators[task_idx].__anext__())
                         yield result
                     except StopAsyncIteration:

@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+from typing import Generic
+
 from snakestream.stream import Stream
 from snakestream.type import T
 
 
-class StreamBuilder:
+class StreamBuilder(Generic[T]):
     def __init__(self) -> None:
         self._elements: list[T] = []
 
-    def add(self, element: T) -> StreamBuilder:
+    def add(self, element: T) -> StreamBuilder[T]:
         self.accept(element)
         return self
 
