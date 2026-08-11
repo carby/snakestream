@@ -12,7 +12,6 @@ the design work.
 
 | Item | Why now |
 |---|---|
-| **Add property-based tests with `hypothesis`** for `map`, `filter`, `reduce`, `sorted`, `distinct` | Cheaply catches edge cases hand-written tests miss (empty inputs, duplicate keys, non-comparable types, single-element streams). Needs some setup but no API changes. |
 | **Simplify `Stream.of()`** — currently branches on dict vs. list vs. multiple positional args vs. kwargs into one `source` list (`stream.py:36-59`); unclear what `Stream.of(1, [2, 3])` or `Stream.of(a=1, b=2)` produce without tracing the logic. | Worth splitting into narrower, clearer construction paths. Touches public API — needs a design decision on the replacement shape before implementation; track any resulting rename in README's pre-1.0 migration log per `CLAUDE.md`. |
 | **Stop `_sequential()` from destroying `self._chain`** — `base_stream.py:38,40` calls `pop(0)` on the caller's live list, so `_compose()` empties the chain and a second terminal op on the same stream yields nothing (`collect -> [2,4,6]`, then `collect -> []`). `ParallelStream._parallel` already passes a copy (`intermediaries[:]`, `parallel_stream.py:21`), so the same `_compose()` contract behaves differently per subclass. | One-line fix (`intermediaries[:]`, or replace the recursion with an iterative loop and also drop the O(len(chain)) stack frames). Adjacent to the mutable-builder item in **Later** but independent of it: that one is about intermediate ops doing `return self`, this is unintended mutation inside compose, and it can be fixed without pre-deciding the larger semantic question. |
 
@@ -46,6 +45,10 @@ core semantic.
 
 ## Done
 
+- Added property-based tests with `hypothesis` for `map`, `filter`, `reduce`,
+  `sorted`, `distinct` against a plain-Python reference oracle, covering
+  edge cases hand-written tests miss (empty/single-element streams,
+  duplicate keys, async callables).
 - Added a `check_comparator_result_type()` runtime guard (`sort.py`) that
   raises `TypeError` if a user-supplied `Comparator` returns `bool` instead
   of `int`, used by `Stream._min_max()` (backing `min()`/`max()`) and both
