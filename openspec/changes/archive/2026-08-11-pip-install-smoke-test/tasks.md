@@ -8,6 +8,6 @@
 
 ## 2. Validate
 
-- [ ] 2.1 Push the branch and confirm the new job runs and passes on all 5 matrix legs.
+- [x] 2.1 Push the branch and confirm the new job runs and passes on all 5 matrix legs.
 - [x] 2.2 Verified locally: a fresh venv + `pip install .` + `import snakestream` succeeds and resolves from the installed distribution (not `src/`); a failing import (`ModuleNotFoundError`) exits non-zero, which fails a GH Actions `run` step by default — no extra error handling needed in the workflow.
 - [x] 2.3 Update `roadmap.md` — move the "Add an install/import smoke test" item from **Now** to **Done** with a short summary of what was added.
