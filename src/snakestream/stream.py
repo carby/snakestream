@@ -132,7 +132,7 @@ class Stream(BaseStream):
                 else:
                     # ty can't narrow `comparator`'s type via the runtime
                     # iscoroutinefunction() check above; this branch only
-                    # runs for the sync `bool`-returning half of the union.
+                    # runs for the sync `int`-returning half of the union.
                     cache.sort(key=cmp_to_key(comparator))  # ty: ignore[invalid-argument-type]
             else:
                 cache.sort()
@@ -220,23 +220,12 @@ class Stream(BaseStream):
             return n
 
     async def max(self, comparator: Comparator) -> T | None:
-        return await self._min_max(comparator)
+        return await self._min_max(comparator, keep_positive=True)
 
     async def min(self, comparator: Comparator) -> T | None:
-        if iscoroutinefunction(comparator):
+        return await self._min_max(comparator, keep_positive=False)
 
-            async def negative_comparator(x, y):
-                return not await comparator(x, y)
-
-            return await self._min_max(negative_comparator)
-        else:
-
-            def negative_comparator(x, y):
-                return not comparator(x, y)
-
-            return await self._min_max(negative_comparator)
-
-    async def _min_max(self, comparator: Comparator) -> T | None:
+    async def _min_max(self, comparator: Comparator, keep_positive: bool) -> T | None:
         found = _UNSET
         async for n in self._compose():
             if found is _UNSET:
@@ -244,11 +233,17 @@ class Stream(BaseStream):
                 continue
 
             if iscoroutinefunction(comparator):
-                if await comparator(n, found):
-                    found = n
+                sign = await comparator(n, found)
             else:
-                if comparator(n, found):
-                    found = n
+                sign = comparator(n, found)
+
+            # sign is comparator(n, found): negative if n orders before found,
+            # positive if after, zero on a tie (found, the earlier element, is kept).
+            # ty can't narrow `comparator`'s type via the runtime
+            # iscoroutinefunction() checks above, so `sign` is still typed
+            # `int | Awaitable[int]` here even though it's always `int`.
+            if (sign > 0) == keep_positive and sign != 0:  # ty: ignore[unsupported-operator]
+                found = n
         return None if found is _UNSET else cast(T, found)
 
     async def all_match(self, predicate: Predicate) -> bool:
