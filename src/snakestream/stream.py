@@ -8,7 +8,7 @@ from collections.abc import AsyncGenerator, Callable, Generator
 from snakestream.base_stream import BaseStream
 from snakestream.collector import to_generator
 from snakestream.exception import StreamBuildException
-from snakestream.sort import merge_sort
+from snakestream.sort import check_comparator_result_type, merge_sort
 from snakestream.type import R, T, Accumulator, CloseHandler, Comparator, Consumer, FlatMapper, Mapper, Predicate
 
 
@@ -133,7 +133,12 @@ class Stream(BaseStream):
                     # ty can't narrow `comparator`'s type via the runtime
                     # iscoroutinefunction() check above; this branch only
                     # runs for the sync `int`-returning half of the union.
-                    cache.sort(key=cmp_to_key(comparator))  # ty: ignore[invalid-argument-type]
+                    def checked_comparator(a, b):
+                        sign = comparator(a, b)
+                        check_comparator_result_type(sign)  # ty: ignore[invalid-argument-type]
+                        return sign
+
+                    cache.sort(key=cmp_to_key(checked_comparator))
             else:
                 cache.sort()
             # unblock the stream
@@ -231,8 +236,14 @@ class Stream(BaseStream):
             # iscoroutinefunction() check, so this is still typed
             # `int | Awaitable[int]` here even though it's always `int`.
             if iscoroutinefunction(comparator):
-                return await comparator(a, b)
-            return comparator(a, b)  # ty: ignore[invalid-return-type]
+                sign = await comparator(a, b)
+            else:
+                sign = comparator(a, b)
+            check_comparator_result_type(sign)  # ty: ignore[invalid-argument-type]
+            # sign is always `int` here (check_comparator_result_type raises
+            # otherwise), but ty can't narrow it past `int | Awaitable[int]`
+            # because of the iscoroutinefunction() branch above.
+            return sign  # ty: ignore[invalid-return-type]
 
         found = cast(T, _UNSET)
         async for raw in self._compose():

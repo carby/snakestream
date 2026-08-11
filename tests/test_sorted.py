@@ -109,3 +109,23 @@ async def test_sorted_async_comparator_matches_cmp_to_key(values: list[int]) -> 
 
     # then
     assert actual == sorted(values, key=functools.cmp_to_key(_compare_by_abs))
+
+
+@pytest.mark.asyncio
+async def test_sorted_rejects_bool_comparator() -> None:
+    outset = [3, 1, 2]
+    # when / then
+    with pytest.raises(TypeError):
+        await Stream.of(outset).sorted(comparator=lambda a, b: a > b).collect(to_list)
+
+
+@pytest.mark.asyncio
+async def test_sorted_rejects_async_bool_comparator() -> None:
+    async def async_compare(a: int, b: int) -> bool:
+        await asyncio.sleep(0.01)
+        return a > b
+
+    outset = [3, 1, 2]
+    # when / then
+    with pytest.raises(TypeError):
+        await Stream.of(outset).sorted(comparator=async_compare).collect(to_list)
