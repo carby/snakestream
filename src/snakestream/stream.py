@@ -220,31 +220,37 @@ class Stream(BaseStream):
             return n
 
     async def max(self, comparator: Comparator) -> T | None:
-        return await self._min_max(comparator, keep_positive=True)
+        return await self._min_max(comparator, asc=False)
 
     async def min(self, comparator: Comparator) -> T | None:
-        return await self._min_max(comparator, keep_positive=False)
+        return await self._min_max(comparator, asc=True)
 
-    async def _min_max(self, comparator: Comparator, keep_positive: bool) -> T | None:
-        found = _UNSET
-        async for n in self._compose():
+    async def _min_max(self, comparator: Comparator, asc: bool) -> T | None:
+        async def compare(a: T, b: T) -> int:
+            # ty can't narrow `comparator`'s type via the runtime
+            # iscoroutinefunction() check, so this is still typed
+            # `int | Awaitable[int]` here even though it's always `int`.
+            if iscoroutinefunction(comparator):
+                return await comparator(a, b)
+            return comparator(a, b)  # ty: ignore[invalid-return-type]
+
+        found = cast(T, _UNSET)
+        async for raw in self._compose():
+            n = cast(T, raw)
             if found is _UNSET:
                 found = n
                 continue
 
-            if iscoroutinefunction(comparator):
-                sign = await comparator(n, found)
+            # comparator(n, found): negative if n orders before found, positive
+            # if after. found (the earlier element) is kept on a tie.
+            sign = await compare(n, found)
+            if asc:
+                is_new_extreme = sign < 0
             else:
-                sign = comparator(n, found)
-
-            # sign is comparator(n, found): negative if n orders before found,
-            # positive if after, zero on a tie (found, the earlier element, is kept).
-            # ty can't narrow `comparator`'s type via the runtime
-            # iscoroutinefunction() checks above, so `sign` is still typed
-            # `int | Awaitable[int]` here even though it's always `int`.
-            if (sign > 0) == keep_positive and sign != 0:  # ty: ignore[unsupported-operator]
+                is_new_extreme = sign > 0
+            if is_new_extreme:
                 found = n
-        return None if found is _UNSET else cast(T, found)
+        return None if found is _UNSET else found
 
     async def all_match(self, predicate: Predicate) -> bool:
         async for n in self._compose():
