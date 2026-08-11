@@ -12,7 +12,6 @@ the design work.
 
 | Item | Why now |
 |---|---|
-| **Simplify `Stream.of()`** — currently branches on dict vs. list vs. multiple positional args vs. kwargs into one `source` list (`stream.py:36-59`); unclear what `Stream.of(1, [2, 3])` or `Stream.of(a=1, b=2)` produce without tracing the logic. Decide the `str`/`bytes` case as part of the same redesign: `_normalize` (`base_stream.py:15`) treats any `__iter__` as a sequence, so `Stream.of("abc")` yields `['a', 'b', 'c']` and `Stream.of(b"ab")` yields `[97, 98]` rather than one scalar element. | Worth splitting into narrower, clearer construction paths. Touches public API — needs a design decision on the replacement shape before implementation; track any resulting rename in README's pre-1.0 migration log per `CLAUDE.md`. |
 | **Stop `_sequential()` from destroying `self._chain`** — `base_stream.py:38,40` calls `pop(0)` on the caller's live list, so `_compose()` empties the chain and a second terminal op on the same stream yields nothing (`collect -> [2,4,6]`, then `collect -> []`). `ParallelStream._parallel` already passes a copy (`intermediaries[:]`, `parallel_stream.py:21`), so the same `_compose()` contract behaves differently per subclass. | One-line fix (`intermediaries[:]`, or replace the recursion with an iterative loop and also drop the O(len(chain)) stack frames). Adjacent to the mutable-builder item in **Later** but independent of it: that one is about intermediate ops doing `return self`, this is unintended mutation inside compose, and it can be fixed without pre-deciding the larger semantic question. **Does not on its own make a second terminal op work** — the build-time-closure-state item below blocks that too, and both must land together to actually fix re-collection. |
 | **Move per-op closure state inside the closure** — `distinct()` creates `seen = set()` and `limit()` creates `size = 0` *outside* the `async def fn` they append to `_chain` (`stream.py:155-194`), so the state belongs to the chain entry rather than to a run of the pipeline. Applying the same closure to two fresh sources gives `[1,2,3,4,5]` then `[]` for `distinct`, and `[1,2]` then `[]` for `limit`. | Hidden blocker for the chain-mutation item above: applying the `intermediaries[:]` fix alone still leaves a second `collect()` returning `[]`, just for this reason instead. Fix is to initialize the state inside `fn`, but it interacts with `ParallelStream`, where all branches currently share one closure object — a shared `seen`/`size` is what makes parallel `distinct`/`limit` behave sanely today, and per-branch copies change those semantics. Decide together with the item above. |
 | **Replace `iscoroutinefunction()` dispatch with a `_maybe_await` helper** — the `if iscoroutinefunction(x): await x(...) else: x(...)` branch is repeated at 10 sites in `stream.py`, and `all_match`/`any_match`/`none_match` are three near-identical 12-line methods. It is also wrong for callable objects: `iscoroutinefunction()` is `False` for a class with an `async def __call__`, so `Stream.of([1,2,3]).map(AsyncDouble())` yields un-awaited coroutine objects with only a `RuntimeWarning` — no exception, silently corrupted output. | Bug fix and de-duplication in one: an `async def _maybe_await(fn, *args)` that calls first and checks `inspect.isawaitable(result)` handles async callable objects correctly and collapses all 10 sites. Note `flat_map` (`stream.py:110`) uses `iscoroutinefunction` to *reject* coroutines up front, so it needs handling separately rather than being folded into the helper. |
@@ -48,6 +47,23 @@ core semantic.
 
 ## Done
 
+- Simplified `Stream.of()` (`stream.py`) from a four-way branch on dict vs.
+  list vs. multiple positional args vs. kwargs down to two cases: a single
+  positional arg passes straight through to `Stream()`'s existing source
+  normalization, multiple args wrap into a list (one element each). The
+  dict/list `isinstance` special-casing turned out to be dead complexity —
+  tracing all 15 existing `test_of.py` cases showed it always produced the
+  same call as the generic path, since `_normalize()` already re-spreads
+  lists/dicts on its own. Also fixed `_normalize()` (`base_stream.py`) to
+  treat `str`/`bytes` as scalar values, matching how Java's `Stream.of(T...)`
+  treats `String`/`byte[]` atomically (byte arrays can't decompose via
+  varargs since `T` can't bind to a primitive type), instead of the previous
+  silent char-by-char/byte-by-byte spreading. Both changes are **BREAKING**
+  and tracked in README's migration log per `CLAUDE.md`: `**kwargs` support
+  is removed from `Stream.of()` entirely (no Java equivalent, undiscoverable,
+  no real use case over `Stream.of(*some_dict.items())`), and
+  `Stream.of("abc")`/`Stream.of(b"ab")` now yield one element instead of
+  spreading.
 - Added property-based tests with `hypothesis` for `map`, `filter`, `reduce`,
   `sorted`, `distinct` against a plain-Python reference oracle, covering
   edge cases hand-written tests miss (empty/single-element streams,

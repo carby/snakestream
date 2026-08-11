@@ -134,36 +134,26 @@ async def test_single_empty_dict() -> None:
     assert [{}] == actual
 
 
-@pytest.mark.asyncio
-async def test_single_kw_arg() -> None:
-    # when
-    actual = await Stream.of(a=1).collect(to_list)
-
-    assert [("a", 1)] == actual
+def test_kwargs_rejected() -> None:
+    # when / then
+    with pytest.raises(TypeError):
+        Stream.of(a=1)
 
 
 @pytest.mark.asyncio
-async def test_kw_and_regular_arg() -> None:
+async def test_single_str_input() -> None:
     # when
-    actual = await Stream.of(3, a=1).collect(to_list)
+    actual = await Stream.of("abc").collect(to_list)
 
-    assert [3, ("a", 1)] == actual
+    assert ["abc"] == actual
 
 
 @pytest.mark.asyncio
-async def test_multiple_kw() -> None:
+async def test_single_bytes_input() -> None:
     # when
-    actual = await Stream.of(a=1, b=2).collect(to_list)
+    actual = await Stream.of(b"ab").collect(to_list)
 
-    assert [("a", 1), ("b", 2)] == actual
-
-
-@pytest.mark.asyncio
-async def test_multiple_kw_mixed() -> None:
-    # when
-    actual = await Stream.of(3, a=1, b=2).collect(to_list)
-
-    assert [3, ("a", 1), ("b", 2)] == actual
+    assert [b"ab"] == actual
 
 
 @pytest.mark.asyncio
