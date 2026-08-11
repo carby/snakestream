@@ -90,9 +90,12 @@ jobs:
     # A plain venv + `pip install .`, not `uv sync`, so this exercises the
     # same build (setuptools.build_meta) and install path a real
     # `pip install snakestream` user hits. `uv venv` is only used to
-    # provision the venv with the matrix's Python version.
+    # provision the venv with the matrix's Python version; `--seed` is
+    # required so `pip` actually exists inside the venv (uv venv omits it
+    # by default), otherwise `pip install .` silently falls through to a
+    # pip outside the venv and installs to user site-packages instead.
     - name: Create a clean virtual environment
-      run: uv venv --python ${{ matrix.python-version }} .venv
+      run: uv venv --seed --python ${{ matrix.python-version }} .venv
 
     - name: Install the built package
       run: |
