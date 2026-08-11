@@ -13,7 +13,7 @@ Predicate = Callable[[T], bool | Awaitable[bool]]
 Filterer = Callable[[T], T]
 Mapper = Callable[[T], R | None]
 FlatMapper = Callable[[Iterable | AsyncIterable | Generator | AsyncGenerator], "Stream"]
-Comparator = Callable[[T, T], bool | Awaitable[bool]]
+Comparator = Callable[[T, T], int | Awaitable[int]]
 Consumer = Callable[[T], T]
 CloseHandler = Callable[[], None]
 

@@ -14,7 +14,6 @@ the design work.
 |---|---|
 | **Add property-based tests with `hypothesis`** for `map`, `filter`, `reduce`, `sorted`, `distinct` | Cheaply catches edge cases hand-written tests miss (empty inputs, duplicate keys, non-comparable types, single-element streams). Needs some setup but no API changes. |
 | **Simplify `Stream.of()`** — currently branches on dict vs. list vs. multiple positional args vs. kwargs into one `source` list (`stream.py:36-59`); unclear what `Stream.of(1, [2, 3])` or `Stream.of(a=1, b=2)` produce without tracing the logic. | Worth splitting into narrower, clearer construction paths. Touches public API — needs a design decision on the replacement shape before implementation; track any resulting rename in README's pre-1.0 migration log per `CLAUDE.md`. |
-| **Split the `Comparator` type alias — it currently means two incompatible things.** `type.py:16` declares `Comparator = Callable[[T, T], bool \| Awaitable[bool]]`, but `sorted()` needs a Java-style 3-way *int* comparator (`sort.py:17` does `await comparator(...) <= 0`; `stream.py:136` does `cmp_to_key(comparator)`) while `min()`/`max()` need a *bool* one (`stream.py:250` does `if comparator(n, found)`, and `min()` negates it via `not comparator(x, y)` at `stream.py:229,235`). | Both directions fail **silently**, with no exception and no `ty` error (the alias itself is wrong, so nothing can catch it): a 3-way comparator gives `max([3,1,2]) -> 2` (should be `3`) and `min([3,1,2]) -> 3` (should be `1`); a bool comparator gives `sorted([3,1,2]) -> [3,1,2]`, silently unsorted. Pick one contract, split the alias (e.g. `Comparator` vs. `BiPredicate`), and track the resulting signature change in README's pre-1.0 migration log per `CLAUDE.md`. Secondary, same area: even with a correct bool comparator, `not comparator(x, y)` is true on ties, so `min()` returns the *last* of equal elements while `max()` returns the first. |
 | **Stop `_sequential()` from destroying `self._chain`** — `base_stream.py:38,40` calls `pop(0)` on the caller's live list, so `_compose()` empties the chain and a second terminal op on the same stream yields nothing (`collect -> [2,4,6]`, then `collect -> []`). `ParallelStream._parallel` already passes a copy (`intermediaries[:]`, `parallel_stream.py:21`), so the same `_compose()` contract behaves differently per subclass. | One-line fix (`intermediaries[:]`, or replace the recursion with an iterative loop and also drop the O(len(chain)) stack frames). Adjacent to the mutable-builder item in **Later** but independent of it: that one is about intermediate ops doing `return self`, this is unintended mutation inside compose, and it can be fixed without pre-deciding the larger semantic question. |
 
 ## Next
@@ -47,6 +46,15 @@ core semantic.
 
 ## Done
 
+- Fixed the `Comparator` type alias mismatch (`type.py:16`): kept a single
+  Java-style 3-way *int* `Comparator` (matching `sorted()`'s existing usage
+  and Java's own `Stream.min/max(Comparator)`), rather than splitting into
+  two aliases, and fixed `Stream.min()`/`max()`/`_min_max()` (`stream.py`)
+  to interpret the comparator's sign directly instead of treating it as a
+  bool. This also fixed the tie-break bug for free: both `min()` and `max()`
+  now keep the first of equal elements. Tracked as **BREAKING** in README's
+  migration log per `CLAUDE.md` since bool-returning comparators passed to
+  `min()`/`max()` now behave differently.
 - Added an `install_smoke_test` CI job (`.github/workflows/check.yml`) that,
   for each of Python 3.10–3.14, creates a clean venv (`uv venv`, not
   `uv sync`), runs `pip install .` against the built package, and imports

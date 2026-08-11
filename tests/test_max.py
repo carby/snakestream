@@ -100,3 +100,34 @@ async def test_find_max_value_object_comparator() -> None:
     it = await Stream.of(input_list).max(lambda x, y: x.id > y.id)
     # then
     assert it == MyObject(3, "object3")
+
+
+@pytest.mark.asyncio
+async def test_find_max_value_three_way_comparator():
+    input_list = [3, 1, 2]
+    # when
+    it = await Stream.of(input_list).max(lambda x, y: x - y)
+    # then
+    assert it == 3
+
+
+@pytest.mark.asyncio
+async def test_find_max_value_three_way_comparator_async():
+    async def async_comparator(x: int, y: int) -> int:
+        await asyncio.sleep(0.01)
+        return x - y
+
+    input_list = [3, 1, 2]
+    # when
+    it = await Stream.of(input_list).max(async_comparator)
+    # then
+    assert it == 3
+
+
+@pytest.mark.asyncio
+async def test_find_max_value_keeps_first_of_tied_elements():
+    input_list = [("a", 5), ("b", 5)]
+    # when
+    it = await Stream.of(input_list).max(lambda x, y: x[1] - y[1])
+    # then
+    assert it == ("a", 5)
