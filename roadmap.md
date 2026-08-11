@@ -12,7 +12,6 @@ the design work.
 
 | Item | Why now |
 |---|---|
-| **Add an install/import smoke test across the Python matrix** — `pip install .` + bare `import snakestream` on each of 3.10–3.14, not just running pytest against checked-out source. | A packaging mistake could pass CI today while breaking real installs. Low effort, closes a real gap. |
 | **Add property-based tests with `hypothesis`** for `map`, `filter`, `reduce`, `sorted`, `distinct` | Cheaply catches edge cases hand-written tests miss (empty inputs, duplicate keys, non-comparable types, single-element streams). Needs some setup but no API changes. |
 | **Simplify `Stream.of()`** — currently branches on dict vs. list vs. multiple positional args vs. kwargs into one `source` list (`stream.py:36-59`); unclear what `Stream.of(1, [2, 3])` or `Stream.of(a=1, b=2)` produce without tracing the logic. | Worth splitting into narrower, clearer construction paths. Touches public API — needs a design decision on the replacement shape before implementation; track any resulting rename in README's pre-1.0 migration log per `CLAUDE.md`. |
 
@@ -45,6 +44,11 @@ core semantic.
 
 ## Done
 
+- Added an `install_smoke_test` CI job (`.github/workflows/check.yml`) that,
+  for each of Python 3.10–3.14, creates a clean venv (`uv venv`, not
+  `uv sync`), runs `pip install .` against the built package, and imports
+  `snakestream` from outside the repo checkout — catching packaging
+  mistakes that the source-tree `pytest` job wouldn't.
 - Added static type checking to CI using `ty`, Astral's newer Rust-based
   type checker — chosen over `mypy`/`pyright` since it fit the existing
   `uv`/`ruff` toolchain and handled the codebase's `Awaitable`-union type

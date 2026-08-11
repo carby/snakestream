@@ -69,3 +69,41 @@ jobs:
     - name: Enforce coverage threshold
       if: matrix.python-version == '3.14'
       run: uv run pytest --cov-fail-under=98
+
+  install_smoke_test:
+
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+
+    steps:
+    - name: Check out the repo
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    # A plain venv + `pip install .`, not `uv sync`, so this exercises the
+    # same build (setuptools.build_meta) and install path a real
+    # `pip install snakestream` user hits. `uv venv` is only used to
+    # provision the venv with the matrix's Python version.
+    - name: Create a clean virtual environment
+      run: uv venv --python ${{ matrix.python-version }} .venv
+
+    - name: Install the built package
+      run: |
+        source .venv/bin/activate
+        pip install .
+
+    # Run from outside the repo checkout so a stray sys.path[0] entry
+    # can't make this pass by resolving `snakestream` from the local
+    # src/ layout instead of the installed distribution.
+    - name: Import the installed package
+      run: |
+        source .venv/bin/activate
+        cd "$RUNNER_TEMP"
+        python -c "import snakestream"
