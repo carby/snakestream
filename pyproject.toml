@@ -29,6 +29,7 @@ version_scheme = "no-guess-dev"
 
 [dependency-groups]
 dev = [
+    "hypothesis",
     "pytest",
     "pytest-cov",
     "pytest-asyncio",
