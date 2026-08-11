@@ -1,4 +1,6 @@
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from snakestream import Stream
 from snakestream.collector import to_list
@@ -42,3 +44,18 @@ async def test_unique_object_list() -> None:
     it = await Stream.of(input_list).distinct().collect(to_list)
     # then
     assert it == [MyObject(1, "object1"), MyObject(2, "object2"), MyObject(3, "object3")]
+
+
+def _first_seen_order_dedup(values: list[int]) -> list[int]:
+    return list(dict.fromkeys(values))
+
+
+@given(values=st.lists(st.integers()))
+@pytest.mark.asyncio
+async def test_distinct_matches_first_seen_order_dedup(values: list[int]) -> None:
+    # when
+    actual = await Stream.of(values).distinct().collect(to_list)
+
+    # then
+    assert actual == _first_seen_order_dedup(values)
+    assert len(actual) == len(set(actual))

@@ -1,4 +1,6 @@
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from snakestream import Stream
 from snakestream.collector import to_generator, to_list
@@ -51,3 +53,26 @@ async def test_map_does_not_mutate_source(int_2_letter) -> None:
     assert source != it
     assert len(source) == 4
     assert len(it) == 4
+
+
+@given(values=st.lists(st.integers()))
+@pytest.mark.asyncio
+async def test_map_matches_builtin_map(values: list[int]) -> None:
+    # when
+    actual = await Stream.of(values).map(lambda x: x * 2).collect(to_list)
+
+    # then
+    assert actual == list(map(lambda x: x * 2, values))
+
+
+@given(values=st.lists(st.integers()))
+@pytest.mark.asyncio
+async def test_map_async_mapper_matches_builtin_map(values: list[int]) -> None:
+    async def async_double(x: int) -> int:
+        return x * 2
+
+    # when
+    actual = await Stream.of(values).map(async_double).collect(to_list)
+
+    # then
+    assert actual == list(map(lambda x: x * 2, values))
