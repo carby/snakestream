@@ -120,6 +120,7 @@ In snakestream this has been omitted since python has generators and those can b
 | x | of(*args: T)                            | Stream | static | Returns a sequential ordered stream whose elements are the specified values |
 | x | peek(self, consumer: Consumer)          | Stream | instance | Returns a stream consisting of the elements of this stream, additionally performing the provided action on each element as elements are consumed from the resulting stream. |
 | x | reduce(identity: T \| R, accumulator: Accumulator) | T \| R | instance | Performs a reduction on the elements of this stream, using the provided identity value and an associative accumulation function, and returns the reduced value. |
+| x | skip(n: int)                             | Stream | instance | Returns a stream consisting of the remaining elements of this stream after discarding the first n elements of the stream. |
 
 ## Migration
 These are a list of the known breaking changes. Until release 1.0.0 focus will be on implementing features and changing things that does not align with how streams work in java.
@@ -143,6 +144,5 @@ Stream:
 - forEachOrdered(Consumer<? super T> action)
 - reduce(T identity, BinaryOperator<T> accumulator, BinaryOperator<T> combiner) // have done the one without a combiner
 - reduce(BinaryOperator<T> accumulator) // have done the one with the identity
-- skip(long n)
 - toArray()
 - toArray(IntFunction<A[]> generator)

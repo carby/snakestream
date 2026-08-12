@@ -62,6 +62,26 @@ class _LimitOp:
         await iterable.aclose()
 
 
+class _SkipOp:
+    def __init__(self, n: int) -> None:
+        self._n = n
+
+    def make_state(self) -> list[int]:
+        return [0]
+
+    async def __call__(self, iterable: AsyncGenerator, skipped_holder: list[int] | None = None) -> AsyncGenerator:
+        if skipped_holder is None:
+            skipped_holder = self.make_state()
+        while skipped_holder[0] < self._n:
+            try:
+                await anext(iterable)
+            except StopAsyncIteration:
+                return
+            skipped_holder[0] += 1
+        async for i in iterable:
+            yield i
+
+
 class Stream(BaseStream[T]):
     def __init__(self, source: Any, close_handlers: list[CloseHandler] | None = None) -> None:
         super().__init__(source)
@@ -174,6 +194,10 @@ class Stream(BaseStream[T]):
 
     def limit(self, max_size: int) -> Stream[T]:
         self._chain.append(_LimitOp(max_size))
+        return self
+
+    def skip(self, n: int) -> Stream[T]:
+        self._chain.append(_SkipOp(n))
         return self
 
     # Terminals

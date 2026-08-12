@@ -15,15 +15,14 @@ an earlier item or on a Next-bucket decision last.
 
 | # | Item | Why this position |
 |---|---|---|
-| 1 | **`Stream.skip(n)`** — drop the first `n` elements. | No blockers, symmetric with the already-implemented `limit()`. |
-| 2 | **`Stream.reduce(accumulator)`** — 1-arg reduce with no identity, returning `Optional[T]`. | No blockers; can likely delegate to the existing 2-arg `reduce`, though the `Optional`-style empty-stream return convention still needs deciding. |
-| 3 | **`BaseStream.iterator()`** — expose a way to pull the composed stream as a plain Python iterator/async iterator without going through a collector. | No blockers, no dependents; independent addition. |
-| 4 | **`BaseStream.unordered()`** — mark a stream as not order-dependent. | No blockers itself, but unblocks #5 below and distinguishing `find_first()` from `find_any()` (see `stream.py`'s disabled `find_first`) — do this before its dependents. |
-| 5 | **`Stream.forEachOrdered(action)`** — ordered variant of `for_each()`, meaningful once parallel streams can guarantee order. | Depends on #4 (`unordered()`/ordering semantics decided first). |
-| 6 | **`Stream.collect(supplier, accumulator, combiner)`** — Java's 3-arg mutable-reduction `collect()`, distinct from snakestream's existing single-arg `collect(collector)`. | No blockers; independent Java-parity addition, no currently-known consumer need. |
-| 7 | **`BaseStream.spliterator()`** — Java's parallel-decomposition iterator. | No hard blocker, but needs a decision first: Java-specific mechanism for splitting work across threads, and snakestream's `ParallelStream` already parallelizes differently (racing `asyncio` tasks over a shared generator), so this may end up intentionally-skipped rather than implemented. |
-| 8 | **`Stream.toArray()`** / **`Stream.toArray(generator)`** — materialize the stream into an array-like structure. | No hard blocker, but needs a decision first: no Java array/generic-array-factory equivalent in Python, so what the Pythonic form even is (a `list`? redundant with `collect(to_list)`?) has to be settled before implementing. |
-| 9 | **`Stream.reduce(identity, accumulator, combiner)`** — 3-arg reduce with a combiner for parallel merging, distinct from the already-implemented 2-arg `reduce(identity, accumulator)`. | Blocked on the **Next**-bucket `.parallel()`/`PROCESSES` semantics decision — the combiner only matters once parallel reduction is well-defined. Last in line. |
+| 1 | **`Stream.reduce(accumulator)`** — 1-arg reduce with no identity, returning `Optional[T]`. | No blockers; can likely delegate to the existing 2-arg `reduce`, though the `Optional`-style empty-stream return convention still needs deciding. |
+| 2 | **`BaseStream.iterator()`** — expose a way to pull the composed stream as a plain Python iterator/async iterator without going through a collector. | No blockers, no dependents; independent addition. |
+| 3 | **`BaseStream.unordered()`** — mark a stream as not order-dependent. | No blockers itself, but unblocks #4 below and distinguishing `find_first()` from `find_any()` (see `stream.py`'s disabled `find_first`) — do this before its dependents. |
+| 4 | **`Stream.forEachOrdered(action)`** — ordered variant of `for_each()`, meaningful once parallel streams can guarantee order. | Depends on #3 (`unordered()`/ordering semantics decided first). |
+| 5 | **`Stream.collect(supplier, accumulator, combiner)`** — Java's 3-arg mutable-reduction `collect()`, distinct from snakestream's existing single-arg `collect(collector)`. | No blockers; independent Java-parity addition, no currently-known consumer need. |
+| 6 | **`BaseStream.spliterator()`** — Java's parallel-decomposition iterator. | No hard blocker, but needs a decision first: Java-specific mechanism for splitting work across threads, and snakestream's `ParallelStream` already parallelizes differently (racing `asyncio` tasks over a shared generator), so this may end up intentionally-skipped rather than implemented. |
+| 7 | **`Stream.toArray()`** / **`Stream.toArray(generator)`** — materialize the stream into an array-like structure. | No hard blocker, but needs a decision first: no Java array/generic-array-factory equivalent in Python, so what the Pythonic form even is (a `list`? redundant with `collect(to_list)`?) has to be settled before implementing. |
+| 8 | **`Stream.reduce(identity, accumulator, combiner)`** — 3-arg reduce with a combiner for parallel merging, distinct from the already-implemented 2-arg `reduce(identity, accumulator)`. | Blocked on the **Next**-bucket `.parallel()`/`PROCESSES` semantics decision — the combiner only matters once parallel reduction is well-defined. Last in line. |
 
 ## Next
 
@@ -44,6 +43,19 @@ Nothing currently parked here — see **Now** for what moved up.
 
 ## Done
 
+- Added `Stream.skip(n)` — drops the first `n` elements pulled from upstream
+  and yields the rest, symmetric with the already-implemented `limit(n)`.
+  Implemented as `_SkipOp` (`stream.py`), mirroring `_LimitOp`'s
+  `make_state()`/shared-state pattern so `ParallelStream._parallel()`'s
+  existing generic `make_state()`-detection wires up correct parallel
+  behavior (exactly `n` total elements dropped across all racing branches,
+  not per-branch) with no `parallel_stream.py` changes needed. Unlike
+  `limit()`, `skip()` has no short-circuit available — the first `n`
+  elements must actually be pulled and discarded to advance upstream past
+  them. Added `tests/test_skip.py` plus parallel-specific regression tests
+  in `tests/test_parallel.py` (drops exactly `n` across branches, state
+  fresh across separate streams). No public API change to existing methods.
+  See `openspec/changes/add-stream-skip`.
 - Made `Stream` generic (`Stream[T]`): `BaseStream`/`Stream`/`ParallelStream` were
   plain classes, so the `T`/`R` in their method signatures were unbound
   `TypeVar`s and element types were `Unknown` end to end — `ty` accepted
