@@ -10,7 +10,20 @@ Actively being picked up. Mostly low-risk and self-contained, but may
 include a public-API item once there's a specific, near-term plan to do
 the design work.
 
-Nothing currently in flight — see **Next** for what's queued up.
+Ordered by dependency — items with no blockers first, items that depend on
+an earlier item or on a Next-bucket decision last.
+
+| # | Item | Why this position |
+|---|---|---|
+| 1 | **`Stream.skip(n)`** — drop the first `n` elements. | No blockers, symmetric with the already-implemented `limit()`. |
+| 2 | **`Stream.reduce(accumulator)`** — 1-arg reduce with no identity, returning `Optional[T]`. | No blockers; can likely delegate to the existing 2-arg `reduce`, though the `Optional`-style empty-stream return convention still needs deciding. |
+| 3 | **`BaseStream.iterator()`** — expose a way to pull the composed stream as a plain Python iterator/async iterator without going through a collector. | No blockers, no dependents; independent addition. |
+| 4 | **`BaseStream.unordered()`** — mark a stream as not order-dependent. | No blockers itself, but unblocks #5 below and distinguishing `find_first()` from `find_any()` (see `stream.py`'s disabled `find_first`) — do this before its dependents. |
+| 5 | **`Stream.forEachOrdered(action)`** — ordered variant of `for_each()`, meaningful once parallel streams can guarantee order. | Depends on #4 (`unordered()`/ordering semantics decided first). |
+| 6 | **`Stream.collect(supplier, accumulator, combiner)`** — Java's 3-arg mutable-reduction `collect()`, distinct from snakestream's existing single-arg `collect(collector)`. | No blockers; independent Java-parity addition, no currently-known consumer need. |
+| 7 | **`BaseStream.spliterator()`** — Java's parallel-decomposition iterator. | No hard blocker, but needs a decision first: Java-specific mechanism for splitting work across threads, and snakestream's `ParallelStream` already parallelizes differently (racing `asyncio` tasks over a shared generator), so this may end up intentionally-skipped rather than implemented. |
+| 8 | **`Stream.toArray()`** / **`Stream.toArray(generator)`** — materialize the stream into an array-like structure. | No hard blocker, but needs a decision first: no Java array/generic-array-factory equivalent in Python, so what the Pythonic form even is (a `list`? redundant with `collect(to_list)`?) has to be settled before implementing. |
+| 9 | **`Stream.reduce(identity, accumulator, combiner)`** — 3-arg reduce with a combiner for parallel merging, distinct from the already-implemented 2-arg `reduce(identity, accumulator)`. | Blocked on the **Next**-bucket `.parallel()`/`PROCESSES` semantics decision — the combiner only matters once parallel reduction is well-defined. Last in line. |
 
 ## Next
 
@@ -20,24 +33,14 @@ one area.
 | Item | Why next |
 |---|---|
 | **Rename or re-scope `.parallel()` / `PROCESSES`** — currently just `asyncio` tasks racing over a shared generator (I/O-bound only, GIL-bound, no multiprocessing), but the naming implies real OS-thread parallelism like Java's `parallelStream()`. | Misleading naming is a correctness-of-understanding risk for callers. Decide: rename/docstring to set correct expectations, or build an actual multiprocessing-backed implementation. Either path is a breaking-rename candidate — track in README's pre-1.0 migration log per `CLAUDE.md`. |
-| **Decide mutable-builder vs. immutable-pipeline semantics** — every intermediate op (`filter`, `map`, `distinct`, etc.) does `self._chain.append(fn); return self`, mutating the instance rather than returning a new one. Diverges from Java's immutable stream semantics; a `Stream` reference can't be safely reused or forked once chaining starts. | Moved up from Later. Highest blast radius of any item here — affects every consumer of the chain-of-closures model described in `CLAUDE.md`. Needs an explicit decision (keep and document current behavior vs. change to return-new-instance-per-op) before any code moves, since it's a breaking change either way. |
+| **Decide mutable-builder vs. immutable-pipeline semantics** — every intermediate op (`filter`, `map`, `distinct`, etc.) does `self._chain.append(fn); return self`, mutating the instance rather than returning a new one. Diverges from Java's immutable stream semantics; a `Stream` reference can't be safely reused or forked once chaining starts. | Highest blast radius of any item here — affects every consumer of the chain-of-closures model described in `CLAUDE.md`. Needs an explicit decision (keep and document current behavior vs. change to return-new-instance-per-op) before any code moves, since it's a breaking change either way. |
 
 ## Later
 
 Bigger, structural — needs explicit buy-in before starting since it changes a
 core semantic.
 
-| Item | Why later |
-|---|---|
-| **`BaseStream.iterator()`** — expose a way to pull the composed stream as a plain Python iterator/async iterator without going through a collector. | README "Left to do". No urgent consumer; low priority until someone needs manual pull-based iteration outside `collect()`. |
-| **`BaseStream.spliterator()`** — Java's parallel-decomposition iterator. | README "Left to do". Java-specific mechanism for splitting work across threads; snakestream's `ParallelStream` already parallelizes differently (racing `asyncio` tasks over a shared generator), so this may end up intentionally-skipped rather than implemented — needs a decision, not just an implementation. |
-| **`BaseStream.unordered()`** — mark a stream as not order-dependent. | README "Left to do". Currently blocks `find_first()` from being distinguished from `find_any()` (see `stream.py`'s disabled `find_first`); implementing this unblocks that. |
-| **`Stream.collect(supplier, accumulator, combiner)`** — Java's 3-arg mutable-reduction `collect()`, distinct from snakestream's existing single-arg `collect(collector)`. | README "Left to do". Snakestream's collector model (`collector.py`) already covers the common cases (`to_list`, `to_generator`); this variant adds Java-parity coverage but no currently-known consumer need. |
-| **`Stream.forEachOrdered(action)`** — ordered variant of `for_each()`, meaningful once parallel streams can guarantee order. | README "Left to do". Depends on `unordered()`/ordering semantics being decided first, same as `find_first()`. |
-| **`Stream.reduce(identity, accumulator, combiner)`** — 3-arg reduce with a combiner for parallel merging, distinct from the already-implemented 2-arg `reduce(identity, accumulator)`. | README "Left to do". The combiner only matters once parallel reduction is well-defined; low priority until `ParallelStream` semantics are more settled (see the `.parallel()`/`PROCESSES` naming item in Next). |
-| **`Stream.reduce(accumulator)`** — 1-arg reduce with no identity, returning `Optional[T]`. | README "Left to do". Smaller lift than the 3-arg form since it can likely delegate to the existing 2-arg `reduce`, but still needs an `Optional`-style empty-stream return convention decided. |
-| **`Stream.skip(n)`** — drop the first `n` elements. | README "Left to do". Straightforward, symmetric with the already-implemented `limit()`; no known blockers, just not yet built. |
-| **`Stream.toArray()`** / **`Stream.toArray(generator)`** — materialize the stream into an array-like structure. | README "Left to do". Python doesn't have Java's array/generic-array-factory distinction, so this needs a decision on what the Pythonic equivalent even is (a `list`? then it's redundant with `collect(to_list)`) before implementing. |
+Nothing currently parked here — see **Now** for what moved up.
 
 ## Done
 
