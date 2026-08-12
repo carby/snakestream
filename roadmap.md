@@ -12,7 +12,8 @@ the design work.
 
 | Item | Why now |
 |---|---|
-| **Replace `iscoroutinefunction()` dispatch with a `_maybe_await` helper** — the `if iscoroutinefunction(x): await x(...) else: x(...)` branch is repeated at 10 sites in `stream.py`, and `all_match`/`any_match`/`none_match` are three near-identical 12-line methods. It is also wrong for callable objects: `iscoroutinefunction()` is `False` for a class with an `async def __call__`, so `Stream.of([1,2,3]).map(AsyncDouble())` yields un-awaited coroutine objects with only a `RuntimeWarning` — no exception, silently corrupted output. | Bug fix and de-duplication in one: an `async def _maybe_await(fn, *args)` that calls first and checks `inspect.isawaitable(result)` handles async callable objects correctly and collapses all 10 sites. Note `flat_map` (`stream.py:110`) uses `iscoroutinefunction` to *reject* coroutines up front, so it needs handling separately rather than being folded into the helper. |
+| **Make `limit(n)` a real short-circuit** — `stream.py:179-186` only calls `iterable.aclose()` *after* receiving the element that exceeds the limit, so it pulls `n+1` elements from upstream: `Stream.of([1,2,3,4,5]).peek(seen.append).limit(2)` returns `[1, 2]` but leaves `seen == [1, 2, 3]`. | Moved up from Next — capacity freed up to pick this up alongside `_maybe_await`. Java's `limit()` genuinely short-circuits; here every pipeline pays one extra `map`/`peek`/IO call, which matters when upstream is expensive or effectful. Fix is to check `size >= max_size` before pulling rather than after. Same area, needs deciding together: under `.parallel()`, whichever branch trips the limit `aclose()`s the *shared* source out from under the other three. |
+| **Make `Stream` generic (`Stream[T]`)** — `BaseStream`/`Stream` are plain classes, so the `T`/`R` in their method signatures are unbound `TypeVar`s and element types are `Unknown` end to end. `ty` accepts `out: list[int] = await Stream.of([1,2,3]).map(lambda s: s.upper()).collect(to_list)` without complaint. | Moved up from Next — capacity freed up to pick this up alongside `_maybe_await`. The callable *return* types in `type.py` are genuinely checked (a `str`-returning `Comparator` errors correctly), which makes the gap easy to miss — but nothing checks what flows *through* the pipeline, so half of `type.py` is decorative. Parameterizing (`map(Mapper[T, R]) -> Stream[R]`, `collect(Callable[[AsyncGenerator[T]], R]) -> R`) makes the existing aliases do real work and would have caught the `Comparator` class of bug statically. `StreamBuilder` is already `Generic[T]` but its `build()` returns a bare `Stream`, dropping the parameter — the seam is half-built already. |
 
 ## Next
 
@@ -21,9 +22,8 @@ one area.
 
 | Item | Why next |
 |---|---|
-| **Make `limit(n)` a real short-circuit** — `stream.py:179-186` only calls `iterable.aclose()` *after* receiving the element that exceeds the limit, so it pulls `n+1` elements from upstream: `Stream.of([1,2,3,4,5]).peek(seen.append).limit(2)` returns `[1, 2]` but leaves `seen == [1, 2, 3]`. | Java's `limit()` genuinely short-circuits; here every pipeline pays one extra `map`/`peek`/IO call, which matters when upstream is expensive or effectful. Fix is to check `size >= max_size` before pulling rather than after. Same area, needs deciding together: under `.parallel()`, whichever branch trips the limit `aclose()`s the *shared* source out from under the other three. |
-| **Make `Stream` generic (`Stream[T]`)** — `BaseStream`/`Stream` are plain classes, so the `T`/`R` in their method signatures are unbound `TypeVar`s and element types are `Unknown` end to end. `ty` accepts `out: list[int] = await Stream.of([1,2,3]).map(lambda s: s.upper()).collect(to_list)` without complaint. | The callable *return* types in `type.py` are genuinely checked (a `str`-returning `Comparator` errors correctly), which makes the gap easy to miss — but nothing checks what flows *through* the pipeline, so half of `type.py` is decorative. Parameterizing (`map(Mapper[T, R]) -> Stream[R]`, `collect(Callable[[AsyncGenerator[T]], R]) -> R`) makes the existing aliases do real work and would have caught the `Comparator` class of bug statically. `StreamBuilder` is already `Generic[T]` but its `build()` returns a bare `Stream`, dropping the parameter — the seam is half-built already. |
 | **Rename or re-scope `.parallel()` / `PROCESSES`** — currently just `asyncio` tasks racing over a shared generator (I/O-bound only, GIL-bound, no multiprocessing), but the naming implies real OS-thread parallelism like Java's `parallelStream()`. | Misleading naming is a correctness-of-understanding risk for callers. Decide: rename/docstring to set correct expectations, or build an actual multiprocessing-backed implementation. Either path is a breaking-rename candidate — track in README's pre-1.0 migration log per `CLAUDE.md`. |
+| **Decide mutable-builder vs. immutable-pipeline semantics** — every intermediate op (`filter`, `map`, `distinct`, etc.) does `self._chain.append(fn); return self`, mutating the instance rather than returning a new one. Diverges from Java's immutable stream semantics; a `Stream` reference can't be safely reused or forked once chaining starts. | Moved up from Later. Highest blast radius of any item here — affects every consumer of the chain-of-closures model described in `CLAUDE.md`. Needs an explicit decision (keep and document current behavior vs. change to return-new-instance-per-op) before any code moves, since it's a breaking change either way. |
 
 ## Later
 
@@ -32,7 +32,6 @@ core semantic.
 
 | Item | Why later |
 |---|---|
-| **Decide mutable-builder vs. immutable-pipeline semantics** — every intermediate op (`filter`, `map`, `distinct`, etc.) does `self._chain.append(fn); return self`, mutating the instance rather than returning a new one. Diverges from Java's immutable stream semantics; a `Stream` reference can't be safely reused or forked once chaining starts. | Highest blast radius of any item here — affects every consumer of the chain-of-closures model described in `CLAUDE.md`. Needs an explicit decision (keep and document current behavior vs. change to return-new-instance-per-op) before any code moves, since it's a breaking change either way. |
 | **`BaseStream.iterator()`** — expose a way to pull the composed stream as a plain Python iterator/async iterator without going through a collector. | README "Left to do". No urgent consumer; low priority until someone needs manual pull-based iteration outside `collect()`. |
 | **`BaseStream.spliterator()`** — Java's parallel-decomposition iterator. | README "Left to do". Java-specific mechanism for splitting work across threads; snakestream's `ParallelStream` already parallelizes differently (racing `asyncio` tasks over a shared generator), so this may end up intentionally-skipped rather than implemented — needs a decision, not just an implementation. |
 | **`BaseStream.unordered()`** — mark a stream as not order-dependent. | README "Left to do". Currently blocks `find_first()` from being distinguished from `find_any()` (see `stream.py`'s disabled `find_first`); implementing this unblocks that. |
@@ -45,6 +44,36 @@ core semantic.
 
 ## Done
 
+- Replaced the repeated `if iscoroutinefunction(x): await x(...) else: x(...)`
+  dispatch pattern (10 sites across `filter`, `map`, `sorted`'s comparator,
+  `peek`, `reduce`, `for_each`, `min`/`max` via `_min_max`, and the
+  `all_match`/`any_match`/`none_match` family) with a single
+  `async def _maybe_await(fn, *args)` helper in a new
+  `callable_dispatch.py`, which calls first and awaits the result only if
+  `inspect.isawaitable(result)`. Fixes a real bug: `iscoroutinefunction()`
+  is `False` for a class instance with an `async def __call__`, so passing
+  such a callable object as a predicate/mapper/etc. previously produced an
+  un-awaited coroutine flowing downstream as if it were a real value, with
+  only a `RuntimeWarning` — no exception. `flat_map`'s existing
+  `iscoroutinefunction()` check, which *rejects* coroutine-returning
+  mappers up front, is a distinct pre-call classification and was left
+  untouched. Also collapsed `all_match`/`any_match`/`none_match`'s three
+  near-identical bodies into one shared `_match(predicate, short_circuit_on,
+  default)` helper built on `_maybe_await`.
+
+  `sorted()`'s comparator dispatch turned out not to fit the same
+  call-then-await shape: its `iscoroutinefunction()` check picks between
+  two different sort algorithms (`merge_sort`, which unconditionally
+  awaits the comparator, vs. `list.sort()` with a sync `cmp_to_key`
+  wrapper) rather than gating a single await. Fixed by moving `_merge`
+  (`sort.py`) onto `_maybe_await` internally and always routing `sorted()`
+  through `merge_sort` when a comparator is given, dropping the
+  `cmp_to_key`/`list.sort()` branch entirely — this also closes the same
+  async-callable-object gap for `sorted()`/`min()`/`max()`. Added
+  regression tests (`tests/test_callable_dispatch.py`) covering
+  `_maybe_await` directly (sync/async function, sync/async callable
+  object) and each affected operation with an async-`__call__` callable
+  object.
 - Fixed two compounding bugs that made a second terminal operation on the
   same `Stream`/`ParallelStream` instance silently return wrong (usually
   empty) results instead of repeating the first run's behavior. First,
