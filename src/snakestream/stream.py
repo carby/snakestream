@@ -62,23 +62,23 @@ class _LimitOp:
         await iterable.aclose()
 
 
-class Stream(BaseStream):
+class Stream(BaseStream[T]):
     def __init__(self, source: Any, close_handlers: list[CloseHandler] | None = None) -> None:
         super().__init__(source)
         self._close_handlers = close_handlers or []
 
     @staticmethod
-    def of(*args: Any) -> Stream:
+    def of(*args: T) -> Stream[T]:
         if len(args) == 1:
             return Stream(args[0])
         return Stream(list(args))
 
     @staticmethod
-    def empty() -> Stream:
+    def empty() -> Stream[Any]:
         return Stream([])
 
     @staticmethod
-    async def concat(a: Stream, b: Stream) -> Stream:
+    async def concat(a: Stream[T], b: Stream[T]) -> Stream[T]:
         new_stream = _concat(a, b)
         return Stream(new_stream)
 
@@ -89,7 +89,7 @@ class Stream(BaseStream):
         return StreamBuilder()
 
     @staticmethod
-    def iterate(seed: T, nxt: Callable[[T], T]):
+    def iterate(seed: T, nxt: Callable[[T], T]) -> Stream[T]:
         def _make_iterator(seed: T, nxt: Callable[[T], T]) -> Generator[T, None, None]:
             yield seed
             while True:
@@ -99,7 +99,7 @@ class Stream(BaseStream):
         return Stream.of(_make_iterator(seed, nxt))
 
     # Intermediaries
-    def filter(self, predicate: Predicate) -> Stream:
+    def filter(self, predicate: Predicate[T]) -> Stream[T]:
         async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
             async for i in iterable:
                 keep = await _maybe_await(predicate, i)
@@ -109,15 +109,15 @@ class Stream(BaseStream):
         self._chain.append(fn)
         return self
 
-    def map(self, mapper: Mapper) -> Stream:
+    def map(self, mapper: Mapper[T, R]) -> Stream[R]:
         async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
             async for i in iterable:
                 yield await _maybe_await(mapper, i)
 
         self._chain.append(fn)
-        return self
+        return cast("Stream[R]", self)
 
-    def flat_map(self, flat_mapper: FlatMapper) -> Stream:
+    def flat_map(self, flat_mapper: FlatMapper[T, R]) -> Stream[R]:
         # Pre-call rejection, not a dispatch site: flat_mapper must return a
         # Stream synchronously, so an async def here is always a caller
         # mistake. This is unrelated to _maybe_await's post-call awaiting.
@@ -130,9 +130,9 @@ class Stream(BaseStream):
                     yield j
 
         self._chain.append(fn)
-        return self
+        return cast("Stream[R]", self)
 
-    def sorted(self, comparator: Comparator | None = None, reverse=False) -> Stream:
+    def sorted(self, comparator: Comparator[T] | None = None, reverse=False) -> Stream[T]:
         async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
             # unfortunately I now don't see other way than to block the entire stream
             # how can I otherwise know what is the first item out?
@@ -159,11 +159,11 @@ class Stream(BaseStream):
         self._chain.append(fn)
         return self
 
-    def distinct(self) -> Stream:
+    def distinct(self) -> Stream[T]:
         self._chain.append(_DistinctOp())
         return self
 
-    def peek(self, consumer: Consumer) -> Stream:
+    def peek(self, consumer: Consumer[T]) -> Stream[T]:
         async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
             async for i in iterable:
                 await _maybe_await(consumer, i)
@@ -172,15 +172,15 @@ class Stream(BaseStream):
         self._chain.append(fn)
         return self
 
-    def limit(self, max_size: int) -> Stream:
+    def limit(self, max_size: int) -> Stream[T]:
         self._chain.append(_LimitOp(max_size))
         return self
 
     # Terminals
-    def collect(self, collector: Callable[[AsyncGenerator], R]) -> R:
+    def collect(self, collector: Callable[[AsyncGenerator[T, None]], R]) -> R:
         return collector(self._compose())
 
-    async def reduce(self, identity: T | R, accumulator: Accumulator) -> T | R:
+    async def reduce(self, identity: T | R, accumulator: Accumulator[T, R]) -> T | R:
         async for n in self._compose():
             identity = await _maybe_await(accumulator, identity, n)
         return identity
@@ -197,25 +197,24 @@ class Stream(BaseStream):
         return await self.find_any()
     """
 
-    async def find_any(self) -> Any | None:
+    async def find_any(self) -> T | None:
         async for n in self._compose():
             return n
 
-    async def max(self, comparator: Comparator) -> T | None:
+    async def max(self, comparator: Comparator[T]) -> T | None:
         return await self._min_max(comparator, asc=False)
 
-    async def min(self, comparator: Comparator) -> T | None:
+    async def min(self, comparator: Comparator[T]) -> T | None:
         return await self._min_max(comparator, asc=True)
 
-    async def _min_max(self, comparator: Comparator, asc: bool) -> T | None:
+    async def _min_max(self, comparator: Comparator[T], asc: bool) -> T | None:
         async def compare(a: T, b: T) -> int:
             sign = await _maybe_await(comparator, a, b)
             check_comparator_result_type(sign)
             return sign
 
         found = cast(T, _UNSET)
-        async for raw in self._compose():
-            n = cast(T, raw)
+        async for n in self._compose():
             if found is _UNSET:
                 found = n
                 continue
@@ -231,19 +230,19 @@ class Stream(BaseStream):
                 found = n
         return None if found is _UNSET else found
 
-    async def _match(self, predicate: Predicate, short_circuit_on: bool, default: bool) -> bool:
+    async def _match(self, predicate: Predicate[T], short_circuit_on: bool, default: bool) -> bool:
         async for n in self._compose():
             if bool(await _maybe_await(predicate, n)) is short_circuit_on:
                 return short_circuit_on
         return default
 
-    async def all_match(self, predicate: Predicate) -> bool:
+    async def all_match(self, predicate: Predicate[T]) -> bool:
         return await self._match(predicate, short_circuit_on=False, default=True)
 
-    async def none_match(self, predicate: Predicate) -> bool:
+    async def none_match(self, predicate: Predicate[T]) -> bool:
         return not await self._match(predicate, short_circuit_on=True, default=False)
 
-    async def any_match(self, predicate: Predicate) -> bool:
+    async def any_match(self, predicate: Predicate[T]) -> bool:
         return await self._match(predicate, short_circuit_on=True, default=False)
 
     async def count(self) -> int:

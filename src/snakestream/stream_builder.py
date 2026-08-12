@@ -17,5 +17,5 @@ class StreamBuilder(Generic[T]):
     def accept(self, element: T) -> None:
         self._elements.append(element)
 
-    def build(self) -> Stream:
+    def build(self) -> Stream[T]:
         return Stream(self._elements)

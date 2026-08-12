@@ -10,9 +10,7 @@ Actively being picked up. Mostly low-risk and self-contained, but may
 include a public-API item once there's a specific, near-term plan to do
 the design work.
 
-| Item | Why now |
-|---|---|
-| **Make `Stream` generic (`Stream[T]`)** — `BaseStream`/`Stream` are plain classes, so the `T`/`R` in their method signatures are unbound `TypeVar`s and element types are `Unknown` end to end. `ty` accepts `out: list[int] = await Stream.of([1,2,3]).map(lambda s: s.upper()).collect(to_list)` without complaint. | Moved up from Next — capacity freed up to pick this up alongside `_maybe_await`. The callable *return* types in `type.py` are genuinely checked (a `str`-returning `Comparator` errors correctly), which makes the gap easy to miss — but nothing checks what flows *through* the pipeline, so half of `type.py` is decorative. Parameterizing (`map(Mapper[T, R]) -> Stream[R]`, `collect(Callable[[AsyncGenerator[T]], R]) -> R`) makes the existing aliases do real work and would have caught the `Comparator` class of bug statically. `StreamBuilder` is already `Generic[T]` but its `build()` returns a bare `Stream`, dropping the parameter — the seam is half-built already. |
+Nothing currently in flight — see **Next** for what's queued up.
 
 ## Next
 
@@ -43,6 +41,25 @@ core semantic.
 
 ## Done
 
+- Made `Stream` generic (`Stream[T]`): `BaseStream`/`Stream`/`ParallelStream` were
+  plain classes, so the `T`/`R` in their method signatures were unbound
+  `TypeVar`s and element types were `Unknown` end to end — `ty` accepted
+  `Stream.of([1,2,3]).map(lambda s: s.upper())` without complaint despite
+  `int` having no `.upper()`. Fixed by making `BaseStream`/`Stream`/
+  `ParallelStream` `Generic[T]`; `map()`/`flat_map()` now return `Stream[R]`
+  via a narrowly-scoped `cast(Stream[R], self)` since the chain-of-closures
+  model mutates and returns the same `self` rather than a new instance
+  (deliberately not revisiting the separate mutable-builder-vs-immutable-
+  pipeline decision below); type-preserving ops (`filter`, `distinct`,
+  `peek`, `limit`, `sorted`) return `Stream[T]` directly; terminal ops are
+  typed against the stream's bound `T`. Also fixed `type.py`'s `FlatMapper`
+  alias, which hardcoded an unparameterized `Stream` instead of `Stream[R]`,
+  and `StreamBuilder.build()`, which dropped its already-declared `T`
+  instead of returning `Stream[T]`. Typing-only change, no runtime behavior
+  differs. Added `tests/test_static_typing.py` plus `tests/typing/`
+  fixtures that shell out to `ty check` to regression-test that the
+  motivating bug is now caught and that valid generic usage still
+  type-checks cleanly. See `openspec/changes/make-stream-generic`.
 - Made `limit(n)` a real short-circuit: `_LimitOp.__call__` (`stream.py`) pulled
   an element from upstream *before* checking whether `max_size` had already
   been reached, so every `limit(n)` pipeline pulled `n+1` elements instead of
