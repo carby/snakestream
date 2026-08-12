@@ -139,6 +139,10 @@ class Stream(BaseStream):
                 cache.append(i)
             # sort
             if comparator is not None:
+                # Always merge_sort here rather than list.sort()+cmp_to_key: the
+                # comparator may be an async-__call__ object, which needs an await
+                # merge_sort's _merge already does. Trades away Timsort's speed for
+                # sync comparators; see the add-maybe-await-helper design doc.
                 cache = await merge_sort(cache, comparator)
             else:
                 cache.sort()
