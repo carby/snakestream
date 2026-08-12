@@ -41,6 +41,41 @@ async def test_parallel_is_faster_than_sequential() -> None:
 
 
 @pytest.mark.asyncio
+async def test_parallel_distinct_no_cross_branch_duplicates() -> None:
+    # given: a source large enough that a repeated value is likely to land
+    # in more than one of the racing branches
+    values = [1, 2, 3, 4] * 20
+
+    # when
+    it = await Stream.of(values).parallel().distinct().collect(to_list)
+
+    # then
+    assert sorted(it) == [1, 2, 3, 4]
+
+
+@pytest.mark.asyncio
+async def test_parallel_limit_does_not_exceed_n_across_branches() -> None:
+    # when
+    it = await Stream.iterate(0, lambda n: n + 1).parallel().limit(10).collect(to_list)
+
+    # then
+    assert len(it) <= 10
+
+
+@pytest.mark.asyncio
+async def test_parallel_distinct_state_fresh_across_separate_streams() -> None:
+    # given: a first parallel distinct() stream consumes elements that would
+    # collide with a second, independently-built stream if state leaked
+    await Stream.of([1, 2, 3] * 10).parallel().distinct().collect(to_list)
+
+    # when
+    second = await Stream.of([1, 2, 3] * 10).parallel().distinct().collect(to_list)
+
+    # then
+    assert sorted(second) == [1, 2, 3]
+
+
+@pytest.mark.asyncio
 async def test_sequential_switch_to_sequential(int_2_letter) -> None:
     # when
     it = (

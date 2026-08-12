@@ -18,7 +18,12 @@ class ParallelStream(Stream):
     async def _parallel(
         self, intermediaries: list[Callable], iterable: AsyncGenerator, processes: int = PROCESSES
     ) -> AsyncGenerator:
-        async_iterators = [self._sequential(intermediaries[:], iterable) for n in range(processes)]
+        state_map: dict[Callable, Any] = {}
+        for fn in intermediaries:
+            make_state = getattr(fn, "make_state", None)
+            if make_state is not None:
+                state_map[fn] = make_state()
+        async_iterators = [self._sequential(intermediaries[:], iterable, state_map) for n in range(processes)]
         tasks: list[asyncio.Task[Any] | None] = [asyncio.ensure_future(n.__anext__()) for n in async_iterators]
 
         try:
