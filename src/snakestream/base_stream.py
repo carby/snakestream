@@ -31,17 +31,23 @@ class BaseStream:
         self._chain: list[Callable] = []
         self._close_handlers = []
 
-    def _sequential(self, intermediaries: list[Callable], iterable: AsyncGenerator) -> AsyncGenerator:
+    def _sequential(
+        self,
+        intermediaries: list[Callable],
+        iterable: AsyncGenerator,
+        state_map: dict[Callable, Any] | None = None,
+    ) -> AsyncGenerator:
         if len(intermediaries) == 0:
             return iterable
-        if len(intermediaries) == 1:
-            fn = intermediaries.pop(0)
-            return fn(iterable)
         fn = intermediaries.pop(0)
-        return self._sequential(intermediaries, fn(iterable))
+        state = state_map.get(fn) if state_map is not None else None
+        next_iterable = fn(iterable, state) if state is not None else fn(iterable)
+        if len(intermediaries) == 0:
+            return next_iterable
+        return self._sequential(intermediaries, next_iterable, state_map)
 
     def _compose(self) -> AsyncGenerator:
-        return self._sequential(self._chain, self._stream)
+        return self._sequential(self._chain[:], self._stream)
 
     def sequential(self) -> Stream:
         from .stream import Stream

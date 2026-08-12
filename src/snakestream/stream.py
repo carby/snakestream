@@ -27,6 +27,39 @@ async def _concat(a: Stream, b: Stream) -> AsyncGenerator:
         yield j
 
 
+class _DistinctOp:
+    def make_state(self) -> set:
+        return set()
+
+    async def __call__(self, iterable: AsyncGenerator, seen: set | None = None) -> AsyncGenerator:
+        if seen is None:
+            seen = self.make_state()
+        async for i in iterable:
+            if i in seen:
+                continue
+            else:
+                seen.add(i)
+                yield i
+
+
+class _LimitOp:
+    def __init__(self, max_size: int) -> None:
+        self._max_size = max_size
+
+    def make_state(self) -> list[int]:
+        return [0]
+
+    async def __call__(self, iterable: AsyncGenerator, size_holder: list[int] | None = None) -> AsyncGenerator:
+        if size_holder is None:
+            size_holder = self.make_state()
+        async for i in iterable:
+            if size_holder[0] >= self._max_size:
+                await iterable.aclose()
+            else:
+                size_holder[0] += 1
+                yield i
+
+
 class Stream(BaseStream):
     def __init__(self, source: Any, close_handlers: list[CloseHandler] | None = None) -> None:
         super().__init__(source)
@@ -135,17 +168,7 @@ class Stream(BaseStream):
         return self
 
     def distinct(self) -> Stream:
-        seen = set()
-
-        async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
-            async for i in iterable:
-                if i in seen:
-                    continue
-                else:
-                    seen.add(i)
-                    yield i
-
-        self._chain.append(fn)
+        self._chain.append(_DistinctOp())
         return self
 
     def peek(self, consumer: Consumer) -> Stream:
@@ -161,18 +184,7 @@ class Stream(BaseStream):
         return self
 
     def limit(self, max_size: int) -> Stream:
-        size = 0
-
-        async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
-            nonlocal size
-            async for i in iterable:
-                if size >= max_size:
-                    await iterable.aclose()
-                else:
-                    size += 1
-                    yield i
-
-        self._chain.append(fn)
+        self._chain.append(_LimitOp(max_size))
         return self
 
     # Terminals

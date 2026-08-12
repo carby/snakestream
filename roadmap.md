@@ -12,8 +12,6 @@ the design work.
 
 | Item | Why now |
 |---|---|
-| **Stop `_sequential()` from destroying `self._chain`** — `base_stream.py:38,40` calls `pop(0)` on the caller's live list, so `_compose()` empties the chain and a second terminal op on the same stream yields nothing (`collect -> [2,4,6]`, then `collect -> []`). `ParallelStream._parallel` already passes a copy (`intermediaries[:]`, `parallel_stream.py:21`), so the same `_compose()` contract behaves differently per subclass. | One-line fix (`intermediaries[:]`, or replace the recursion with an iterative loop and also drop the O(len(chain)) stack frames). Adjacent to the mutable-builder item in **Later** but independent of it: that one is about intermediate ops doing `return self`, this is unintended mutation inside compose, and it can be fixed without pre-deciding the larger semantic question. **Does not on its own make a second terminal op work** — the build-time-closure-state item below blocks that too, and both must land together to actually fix re-collection. |
-| **Move per-op closure state inside the closure** — `distinct()` creates `seen = set()` and `limit()` creates `size = 0` *outside* the `async def fn` they append to `_chain` (`stream.py:155-194`), so the state belongs to the chain entry rather than to a run of the pipeline. Applying the same closure to two fresh sources gives `[1,2,3,4,5]` then `[]` for `distinct`, and `[1,2]` then `[]` for `limit`. | Hidden blocker for the chain-mutation item above: applying the `intermediaries[:]` fix alone still leaves a second `collect()` returning `[]`, just for this reason instead. Fix is to initialize the state inside `fn`, but it interacts with `ParallelStream`, where all branches currently share one closure object — a shared `seen`/`size` is what makes parallel `distinct`/`limit` behave sanely today, and per-branch copies change those semantics. Decide together with the item above. |
 | **Replace `iscoroutinefunction()` dispatch with a `_maybe_await` helper** — the `if iscoroutinefunction(x): await x(...) else: x(...)` branch is repeated at 10 sites in `stream.py`, and `all_match`/`any_match`/`none_match` are three near-identical 12-line methods. It is also wrong for callable objects: `iscoroutinefunction()` is `False` for a class with an `async def __call__`, so `Stream.of([1,2,3]).map(AsyncDouble())` yields un-awaited coroutine objects with only a `RuntimeWarning` — no exception, silently corrupted output. | Bug fix and de-duplication in one: an `async def _maybe_await(fn, *args)` that calls first and checks `inspect.isawaitable(result)` handles async callable objects correctly and collapses all 10 sites. Note `flat_map` (`stream.py:110`) uses `iscoroutinefunction` to *reject* coroutines up front, so it needs handling separately rather than being folded into the helper. |
 
 ## Next
@@ -47,6 +45,36 @@ core semantic.
 
 ## Done
 
+- Fixed two compounding bugs that made a second terminal operation on the
+  same `Stream`/`ParallelStream` instance silently return wrong (usually
+  empty) results instead of repeating the first run's behavior. First,
+  `BaseStream._sequential()` (`base_stream.py`) was handed `self._chain`
+  directly and called `pop(0)` on it, draining the caller's own chain list
+  during `_compose()`; fixed by passing `self._chain[:]` (a copy) from
+  `_compose()` instead — matching the copy `ParallelStream._parallel()`
+  already made for its own branches, so both subclasses now honor the same
+  non-destructive contract. Second, `distinct()`/`limit()` (`stream.py`)
+  each built their `seen`/`size` state in the outer function that runs once
+  per `.distinct()`/`.limit()` call, rather than in the closure that runs
+  once per composition, so that state silently persisted across separate
+  compositions of the same chain; fixed by replacing the two closures with
+  small callable classes (`_DistinctOp`, `_LimitOp`) whose `__call__` takes
+  an optional external state and falls back to fresh per-call state via
+  their own `make_state()` when none is given — giving `Stream` (sequential)
+  fresh state on every composition by default. For `ParallelStream`, where
+  multiple racing branches must share one `seen`/`size` per composition to
+  stay globally correct (matching Java's guarantee that parallel `distinct`/
+  `limit` never silently degrade into a per-partition, unreconciled result,
+  even though it costs more to coordinate — see
+  `openspec/changes/fix-stream-rerun-state/design.md`), `_parallel()` now
+  builds one state map per composition via each op's `make_state()` and
+  passes the same map into every racing branch's `_sequential()` call.
+  Added regression tests covering: chain length unaffected by composition,
+  a second terminal op after the first, `distinct()`/`limit()` state not
+  leaking across separate `Stream`/`ParallelStream` instances or across
+  separate compositions of one instance, and parallel `distinct()`/`limit()`
+  staying globally correct (no cross-branch duplicates, no over-`limit()`)
+  across racing branches.
 - Simplified `Stream.of()` (`stream.py`) from a four-way branch on dict vs.
   list vs. multiple positional args vs. kwargs down to two cases: a single
   positional arg passes straight through to `Stream()`'s existing source

@@ -59,3 +59,32 @@ async def test_distinct_matches_first_seen_order_dedup(values: list[int]) -> Non
     # then
     assert actual == _first_seen_order_dedup(values)
     assert len(actual) == len(set(actual))
+
+
+@pytest.mark.asyncio
+async def test_distinct_state_not_shared_across_separate_streams() -> None:
+    # given: a first stream consumes elements that would collide with a
+    # second, independently-built distinct() stream if `seen` leaked
+    await Stream.of([1, 2, 3]).distinct().collect(to_list)
+
+    # when
+    second = await Stream.of([1, 2, 3]).distinct().collect(to_list)
+
+    # then
+    assert second == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_distinct_state_fresh_on_second_composition() -> None:
+    # given
+    stream = Stream.of([1, 2, 3]).distinct()
+    first = await stream.collect(to_list)
+
+    # when
+    second = await stream.collect(to_list)
+
+    # then
+    assert first == [1, 2, 3]
+    # source is exhausted after the first run, but a second composition must
+    # not raise or silently reuse the first run's `seen` set
+    assert second == []
