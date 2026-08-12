@@ -12,7 +12,6 @@ the design work.
 
 | Item | Why now |
 |---|---|
-| **Make `limit(n)` a real short-circuit** — `stream.py:179-186` only calls `iterable.aclose()` *after* receiving the element that exceeds the limit, so it pulls `n+1` elements from upstream: `Stream.of([1,2,3,4,5]).peek(seen.append).limit(2)` returns `[1, 2]` but leaves `seen == [1, 2, 3]`. | Moved up from Next — capacity freed up to pick this up alongside `_maybe_await`. Java's `limit()` genuinely short-circuits; here every pipeline pays one extra `map`/`peek`/IO call, which matters when upstream is expensive or effectful. Fix is to check `size >= max_size` before pulling rather than after. Same area, needs deciding together: under `.parallel()`, whichever branch trips the limit `aclose()`s the *shared* source out from under the other three. |
 | **Make `Stream` generic (`Stream[T]`)** — `BaseStream`/`Stream` are plain classes, so the `T`/`R` in their method signatures are unbound `TypeVar`s and element types are `Unknown` end to end. `ty` accepts `out: list[int] = await Stream.of([1,2,3]).map(lambda s: s.upper()).collect(to_list)` without complaint. | Moved up from Next — capacity freed up to pick this up alongside `_maybe_await`. The callable *return* types in `type.py` are genuinely checked (a `str`-returning `Comparator` errors correctly), which makes the gap easy to miss — but nothing checks what flows *through* the pipeline, so half of `type.py` is decorative. Parameterizing (`map(Mapper[T, R]) -> Stream[R]`, `collect(Callable[[AsyncGenerator[T]], R]) -> R`) makes the existing aliases do real work and would have caught the `Comparator` class of bug statically. `StreamBuilder` is already `Generic[T]` but its `build()` returns a bare `Stream`, dropping the parameter — the seam is half-built already. |
 
 ## Next
@@ -44,6 +43,20 @@ core semantic.
 
 ## Done
 
+- Made `limit(n)` a real short-circuit: `_LimitOp.__call__` (`stream.py`) pulled
+  an element from upstream *before* checking whether `max_size` had already
+  been reached, so every `limit(n)` pipeline pulled `n+1` elements instead of
+  `n` — e.g. `Stream.of([1,2,3,4,5]).peek(seen.append).limit(2)` returned
+  `[1, 2]` but left `seen == [1, 2, 3]`. Fixed by checking the size before
+  pulling rather than after, so upstream is closed without ever pulling an
+  `n+1`th element. Under `.parallel()`, the shared `size_holder` in
+  `ParallelStream._parallel`'s `state_map` already gave a global (not
+  per-branch) limit guarantee; the fix changes *when* the shared source gets
+  closed — whichever branch observes the shared count reaching `max_size`
+  closes it before pulling further — and closure was made idempotent so a
+  second racing branch closing (or pulling from) an already-closed shared
+  source doesn't raise out of the task loop. No public API change. See
+  `openspec/changes/archive/2026-08-12-fix-limit-short-circuit`.
 - Replaced the repeated `if iscoroutinefunction(x): await x(...) else: x(...)`
   dispatch pattern (10 sites across `filter`, `map`, `sorted`'s comparator,
   `peek`, `reduce`, `for_each`, `min`/`max` via `_min_max`, and the
