@@ -1,3 +1,6 @@
+from snakestream.callable_dispatch import _maybe_await
+
+
 def check_comparator_result_type(value: int) -> None:
     if type(value) is not int:
         raise TypeError(f"comparator must return an int (negative, zero, or positive), not {type(value).__name__}")
@@ -19,7 +22,7 @@ async def _merge(left, right, comparator):
     i = 0
     j = 0
     while i < len(left) and j < len(right):
-        sign = await comparator(left[i], right[j])
+        sign = await _maybe_await(comparator, left[i], right[j])
         check_comparator_result_type(sign)
         if sign <= 0:
             result.append(left[i])

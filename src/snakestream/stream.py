@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from functools import cmp_to_key
 from inspect import iscoroutinefunction
 from typing import TYPE_CHECKING, Any, cast
 from collections.abc import AsyncGenerator, Callable, Generator
 
 from snakestream.base_stream import BaseStream
+from snakestream.callable_dispatch import _maybe_await
 from snakestream.collector import to_generator
 from snakestream.exception import StreamBuildException
 from snakestream.sort import check_comparator_result_type, merge_sort
@@ -100,10 +100,7 @@ class Stream(BaseStream):
     def filter(self, predicate: Predicate) -> Stream:
         async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
             async for i in iterable:
-                if iscoroutinefunction(predicate):
-                    keep = await predicate(i)
-                else:
-                    keep = predicate(i)
+                keep = await _maybe_await(predicate, i)
                 if keep:
                     yield i
 
@@ -113,15 +110,15 @@ class Stream(BaseStream):
     def map(self, mapper: Mapper) -> Stream:
         async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
             async for i in iterable:
-                if iscoroutinefunction(mapper):
-                    yield await mapper(i)
-                else:
-                    yield mapper(i)
+                yield await _maybe_await(mapper, i)
 
         self._chain.append(fn)
         return self
 
     def flat_map(self, flat_mapper: FlatMapper) -> Stream:
+        # Pre-call rejection, not a dispatch site: flat_mapper must return a
+        # Stream synchronously, so an async def here is always a caller
+        # mistake. This is unrelated to _maybe_await's post-call awaiting.
         if iscoroutinefunction(flat_mapper):
             raise StreamBuildException("flat_map() does not support coroutines")
 
@@ -142,18 +139,7 @@ class Stream(BaseStream):
                 cache.append(i)
             # sort
             if comparator is not None:
-                if iscoroutinefunction(comparator):
-                    cache = await merge_sort(cache, comparator)
-                else:
-                    # ty can't narrow `comparator`'s type via the runtime
-                    # iscoroutinefunction() check above; this branch only
-                    # runs for the sync `int`-returning half of the union.
-                    def checked_comparator(a, b):
-                        sign = comparator(a, b)
-                        check_comparator_result_type(sign)  # ty: ignore[invalid-argument-type]
-                        return sign
-
-                    cache.sort(key=cmp_to_key(checked_comparator))
+                cache = await merge_sort(cache, comparator)
             else:
                 cache.sort()
             # unblock the stream
@@ -174,10 +160,7 @@ class Stream(BaseStream):
     def peek(self, consumer: Consumer) -> Stream:
         async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
             async for i in iterable:
-                if iscoroutinefunction(consumer):
-                    await consumer(i)
-                else:
-                    consumer(i)
+                await _maybe_await(consumer, i)
                 yield i
 
         self._chain.append(fn)
@@ -193,18 +176,12 @@ class Stream(BaseStream):
 
     async def reduce(self, identity: T | R, accumulator: Accumulator) -> T | R:
         async for n in self._compose():
-            if iscoroutinefunction(accumulator):
-                identity = await accumulator(identity, n)
-            else:
-                identity = accumulator(identity, n)
+            identity = await _maybe_await(accumulator, identity, n)
         return identity
 
     async def for_each(self, consumer: Callable[[T], Any]) -> None:
         async for n in self._compose():
-            if iscoroutinefunction(consumer):
-                await consumer(n)
-            else:
-                consumer(n)
+            await _maybe_await(consumer, n)
         return None
 
     """
@@ -226,18 +203,9 @@ class Stream(BaseStream):
 
     async def _min_max(self, comparator: Comparator, asc: bool) -> T | None:
         async def compare(a: T, b: T) -> int:
-            # ty can't narrow `comparator`'s type via the runtime
-            # iscoroutinefunction() check, so this is still typed
-            # `int | Awaitable[int]` here even though it's always `int`.
-            if iscoroutinefunction(comparator):
-                sign = await comparator(a, b)
-            else:
-                sign = comparator(a, b)
-            check_comparator_result_type(sign)  # ty: ignore[invalid-argument-type]
-            # sign is always `int` here (check_comparator_result_type raises
-            # otherwise), but ty can't narrow it past `int | Awaitable[int]`
-            # because of the iscoroutinefunction() branch above.
-            return sign  # ty: ignore[invalid-return-type]
+            sign = await _maybe_await(comparator, a, b)
+            check_comparator_result_type(sign)
+            return sign
 
         found = cast(T, _UNSET)
         async for raw in self._compose():
@@ -257,47 +225,20 @@ class Stream(BaseStream):
                 found = n
         return None if found is _UNSET else found
 
-    async def all_match(self, predicate: Predicate) -> bool:
+    async def _match(self, predicate: Predicate, short_circuit_on: bool, default: bool) -> bool:
         async for n in self._compose():
-            if iscoroutinefunction(predicate):
-                if await predicate(n):
-                    continue
-                else:
-                    return False
-            else:
-                if predicate(n):
-                    continue
-                else:
-                    return False
-        return True
+            if bool(await _maybe_await(predicate, n)) is short_circuit_on:
+                return short_circuit_on
+        return default
+
+    async def all_match(self, predicate: Predicate) -> bool:
+        return await self._match(predicate, short_circuit_on=False, default=True)
 
     async def none_match(self, predicate: Predicate) -> bool:
-        async for n in self._compose():
-            if iscoroutinefunction(predicate):
-                if await predicate(n):
-                    return False
-                else:
-                    continue
-            else:
-                if predicate(n):
-                    return False
-                else:
-                    continue
-        return True
+        return not await self._match(predicate, short_circuit_on=True, default=False)
 
     async def any_match(self, predicate: Predicate) -> bool:
-        async for n in self._compose():
-            if iscoroutinefunction(predicate):
-                if await predicate(n):
-                    return True
-                else:
-                    continue
-            else:
-                if predicate(n):
-                    return True
-                else:
-                    continue
-        return False
+        return await self._match(predicate, short_circuit_on=True, default=False)
 
     async def count(self) -> int:
         c = 0
