@@ -4,6 +4,37 @@ from snakestream.stream import Stream
 
 
 @pytest.mark.asyncio
+async def test_limit_does_not_pull_past_nth_element() -> None:
+    # given
+    seen: list[int] = []
+
+    # when
+    lst = await Stream.iterate(0, lambda n: n + 1).peek(seen.append).limit(3).collect(to_list)
+
+    # then
+    assert lst == [0, 1, 2]
+    assert seen == [0, 1, 2]
+
+
+@pytest.mark.asyncio
+async def test_limit_exact_size_source() -> None:
+    # when
+    lst = await Stream.of([0, 1, 2]).limit(3).collect(to_list)
+
+    # then
+    assert lst == [0, 1, 2]
+
+
+@pytest.mark.asyncio
+async def test_limit_shorter_than_n_source() -> None:
+    # when
+    lst = await Stream.of([0, 1]).limit(5).collect(to_list)
+
+    # then
+    assert lst == [0, 1]
+
+
+@pytest.mark.asyncio
 async def test_limit_simple() -> None:
     # when
     lst = await Stream.iterate(0, lambda n: n + 1).limit(10).collect(to_list)
@@ -27,6 +58,20 @@ async def test_limit_parallel() -> None:
     lst = await Stream.iterate(0, lambda n: n + 1).parallel().limit(10).collect(to_list)
 
     # then
+    assert len(lst) == 10
+
+
+@pytest.mark.asyncio
+async def test_limit_parallel_shared_close_across_branches() -> None:
+    # given: a large finite source, so multiple racing branches are likely to
+    # observe the shared count reaching max_size and close the shared source
+    # out from under each other
+
+    # when
+    lst = await Stream.of(list(range(1000))).parallel().limit(10).collect(to_list)
+
+    # then: no exception escapes collect(), and the total across all branches
+    # is exactly max_size
     assert len(lst) == 10
 
 
