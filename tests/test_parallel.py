@@ -63,6 +63,28 @@ async def test_parallel_limit_does_not_exceed_n_across_branches() -> None:
 
 
 @pytest.mark.asyncio
+async def test_parallel_skip_drops_exactly_n_across_branches() -> None:
+    # when
+    it = await Stream.of(list(range(100))).parallel().skip(10).collect(to_list)
+
+    # then
+    assert len(it) == 90
+
+
+@pytest.mark.asyncio
+async def test_parallel_skip_state_fresh_across_separate_streams() -> None:
+    # given: a first parallel skip() stream drains its own shared counter
+    await Stream.of(list(range(20))).parallel().skip(10).collect(to_list)
+
+    # when: a second, independently-built skip() stream should still drop
+    # its own n elements, unaffected by the first stream's counter
+    second = await Stream.of(list(range(20))).parallel().skip(10).collect(to_list)
+
+    # then
+    assert len(second) == 10
+
+
+@pytest.mark.asyncio
 async def test_parallel_distinct_state_fresh_across_separate_streams() -> None:
     # given: a first parallel distinct() stream consumes elements that would
     # collide with a second, independently-built stream if state leaked
