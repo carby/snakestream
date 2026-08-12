@@ -52,12 +52,14 @@ class _LimitOp:
     async def __call__(self, iterable: AsyncGenerator, size_holder: list[int] | None = None) -> AsyncGenerator:
         if size_holder is None:
             size_holder = self.make_state()
-        async for i in iterable:
-            if size_holder[0] >= self._max_size:
-                await iterable.aclose()
-            else:
-                size_holder[0] += 1
-                yield i
+        while size_holder[0] < self._max_size:
+            try:
+                i = await anext(iterable)
+            except StopAsyncIteration:
+                return
+            size_holder[0] += 1
+            yield i
+        await iterable.aclose()
 
 
 class Stream(BaseStream):
