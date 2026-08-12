@@ -1,5 +1,5 @@
 from typing import TYPE_CHECKING, TypeVar
-from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Generator, Iterable
+from collections.abc import Awaitable, Callable
 
 if TYPE_CHECKING:
     from snakestream.stream import Stream  # pragma: no cover
@@ -12,7 +12,7 @@ Predicate = Callable[[T], bool | Awaitable[bool]]
 # Intermediaries
 Filterer = Callable[[T], T]
 Mapper = Callable[[T], R | None]
-FlatMapper = Callable[[Iterable | AsyncIterable | Generator | AsyncGenerator], "Stream"]
+FlatMapper = Callable[[T], "Stream[R]"]
 Comparator = Callable[[T, T], int | Awaitable[int]]
 Consumer = Callable[[T], T]
 CloseHandler = Callable[[], None]

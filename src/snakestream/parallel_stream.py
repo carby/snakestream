@@ -4,10 +4,10 @@ import asyncio
 from typing import Any
 from collections.abc import AsyncGenerator, Callable
 from snakestream.stream import PROCESSES, Stream
-from snakestream.type import CloseHandler
+from snakestream.type import T, CloseHandler
 
 
-class ParallelStream(Stream):
+class ParallelStream(Stream[T]):
     def __init__(self, source: Any, close_handlers: list[CloseHandler] | None = None) -> None:
         super().__init__(source)
         self._close_handlers = close_handlers or []
