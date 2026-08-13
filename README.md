@@ -120,6 +120,7 @@ In snakestream this has been omitted since python has generators and those can b
 | x | of(*args: T)                            | Stream | static | Returns a sequential ordered stream whose elements are the specified values |
 | x | peek(self, consumer: Consumer)          | Stream | instance | Returns a stream consisting of the elements of this stream, additionally performing the provided action on each element as elements are consumed from the resulting stream. |
 | x | reduce(identity: T \| R, accumulator: Accumulator) | T \| R | instance | Performs a reduction on the elements of this stream, using the provided identity value and an associative accumulation function, and returns the reduced value. |
+| x | reduce(accumulator: BinaryOperator) | T \| None | instance | Performs a reduction on the elements of this stream, using an associative accumulation function seeded by the stream's own first element, and returns the reduced value, or None if the stream is empty. |
 | x | skip(n: int)                             | Stream | instance | Returns a stream consisting of the remaining elements of this stream after discarding the first n elements of the stream. |
 
 ## Migration
@@ -143,6 +144,5 @@ Stream:
 - collect(Supplier<R> supplier, BiConsumer<R,? super T> accumulator, BiConsumer<R,R> combiner)
 - forEachOrdered(Consumer<? super T> action)
 - reduce(T identity, BinaryOperator<T> accumulator, BinaryOperator<T> combiner) // have done the one without a combiner
-- reduce(BinaryOperator<T> accumulator) // have done the one with the identity
 - toArray()
 - toArray(IntFunction<A[]> generator)
