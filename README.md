@@ -82,10 +82,12 @@ In snakestream this has been omitted since python has generators and those can b
 
 | function       | returns  | type     | summary                                                                                             |
 | -------------- | -------- | ---------| --------------------------------------------------------------------------------------------------- |
+| is_ordered()   | bool     | instance | Returns whether this stream is still considered order-dependent (i.e. `unordered()` has not been called) |
 | is_parallel()  | bool     | instance | Returns whether this stream, if a terminal operation were to be executed, would execute in parallel |
 | iterator()     | AsyncGenerator | instance | Composes the current chain and returns the resulting async generator directly, without consuming it, so the caller can drive iteration themselves |
 | parallel()     | Stream   | instance | Composes the current chain and returns an equivalent stream that will execute in parallel           |
 | sequential()   | Stream   | instance | Composes the current chain and returns an equivalent stream that will execute sequentially          |
+| unordered()    | Stream   | instance | Marks the stream as not order-dependent; the flag persists across `parallel()`/`sequential()` mode switches |
 
 ### Stream
 
