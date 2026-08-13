@@ -31,6 +31,7 @@ class BaseStream(Generic[T]):
         self._stream: AsyncGenerator[T, None] = _accept(source) or _normalize(source)
         self._chain: list[Callable] = []
         self._close_handlers: list[CloseHandler] = []
+        self._ordered: bool = True
 
     def _sequential(
         self,
@@ -54,16 +55,27 @@ class BaseStream(Generic[T]):
         from .stream import Stream
 
         new_source = self._compose()
-        return Stream(new_source, self._close_handlers)
+        new_stream = Stream(new_source, self._close_handlers)
+        new_stream._ordered = self._ordered
+        return new_stream
 
     def parallel(self) -> ParallelStream[T]:
         from .parallel_stream import ParallelStream
 
         new_source = self._compose()
-        return ParallelStream(new_source, self._close_handlers)
+        new_stream = ParallelStream(new_source, self._close_handlers)
+        new_stream._ordered = self._ordered
+        return new_stream
 
     def iterator(self) -> AsyncGenerator[T, None]:
         return self._compose()
+
+    def unordered(self) -> BaseStream[T]:
+        self._ordered = False
+        return self
+
+    def is_ordered(self) -> bool:
+        return self._ordered
 
     def on_close(self, close_handler: CloseHandler) -> BaseStream[T]:
         self._close_handlers.append(close_handler)
