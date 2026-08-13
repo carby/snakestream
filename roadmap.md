@@ -30,7 +30,6 @@ one area.
 
 | Item | Why next |
 |---|---|
-| **Rename or re-scope `.parallel()` / `PROCESSES`** — currently just `asyncio` tasks racing over a shared generator (I/O-bound only, GIL-bound, no multiprocessing), but the naming implies real OS-thread parallelism like Java's `parallelStream()`. | Misleading naming is a correctness-of-understanding risk for callers. Decide: rename/docstring to set correct expectations, or build an actual multiprocessing-backed implementation. Either path is a breaking-rename candidate — track in README's pre-1.0 migration log per `CLAUDE.md`. |
 | **Decide mutable-builder vs. immutable-pipeline semantics** — every intermediate op (`filter`, `map`, `distinct`, etc.) does `self._chain.append(fn); return self`, mutating the instance rather than returning a new one. Diverges from Java's immutable stream semantics; a `Stream` reference can't be safely reused or forked once chaining starts. | Highest blast radius of any item here — affects every consumer of the chain-of-closures model described in `CLAUDE.md`. Needs an explicit decision (keep and document current behavior vs. change to return-new-instance-per-op) before any code moves, since it's a breaking change either way. |
 
 ## Later
@@ -38,7 +37,9 @@ one area.
 Bigger, structural — needs explicit buy-in before starting since it changes a
 core semantic.
 
-Nothing currently parked here — see **Now** for what moved up.
+| Item | Why later |
+|---|---|
+| **Rename or re-scope `.parallel()` / `PROCESSES`** — currently just `asyncio` tasks racing over a shared generator (I/O-bound only, GIL-bound, no multiprocessing), but the naming implies real OS-thread parallelism like Java's `parallelStream()`. | Misleading naming is a correctness-of-understanding risk for callers, but the fix isn't scoped yet: rename/docstring to set correct expectations vs. build an actual multiprocessing-backed implementation are very different sizes of work, and picking between them needs research first. Moved down from **Next** until that decision is scoped — either path is still a breaking-rename candidate to track in README's pre-1.0 migration log per `CLAUDE.md` once it moves back up. |
 
 ## Done
 
