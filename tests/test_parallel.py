@@ -97,6 +97,60 @@ async def test_parallel_distinct_state_fresh_across_separate_streams() -> None:
     assert sorted(second) == [1, 2, 3]
 
 
+async def _agen_with_real_await(n: int):
+    for i in range(n):
+        await asyncio.sleep(0)
+        yield i
+
+
+@pytest.mark.asyncio
+async def test_parallel_over_source_with_real_await_empty_chain() -> None:
+    # when: no intermediate ops, so branches would race __anext__() directly
+    # on the shared source if it weren't guarded
+    it = await Stream.of(_agen_with_real_await(20)).parallel().collect(to_list)
+
+    # then
+    assert sorted(it) == list(range(20))
+
+
+@pytest.mark.asyncio
+async def test_parallel_over_source_with_real_await_nonempty_chain() -> None:
+    # when: a chain of intermediate ops is present, but every branch's
+    # innermost pull still hits the same shared source
+    it = await Stream.of(_agen_with_real_await(20)).parallel().map(lambda x: x * 2).collect(to_list)
+
+    # then
+    assert sorted(it) == [x * 2 for x in range(20)]
+
+
+@pytest.mark.asyncio
+async def test_parallel_limit_with_real_await_source_closes_safely() -> None:
+    # when: a branch reaches max_size and closes the shared source while
+    # other branches may still be mid-pull against it
+    it = await Stream.of(_agen_with_real_await(50)).parallel().limit(10).collect(to_list)
+
+    # then: no unhandled exception, and at most n elements total
+    assert len(it) <= 10
+
+
+@pytest.mark.asyncio
+async def test_parallel_downstream_processing_stays_concurrent_with_real_await_source() -> None:
+    async def slow_map(x):
+        await asyncio.sleep(0.05)
+        return x
+
+    # when
+    start = time.time()
+    it = await Stream.of(_agen_with_real_await(8)).parallel().map(slow_map).collect(to_list)
+    elapsed = time.time() - start
+
+    # then: mapper invocations overlap across branches even though pulls
+    # from the shared source are serialized, so this is well under the
+    # ~0.4s a fully sequential run of 8 * 0.05s sleeps would take
+    assert sorted(it) == list(range(8))
+    assert elapsed < 0.35
+
+
 @pytest.mark.asyncio
 async def test_sequential_switch_to_sequential(int_2_letter) -> None:
     # when

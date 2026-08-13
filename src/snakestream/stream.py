@@ -63,14 +63,20 @@ class _LimitOp:
     async def __call__(self, iterable: AsyncGenerator, size_holder: list[int] | None = None) -> AsyncGenerator:
         if size_holder is None:
             size_holder = self.make_state()
-        while size_holder[0] < self._max_size:
+        while True:
+            if size_holder[0] >= self._max_size:
+                await iterable.aclose()
+                return
+            # reserve the slot before pulling: a genuinely async upstream
+            # can cede control during the pull, so checking and reserving
+            # must be atomic (no await between them) to stay correct across
+            # racing branches sharing size_holder
+            size_holder[0] += 1
             try:
                 i = await anext(iterable)
             except StopAsyncIteration:
                 return
-            size_holder[0] += 1
             yield i
-        await iterable.aclose()
 
 
 class _SkipOp:
