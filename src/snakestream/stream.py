@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from inspect import iscoroutinefunction
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, cast, overload
 from collections.abc import AsyncGenerator, Callable, Generator
 
 from snakestream.base_stream import BaseStream
@@ -9,7 +9,18 @@ from snakestream.callable_dispatch import _maybe_await
 from snakestream.collector import to_generator
 from snakestream.exception import StreamBuildException
 from snakestream.sort import check_comparator_result_type, merge_sort
-from snakestream.type import R, T, Accumulator, CloseHandler, Comparator, Consumer, FlatMapper, Mapper, Predicate
+from snakestream.type import (
+    R,
+    T,
+    Accumulator,
+    BinaryOperator,
+    CloseHandler,
+    Comparator,
+    Consumer,
+    FlatMapper,
+    Mapper,
+    Predicate,
+)
 
 
 if TYPE_CHECKING:
@@ -204,8 +215,26 @@ class Stream(BaseStream[T]):
     def collect(self, collector: Callable[[AsyncGenerator[T, None]], R]) -> R:
         return collector(self._compose())
 
-    async def reduce(self, identity: T | R, accumulator: Accumulator[T, R]) -> T | R:
-        async for n in self._compose():
+    @overload
+    async def reduce(self, identity: T | R, accumulator: Accumulator[T, R]) -> T | R: ...
+
+    @overload
+    async def reduce(self, accumulator: BinaryOperator[T]) -> T | None: ...
+
+    async def reduce(self, identity: Any = _UNSET, accumulator: Any = _UNSET) -> Any:
+        if accumulator is _UNSET:
+            # Called as reduce(accumulator): the single positional arg is the
+            # accumulator, and the identity is seeded from the stream itself.
+            identity, accumulator = _UNSET, identity
+
+        composed = self._compose()
+        if identity is _UNSET:
+            try:
+                identity = await anext(composed)
+            except StopAsyncIteration:
+                return None
+
+        async for n in composed:
             identity = await _maybe_await(accumulator, identity, n)
         return identity
 
