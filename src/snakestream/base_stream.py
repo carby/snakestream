@@ -62,6 +62,9 @@ class BaseStream(Generic[T]):
         new_source = self._compose()
         return ParallelStream(new_source, self._close_handlers)
 
+    def iterator(self) -> AsyncGenerator[T, None]:
+        return self._compose()
+
     def on_close(self, close_handler: CloseHandler) -> BaseStream[T]:
         self._close_handlers.append(close_handler)
         return self
