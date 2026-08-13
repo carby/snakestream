@@ -7,6 +7,20 @@ from snakestream.stream import PROCESSES, Stream
 from snakestream.type import T, CloseHandler
 
 
+async def _guarded(source: AsyncGenerator, lock: asyncio.Lock) -> AsyncGenerator:
+    try:
+        while True:
+            async with lock:
+                try:
+                    item = await source.__anext__()
+                except StopAsyncIteration:
+                    return
+            yield item
+    finally:
+        async with lock:
+            await source.aclose()
+
+
 class ParallelStream(Stream[T]):
     def __init__(self, source: Any, close_handlers: list[CloseHandler] | None = None) -> None:
         super().__init__(source)
@@ -23,7 +37,8 @@ class ParallelStream(Stream[T]):
             make_state = getattr(fn, "make_state", None)
             if make_state is not None:
                 state_map[fn] = make_state()
-        async_iterators = [self._sequential(intermediaries[:], iterable, state_map) for n in range(processes)]
+        lock = asyncio.Lock()
+        async_iterators = [self._sequential(intermediaries[:], _guarded(iterable, lock), state_map) for n in range(processes)]
         tasks: list[asyncio.Task[Any] | None] = [asyncio.ensure_future(n.__anext__()) for n in async_iterators]
 
         try:
