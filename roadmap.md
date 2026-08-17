@@ -15,18 +15,17 @@ an earlier item or on a Next-bucket decision last.
 
 | # | Item | Why this position |
 |---|---|---|
-| 1 | **Rewrite `BaseStream._sequential()` from recursion + `list.pop(0)` to an iterative loop** (`base_stream.py:35-48`) — currently recurses once per chained operation and pops from the front of the list each call, giving O(n) stack depth and O(n²) time for a chain of n intermediate ops; a long `.map()/.filter()/...` chain risks hitting Python's recursion limit. | No blockers, no dependents; self-contained internal rewrite with no behavior change, straightforward to verify against the existing chain-composition tests. |
-| 2 | **Remove duplicate `_close_handlers` initialization** — `BaseStream.__init__` (`base_stream.py:33`) always sets `self._close_handlers = []`, but `Stream.__init__` (`stream.py:99`) and `ParallelStream.__init__` (`parallel_stream.py:13`) immediately overwrite it with `close_handlers or []`, making the base assignment dead code on every instantiation. Have `BaseStream.__init__` accept `close_handlers` and have subclasses pass it through via `super().__init__()` instead. | No blockers, no dependents; smallest of the three, purely a simplification with no behavior change. |
-| 3 | **`Stream.forEachOrdered(action)`** — ordered variant of `for_each()`, meaningful once parallel streams can guarantee order. | `unordered()`/ordering semantics now decided (see Done); no remaining blockers, no dependents. |
-| 4 | **`Stream.collect(supplier, accumulator, combiner)`** — Java's 3-arg mutable-reduction `collect()`, distinct from snakestream's existing single-arg `collect(collector)`. | No blockers; independent Java-parity addition, no currently-known consumer need. |
-| 5 | **`BaseStream.spliterator()`** — Java's parallel-decomposition iterator. | No hard blocker, but needs a decision first: Java-specific mechanism for splitting work across threads, and snakestream's `ParallelStream` already parallelizes differently (racing `asyncio` tasks over a shared generator), so this may end up intentionally-skipped rather than implemented. |
-| 6 | **`Stream.toArray()`** / **`Stream.toArray(generator)`** — materialize the stream into an array-like structure. | No hard blocker, but needs a decision first: no Java array/generic-array-factory equivalent in Python, so what the Pythonic form even is (a `list`? redundant with `collect(to_list)`?) has to be settled before implementing. |
-| 7 | **`Stream.reduce(identity, accumulator, combiner)`** — 3-arg reduce with a combiner for parallel merging, distinct from the already-implemented 2-arg `reduce(identity, accumulator)`. | Blocked on the **Next**-bucket `.parallel()`/`PROCESSES` semantics decision — the combiner only matters once parallel reduction is well-defined. Last in line. |
-| 8 | **`joining()` / `joining(delimiter)` / `joining(delimiter, prefix, suffix)`** — string-concatenation collector, `collector.py`'s equivalent of `Collectors.joining`. | No blockers, no dependents; simplest of the new collectors (a single accumulating string, no map/set/grouping structure), and self-contained like `to_list`/`to_generator`. |
-| 9 | **`counting()`, `summingInt`/`summingLong`/`summingDouble()`, `averagingInt`/`averagingLong`/`averagingDouble()`** — simple reducing collectors, `collector.py`'s equivalent of the matching `Collectors` statics. | No blockers, no dependents; each is a small fold over the composed generator (count / running sum / running mean), no shared new machinery beyond what `to_list` already establishes as the collector shape. |
-| 10 | **`minBy(comparator)`, `maxBy(comparator)`, `reducing(...)`** — collector wrappers around already-implemented `Stream.min`/`max`/`reduce` logic, exposed as `collect()`-compatible collectors rather than terminal-op methods. | No blockers; mechanically re-exposes existing `_min_max`/reduce internals (`stream.py`) as collectors, so it's additive glue rather than new reduction logic. Positioned after the simpler collectors (#8–#9) since it's more directly tied to internals a reviewer will want fresh context on. |
-| 11 | **`toMap(keyMapper, valueMapper, [mergeFunction])`, `toSet()`** — structural collectors materializing into a `dict`/`set` instead of `to_list`'s `list`. | No hard blocker, but the key/value-mapper and duplicate-key-merge conventions decided here are exactly what #12 (`groupingBy`) needs to reuse for its own key mapper — do this before its dependent. |
-| 12 | **`groupingBy(classifier, [downstream])`, `partitioningBy(predicate, [downstream])`** — grouping collectors, `collector.py`'s equivalent of `Collectors.groupingBy`/`partitioningBy`, including support for a downstream collector (e.g. `groupingBy(classifier, counting())`). | Depends on #11 — `groupingBy`'s classifier is the same key-mapper shape `toMap` settles, and downstream-collector composition is easiest to design once at least one other collector (to compose with) already exists. Last of the new collectors. |
+| 1 | **Remove duplicate `_close_handlers` initialization** — `BaseStream.__init__` (`base_stream.py:33`) always sets `self._close_handlers = []`, but `Stream.__init__` (`stream.py:99`) and `ParallelStream.__init__` (`parallel_stream.py:13`) immediately overwrite it with `close_handlers or []`, making the base assignment dead code on every instantiation. Have `BaseStream.__init__` accept `close_handlers` and have subclasses pass it through via `super().__init__()` instead. | No blockers, no dependents; smallest of the three, purely a simplification with no behavior change. |
+| 2 | **`Stream.forEachOrdered(action)`** — ordered variant of `for_each()`, meaningful once parallel streams can guarantee order. | `unordered()`/ordering semantics now decided (see Done); no remaining blockers, no dependents. |
+| 3 | **`Stream.collect(supplier, accumulator, combiner)`** — Java's 3-arg mutable-reduction `collect()`, distinct from snakestream's existing single-arg `collect(collector)`. | No blockers; independent Java-parity addition, no currently-known consumer need. |
+| 4 | **`BaseStream.spliterator()`** — Java's parallel-decomposition iterator. | No hard blocker, but needs a decision first: Java-specific mechanism for splitting work across threads, and snakestream's `ParallelStream` already parallelizes differently (racing `asyncio` tasks over a shared generator), so this may end up intentionally-skipped rather than implemented. |
+| 5 | **`Stream.toArray()`** / **`Stream.toArray(generator)`** — materialize the stream into an array-like structure. | No hard blocker, but needs a decision first: no Java array/generic-array-factory equivalent in Python, so what the Pythonic form even is (a `list`? redundant with `collect(to_list)`?) has to be settled before implementing. |
+| 6 | **`Stream.reduce(identity, accumulator, combiner)`** — 3-arg reduce with a combiner for parallel merging, distinct from the already-implemented 2-arg `reduce(identity, accumulator)`. | Blocked on the **Next**-bucket `.parallel()`/`PROCESSES` semantics decision — the combiner only matters once parallel reduction is well-defined. Last in line. |
+| 7 | **`joining()` / `joining(delimiter)` / `joining(delimiter, prefix, suffix)`** — string-concatenation collector, `collector.py`'s equivalent of `Collectors.joining`. | No blockers, no dependents; simplest of the new collectors (a single accumulating string, no map/set/grouping structure), and self-contained like `to_list`/`to_generator`. |
+| 8 | **`counting()`, `summingInt`/`summingLong`/`summingDouble()`, `averagingInt`/`averagingLong`/`averagingDouble()`** — simple reducing collectors, `collector.py`'s equivalent of the matching `Collectors` statics. | No blockers, no dependents; each is a small fold over the composed generator (count / running sum / running mean), no shared new machinery beyond what `to_list` already establishes as the collector shape. |
+| 9 | **`minBy(comparator)`, `maxBy(comparator)`, `reducing(...)`** — collector wrappers around already-implemented `Stream.min`/`max`/`reduce` logic, exposed as `collect()`-compatible collectors rather than terminal-op methods. | No blockers; mechanically re-exposes existing `_min_max`/reduce internals (`stream.py`) as collectors, so it's additive glue rather than new reduction logic. Positioned after the simpler collectors (#7–#8) since it's more directly tied to internals a reviewer will want fresh context on. |
+| 10 | **`toMap(keyMapper, valueMapper, [mergeFunction])`, `toSet()`** — structural collectors materializing into a `dict`/`set` instead of `to_list`'s `list`. | No hard blocker, but the key/value-mapper and duplicate-key-merge conventions decided here are exactly what #11 (`groupingBy`) needs to reuse for its own key mapper — do this before its dependent. |
+| 11 | **`groupingBy(classifier, [downstream])`, `partitioningBy(predicate, [downstream])`** — grouping collectors, `collector.py`'s equivalent of `Collectors.groupingBy`/`partitioningBy`, including support for a downstream collector (e.g. `groupingBy(classifier, counting())`). | Depends on #10 — `groupingBy`'s classifier is the same key-mapper shape `toMap` settles, and downstream-collector composition is easiest to design once at least one other collector (to compose with) already exists. Last of the new collectors. |
 
 ## Next
 
@@ -36,6 +35,7 @@ one area.
 | Item | Why next |
 |---|---|
 | **Decide mutable-builder vs. immutable-pipeline semantics** — every intermediate op (`filter`, `map`, `distinct`, etc.) does `self._chain.append(fn); return self`, mutating the instance rather than returning a new one. Diverges from Java's immutable stream semantics; a `Stream` reference can't be safely reused or forked once chaining starts. | Highest blast radius of any item here — affects every consumer of the chain-of-closures model described in `CLAUDE.md`. Needs an explicit decision (keep and document current behavior vs. change to return-new-instance-per-op) before any code moves, since it's a breaking change either way. |
+| **Redesign pipeline execution from nested async-generator delegation to a push-based (Sink-chain) model** — every intermediate op in `stream.py` (`filter`, `map`, `flat_map`, `sorted`, `peek`, `_DistinctOp`, `_LimitOp`, `_SkipOp`) is implemented as `async def fn(iterable): async for i in iterable: yield ...`, so pulling one element through a chain of *k* ops recurses *k* deep at `__anext__()`/`async for` delegation time — independent of and not fixed by the `_sequential()` build-time rewrite (see Done). A long enough `.map()` chain still hits `RecursionError` on consumption. | Discovered while implementing the `_sequential()` rewrite (see `rewrite-sequential-iterative` in Done), which fixed only the build-time half of that item's stated risk. Needs a design decision first: replacing generator-delegation with a single driving loop that threads each item through all ops via a plain `for op in ops:` loop (à la Java Stream's `Sink` chain) touches every op in `stream.py` plus `parallel_stream.py`'s per-branch consumption — highest blast radius alongside the mutable-builder decision above. |
 
 ## Later
 
@@ -49,6 +49,34 @@ core semantic.
 
 ## Done
 
+- Rewrote `BaseStream._sequential()` (`base_stream.py`) from recursion +
+  `list.pop(0)` to an iterative loop over the queued closures. The old
+  implementation recursed once per chained intermediate operation and
+  popped from the front of the list on each call, giving O(n) Python stack
+  depth (risking `RecursionError` on a long `.map()/.filter()/...` chain)
+  and O(n²) time (since `list.pop(0)` is itself O(n), called n times) for a
+  chain of n ops. Fixed by iterating the closures in order with a plain
+  `for` loop and threading `iterable` through each step, dropping the
+  `pop(0)` entirely — `_compose()` (`_sequential()`'s only caller) needed
+  no changes since it already passes a fresh list copy. No change to
+  `_sequential()`'s signature, return value, or `state_map` per-closure
+  state lookup. Added `test_sequential_long_chain_does_not_recurse_at_build_time`
+  (`tests/test_sequential.py`), calling `_sequential()` directly with a
+  chain of `sys.getrecursionlimit() * 2` identity closures to isolate the
+  build-time traversal this fix addresses.
+
+  **Scope note, discovered during implementation:** this only fixes
+  *building* the pipeline. Each individual op in `stream.py` (`filter`,
+  `map`, `flat_map`, `sorted`, `peek`, `_DistinctOp`, `_LimitOp`,
+  `_SkipOp`) is itself implemented as `async def fn(iterable): async for i
+  in iterable: yield ...`, so *consuming* a long chain still recurses once
+  per chained op at the `async for`/`__anext__()` delegation level,
+  confirmed unchanged before and after this fix by testing a long
+  `.map()` chain end-to-end. Fully closing the original roadmap item's
+  stated risk requires a push-based execution-model redesign across every
+  op in `stream.py` and `parallel_stream.py` — out of scope here and
+  tracked as a new **Next**-bucket item. See
+  `openspec/changes/rewrite-sequential-iterative`.
 - Fixed `ParallelStream` crashing on any source with a real `await`
   suspension point. `ParallelStream._parallel` (`parallel_stream.py`) fanned
   `PROCESSES` racing branches out over the *same* shared `self._stream`

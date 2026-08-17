@@ -39,14 +39,10 @@ class BaseStream(Generic[T]):
         iterable: AsyncGenerator,
         state_map: dict[Callable, Any] | None = None,
     ) -> AsyncGenerator:
-        if len(intermediaries) == 0:
-            return iterable
-        fn = intermediaries.pop(0)
-        state = state_map.get(fn) if state_map is not None else None
-        next_iterable = fn(iterable, state) if state is not None else fn(iterable)
-        if len(intermediaries) == 0:
-            return next_iterable
-        return self._sequential(intermediaries, next_iterable, state_map)
+        for fn in intermediaries:
+            state = state_map.get(fn) if state_map is not None else None
+            iterable = fn(iterable, state) if state is not None else fn(iterable)
+        return iterable
 
     def _compose(self) -> AsyncGenerator[T, None]:
         return self._sequential(self._chain[:], self._stream)
