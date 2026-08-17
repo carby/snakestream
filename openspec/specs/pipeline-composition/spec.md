@@ -137,3 +137,14 @@ resolves them, not necessarily the first `n` elements in source order.
 
 - **WHEN** a `ParallelStream` chain containing `.limit(n)` is composed against a source with a real `await` suspension point, and racing branch A closes the shared upstream source after the shared count reaches `n`
 - **THEN** any other branch subsequently pulling from or closing that same shared source ends its local iteration cleanly (normal end-of-stream), without an unhandled exception escaping `ParallelStream._parallel()`'s task loop
+
+### Requirement: Building a composed pipeline does not recurse per chained operation
+
+`BaseStream._compose()` (and the `_sequential()` helper it uses for sequential composition) SHALL build the executable pipeline without recursing once per queued intermediate-operation closure. Building (as opposed to consuming) a chain of intermediate operations SHALL NOT fail with `RecursionError` regardless of how many operations are queued, up to ordinary Python list-size limits.
+
+Note: this requirement covers only the build-time traversal in `_sequential()`/`_compose()`. It does not cover recursion that may still occur while *consuming* the composed pipeline, since each individual intermediate operation's own implementation (e.g. `async for i in iterable: yield ...` in `stream.py`) independently delegates to its upstream operation at consumption time — that is a separate concern, not addressed by this requirement.
+
+#### Scenario: A long chain of intermediate operations builds successfully
+
+- **WHEN** `BaseStream._sequential()` is called with a long list of queued closures (deep enough that the previous per-op-recursion implementation would approach Python's default recursion limit)
+- **THEN** building the composed pipeline completes without raising `RecursionError`
