@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from inspect import iscoroutinefunction
 from typing import TYPE_CHECKING, Any, cast, overload
-from collections.abc import AsyncGenerator, Callable, Generator
+from collections.abc import AsyncGenerator, Callable, Coroutine, Generator
 
 from snakestream.base_stream import BaseStream
 from snakestream.callable_dispatch import _maybe_await
@@ -13,6 +13,7 @@ from snakestream.type import (
     R,
     T,
     Accumulator,
+    BiConsumer,
     BinaryOperator,
     CloseHandler,
     Comparator,
@@ -20,6 +21,7 @@ from snakestream.type import (
     FlatMapper,
     Mapper,
     Predicate,
+    Supplier,
 )
 
 
@@ -217,8 +219,34 @@ class Stream(BaseStream[T]):
         return self
 
     # Terminals
-    def collect(self, collector: Callable[[AsyncGenerator[T, None]], R]) -> R:
-        return collector(self._compose())
+    @overload
+    def collect(self, collector: Callable[[AsyncGenerator[T, None]], R]) -> R: ...
+
+    @overload
+    def collect(
+        self, supplier: Supplier[R], accumulator: BiConsumer[R, T], combiner: BiConsumer[R, R]
+    ) -> Coroutine[Any, Any, R]: ...
+
+    def collect(self, *args: Any) -> Any:
+        if len(args) == 1:
+            (collector,) = args
+            return collector(self._compose())
+        # 3-arg mutable reduction: supplier/accumulator, sync or async, are
+        # dispatched via _maybe_await like every other user-supplied
+        # callable. combiner is accepted for signature parity with Java's
+        # Stream.collect(Supplier, BiConsumer, BiConsumer) but is never
+        # invoked: collect() always folds over a single composed
+        # AsyncGenerator, sequential or parallel, with no independently
+        # accumulated partitions to merge - the same posture reduce()
+        # already has under .parallel().
+        supplier, accumulator, _combiner = args
+        return self._collect_mutable(supplier, accumulator)
+
+    async def _collect_mutable(self, supplier: Supplier[R], accumulator: BiConsumer[R, T]) -> R:
+        container = await _maybe_await(supplier)
+        async for n in self._compose():
+            await _maybe_await(accumulator, container, n)
+        return container
 
     @overload
     async def reduce(self, identity: T | R, accumulator: Accumulator[T, R]) -> T | R: ...

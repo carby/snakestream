@@ -92,3 +92,64 @@ async def test_to_list_with_empty_list_input() -> None:
     it = await Stream.of([]).collect(to_list)
     # then
     assert it == []
+
+
+@pytest.mark.asyncio
+async def test_collect_supplier_accumulator_combiner_sync() -> None:
+    # when
+    it = await Stream.of([1, 2, 3]).collect(list, list.append, list.extend)
+    # then
+    assert it == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_collect_supplier_accumulator_combiner_async() -> None:
+    # given
+    async def async_supplier() -> list:
+        return []
+
+    async def async_accumulator(container: list, item: int) -> None:
+        container.append(item)
+
+    # when
+    it = await Stream.of([1, 2, 3]).collect(async_supplier, async_accumulator, list.extend)
+    # then
+    assert it == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_collect_supplier_accumulator_combiner_empty_stream() -> None:
+    # when
+    it = await Stream.of([]).collect(list, list.append, list.extend)
+    # then
+    assert it == []
+
+
+@pytest.mark.asyncio
+async def test_collect_supplier_accumulator_combiner_never_calls_combiner() -> None:
+    # given
+    combiner_calls: list = []
+
+    def combiner(a: list, b: list) -> None:
+        combiner_calls.append((a, b))
+
+    # when
+    it = await Stream.of([1, 2, 3]).collect(list, list.append, combiner)
+    # then
+    assert it == [1, 2, 3]
+    assert combiner_calls == []
+
+
+@pytest.mark.asyncio
+async def test_collect_supplier_accumulator_combiner_parallel_never_calls_combiner() -> None:
+    # given
+    combiner_calls: list = []
+
+    def combiner(a: list, b: list) -> None:
+        combiner_calls.append((a, b))
+
+    # when
+    it = await Stream.of([1, 2, 3, 4, 5]).parallel().collect(list, list.append, combiner)
+    # then
+    assert sorted(it) == [1, 2, 3, 4, 5]
+    assert combiner_calls == []
