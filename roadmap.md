@@ -15,11 +15,10 @@ an earlier item or on a Next-bucket decision last.
 
 | # | Item | Why this position |
 |---|---|---|
-| 1 | **`minBy(comparator)`, `maxBy(comparator)`, `reducing(...)`** — collector wrappers around already-implemented `Stream.min`/`max`/`reduce` logic, exposed as `collect()`-compatible collectors rather than terminal-op methods. | No blockers; mechanically re-exposes existing `_min_max`/reduce internals (`stream.py`) as collectors, so it's additive glue rather than new reduction logic. |
-| 2 | **`toMap(keyMapper, valueMapper, [mergeFunction])`, `toSet()`** — structural collectors materializing into a `dict`/`set` instead of `to_list`'s `list`. | No hard blocker, but the key/value-mapper and duplicate-key-merge conventions decided here are exactly what #3 (`groupingBy`) needs to reuse for its own key mapper — do this before its dependent. |
-| 3 | **`groupingBy(classifier, [downstream])`, `partitioningBy(predicate, [downstream])`** — grouping collectors, `collector.py`'s equivalent of `Collectors.groupingBy`/`partitioningBy`, including support for a downstream collector (e.g. `groupingBy(classifier, counting())`). | Depends on #2 — `groupingBy`'s classifier is the same key-mapper shape `toMap` settles, and downstream-collector composition is easiest to design once at least one other collector (to compose with) already exists. Last of the new collectors. |
-| 4 | **Fix three `type.py` callable-alias defects found in review**: (a) `Mapper = Callable[[T], R \| None]` omits `Awaitable[...]`, unlike `Predicate`/`Comparator`, even though `map()` dispatches mappers through `_maybe_await` and fully supports async mappers; (b) `Consumer = Callable[[T], T]` has the wrong return type (a consumer is a side-effecting callback whose return value is discarded, not one that produces a `T`) and is also missing `Awaitable`, and isn't even used consistently — `for_each`/`for_each_ordered` (`stream.py`) inline `Callable[[T], Any]` instead of using it; (c) `Filterer = Callable[[T], T]` is dead code, never referenced anywhere in `src/` (`filter()` uses `Predicate` instead). | No blockers, no dependents; pure type-alias corrections in `type.py` plus updating `for_each`/`for_each_ordered`'s signatures to use the corrected `Consumer` and deleting the unused `Filterer`. No runtime behavior changes. |
-| 5 | **Fix three resource/lifecycle defects found in review**: (a) `flat_map()` (`stream.py`) leaks the current inner stream's async generator when the outer chain short-circuits (e.g. a downstream `.limit()`) — each outer element gets a fresh `flat_mapper(i).collect(to_generator)` generator that's only exhausted, never explicitly `.aclose()`'d, so an early `GeneratorExit` on the outer `fn` abandons whatever inner generator was mid-iteration; reproduced with a tracked async generator whose `finally:` cleanup never runs after `.flat_map(...).limit(1)`; (b) `BaseStream.close()` (`base_stream.py`) iterates `_close_handlers` with a plain `for` loop and no `try`/`except`, so a raising handler stops every handler after it from running, unlike Java's try-with-resources convention (which this API models) of running every closer regardless and reporting suppressed exceptions; reproduced with `on_close(bad).on_close(good)` where `good` never runs after `bad` raises; (c) `StreamBuilder.build()` (`stream_builder.py`) passes `self._elements` into `Stream(...)` by reference rather than snapshotting it, and since `_normalize` iterates lazily at consumption time, `add()` calls made *after* `build()` still leak into the already-built stream — diverges from Java's `Stream.Builder` contract, which throws `IllegalStateException` on `add`/`accept` after `build()`; reproduced with `b.add(1).add(2); s = b.build(); b.add(3)` yielding `[1, 2, 3]` from `s`. | No blockers, no dependents; each is a self-contained fix in a different file ((a) close the inner generator explicitly in `flat_map`'s `fn`, e.g. via `aclosing()`; (b) collect/re-raise or suppress-and-continue in `close()`; (c) snapshot `list(self._elements)` in `build()`, or mark the builder built and raise on further `add()`/`accept()`). No breaking changes expected beyond the bug fixes themselves. |
+| 1 | **`toMap(keyMapper, valueMapper, [mergeFunction])`, `toSet()`** — structural collectors materializing into a `dict`/`set` instead of `to_list`'s `list`. | No hard blocker, but the key/value-mapper and duplicate-key-merge conventions decided here are exactly what #2 (`groupingBy`) needs to reuse for its own key mapper — do this before its dependent. |
+| 2 | **`groupingBy(classifier, [downstream])`, `partitioningBy(predicate, [downstream])`** — grouping collectors, `collector.py`'s equivalent of `Collectors.groupingBy`/`partitioningBy`, including support for a downstream collector (e.g. `groupingBy(classifier, counting())`). | Depends on #1 — `groupingBy`'s classifier is the same key-mapper shape `toMap` settles, and downstream-collector composition is easiest to design once at least one other collector (to compose with) already exists. Last of the new collectors. |
+| 3 | **Fix three `type.py` callable-alias defects found in review**: (a) `Mapper = Callable[[T], R \| None]` omits `Awaitable[...]`, unlike `Predicate`/`Comparator`, even though `map()` dispatches mappers through `_maybe_await` and fully supports async mappers; (b) `Consumer = Callable[[T], T]` has the wrong return type (a consumer is a side-effecting callback whose return value is discarded, not one that produces a `T`) and is also missing `Awaitable`, and isn't even used consistently — `for_each`/`for_each_ordered` (`stream.py`) inline `Callable[[T], Any]` instead of using it; (c) `Filterer = Callable[[T], T]` is dead code, never referenced anywhere in `src/` (`filter()` uses `Predicate` instead). | No blockers, no dependents; pure type-alias corrections in `type.py` plus updating `for_each`/`for_each_ordered`'s signatures to use the corrected `Consumer` and deleting the unused `Filterer`. No runtime behavior changes. |
+| 4 | **Fix three resource/lifecycle defects found in review**: (a) `flat_map()` (`stream.py`) leaks the current inner stream's async generator when the outer chain short-circuits (e.g. a downstream `.limit()`) — each outer element gets a fresh `flat_mapper(i).collect(to_generator)` generator that's only exhausted, never explicitly `.aclose()`'d, so an early `GeneratorExit` on the outer `fn` abandons whatever inner generator was mid-iteration; reproduced with a tracked async generator whose `finally:` cleanup never runs after `.flat_map(...).limit(1)`; (b) `BaseStream.close()` (`base_stream.py`) iterates `_close_handlers` with a plain `for` loop and no `try`/`except`, so a raising handler stops every handler after it from running, unlike Java's try-with-resources convention (which this API models) of running every closer regardless and reporting suppressed exceptions; reproduced with `on_close(bad).on_close(good)` where `good` never runs after `bad` raises; (c) `StreamBuilder.build()` (`stream_builder.py`) passes `self._elements` into `Stream(...)` by reference rather than snapshotting it, and since `_normalize` iterates lazily at consumption time, `add()` calls made *after* `build()` still leak into the already-built stream — diverges from Java's `Stream.Builder` contract, which throws `IllegalStateException` on `add`/`accept` after `build()`; reproduced with `b.add(1).add(2); s = b.build(); b.add(3)` yielding `[1, 2, 3]` from `s`. | No blockers, no dependents; each is a self-contained fix in a different file ((a) close the inner generator explicitly in `flat_map`'s `fn`, e.g. via `aclosing()`; (b) collect/re-raise or suppress-and-continue in `close()`; (c) snapshot `list(self._elements)` in `build()`, or mark the builder built and raise on further `add()`/`accept()`). No breaking changes expected beyond the bug fixes themselves. |
 
 `Stream.reduce(identity, accumulator, combiner)` (3-arg, with a combiner for
 parallel merging) has moved to **Later** below — see the resolved
@@ -49,6 +48,41 @@ core semantic.
 
 ## Done
 
+- Added `min_by(comparator)`, `max_by(comparator)`, and `reducing(...)`
+  (`collector.py`) — collector wrappers around `Stream.min`/`max`/`reduce`'s
+  already-implemented logic, exposed as `collect()`-compatible collectors
+  rather than terminal-op methods, matching Java's `Collectors.minBy`/
+  `maxBy`/`reducing` (adapted to this project's existing snake_case naming
+  convention, e.g. `for_each`/`to_array`/`summing_int`, not literal Java
+  camelCase). `min_by`/`max_by` reuse `check_comparator_result_type`
+  (`sort.py`) and mirror `Stream._min_max`'s tie-break (first of equal
+  elements wins) and `None`-on-empty-stream behavior exactly. `reducing`
+  implements all three Java overload shapes — `reducing(binary_operator)`
+  (no identity, mirrors `Stream.reduce(accumulator)`),
+  `reducing(identity, binary_operator)` (mirrors
+  `Stream.reduce(identity, accumulator)`), and
+  `reducing(identity, mapper, binary_operator)` (maps each element before
+  folding, argument order matching Java's
+  `reducing(U identity, Function<T,U> mapper, BinaryOperator<U> op)`
+  exactly) — dispatched via `@overload` + a runtime `_UNSET` sentinel, the
+  same pattern `Stream.reduce` already uses. The loop bodies are
+  intentionally duplicated from `Stream._min_max`/`reduce` rather than
+  retrofitting those methods to accept an arbitrary `AsyncGenerator`, since
+  a collector's contract has no `Stream` instance in scope and the loops are
+  short and stable; `check_comparator_result_type` stays imported from
+  `sort.py` as the single source of truth for the one piece of real shared
+  logic. Discovered during implementation: the three `reducing` `@overload`
+  stub bodies pushed combined branch coverage below the repo's 98% gate
+  (each unreachable `def ...: ...` stub counts as a never-taken branch);
+  fixed with `# pragma: no cover` on each stub line, an already-supported
+  `exclude_lines` pattern in `pyproject.toml` — no config change needed.
+  Added `tests/test_min_by.py`, `tests/test_max_by.py`,
+  `tests/test_reducing.py`: extremum selection, empty-stream `None`,
+  tie-break, async comparator/mapper/operator awaiting, `TypeError` on a
+  bool-returning comparator, and all three `reducing` overloads including
+  empty-stream/single-element edge cases. Updated README's `Collectors`
+  table with three new rows. No breaking changes. See
+  `openspec/changes/archive/2026-08-17-add-collectors-minby-maxby-reducing`.
 - Added `counting()`, `summing_int`/`summing_long`/`summing_double`, and
   `averaging_int`/`averaging_long`/`averaging_double` (`collector.py`) —
   numeric reducing collectors, `collector.py`'s equivalent of the matching
