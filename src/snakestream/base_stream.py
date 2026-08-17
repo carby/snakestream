@@ -27,10 +27,10 @@ def _accept(source: Any) -> AsyncGenerator | None:
 
 
 class BaseStream(Generic[T]):
-    def __init__(self, source: Any) -> None:
+    def __init__(self, source: Any, close_handlers: list[CloseHandler] | None = None) -> None:
         self._stream: AsyncGenerator[T, None] = _accept(source) or _normalize(source)
         self._chain: list[Callable] = []
-        self._close_handlers: list[CloseHandler] = []
+        self._close_handlers: list[CloseHandler] = close_handlers or []
         self._ordered: bool = True
 
     def _sequential(

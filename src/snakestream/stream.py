@@ -101,8 +101,7 @@ class _SkipOp:
 
 class Stream(BaseStream[T]):
     def __init__(self, source: Any, close_handlers: list[CloseHandler] | None = None) -> None:
-        super().__init__(source)
-        self._close_handlers = close_handlers or []
+        super().__init__(source, close_handlers)
 
     @staticmethod
     def of(*args: T) -> Stream[T]:
