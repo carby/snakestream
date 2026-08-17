@@ -15,10 +15,11 @@ an earlier item or on a Next-bucket decision last.
 
 | # | Item | Why this position |
 |---|---|---|
-| 1 | **`counting()`, `summingInt`/`summingLong`/`summingDouble()`, `averagingInt`/`averagingLong`/`averagingDouble()`** — simple reducing collectors, `collector.py`'s equivalent of the matching `Collectors` statics. | No blockers, no dependents; each is a small fold over the composed generator (count / running sum / running mean), no shared new machinery beyond what `to_list` already establishes as the collector shape. |
-| 2 | **`minBy(comparator)`, `maxBy(comparator)`, `reducing(...)`** — collector wrappers around already-implemented `Stream.min`/`max`/`reduce` logic, exposed as `collect()`-compatible collectors rather than terminal-op methods. | No blockers; mechanically re-exposes existing `_min_max`/reduce internals (`stream.py`) as collectors, so it's additive glue rather than new reduction logic. Positioned after the simpler collector (#1) since it's more directly tied to internals a reviewer will want fresh context on. |
-| 3 | **`toMap(keyMapper, valueMapper, [mergeFunction])`, `toSet()`** — structural collectors materializing into a `dict`/`set` instead of `to_list`'s `list`. | No hard blocker, but the key/value-mapper and duplicate-key-merge conventions decided here are exactly what #4 (`groupingBy`) needs to reuse for its own key mapper — do this before its dependent. |
-| 4 | **`groupingBy(classifier, [downstream])`, `partitioningBy(predicate, [downstream])`** — grouping collectors, `collector.py`'s equivalent of `Collectors.groupingBy`/`partitioningBy`, including support for a downstream collector (e.g. `groupingBy(classifier, counting())`). | Depends on #3 — `groupingBy`'s classifier is the same key-mapper shape `toMap` settles, and downstream-collector composition is easiest to design once at least one other collector (to compose with) already exists. Last of the new collectors. |
+| 1 | **`minBy(comparator)`, `maxBy(comparator)`, `reducing(...)`** — collector wrappers around already-implemented `Stream.min`/`max`/`reduce` logic, exposed as `collect()`-compatible collectors rather than terminal-op methods. | No blockers; mechanically re-exposes existing `_min_max`/reduce internals (`stream.py`) as collectors, so it's additive glue rather than new reduction logic. |
+| 2 | **`toMap(keyMapper, valueMapper, [mergeFunction])`, `toSet()`** — structural collectors materializing into a `dict`/`set` instead of `to_list`'s `list`. | No hard blocker, but the key/value-mapper and duplicate-key-merge conventions decided here are exactly what #3 (`groupingBy`) needs to reuse for its own key mapper — do this before its dependent. |
+| 3 | **`groupingBy(classifier, [downstream])`, `partitioningBy(predicate, [downstream])`** — grouping collectors, `collector.py`'s equivalent of `Collectors.groupingBy`/`partitioningBy`, including support for a downstream collector (e.g. `groupingBy(classifier, counting())`). | Depends on #2 — `groupingBy`'s classifier is the same key-mapper shape `toMap` settles, and downstream-collector composition is easiest to design once at least one other collector (to compose with) already exists. Last of the new collectors. |
+| 4 | **Fix three `type.py` callable-alias defects found in review**: (a) `Mapper = Callable[[T], R \| None]` omits `Awaitable[...]`, unlike `Predicate`/`Comparator`, even though `map()` dispatches mappers through `_maybe_await` and fully supports async mappers; (b) `Consumer = Callable[[T], T]` has the wrong return type (a consumer is a side-effecting callback whose return value is discarded, not one that produces a `T`) and is also missing `Awaitable`, and isn't even used consistently — `for_each`/`for_each_ordered` (`stream.py`) inline `Callable[[T], Any]` instead of using it; (c) `Filterer = Callable[[T], T]` is dead code, never referenced anywhere in `src/` (`filter()` uses `Predicate` instead). | No blockers, no dependents; pure type-alias corrections in `type.py` plus updating `for_each`/`for_each_ordered`'s signatures to use the corrected `Consumer` and deleting the unused `Filterer`. No runtime behavior changes. |
+| 5 | **Fix three resource/lifecycle defects found in review**: (a) `flat_map()` (`stream.py`) leaks the current inner stream's async generator when the outer chain short-circuits (e.g. a downstream `.limit()`) — each outer element gets a fresh `flat_mapper(i).collect(to_generator)` generator that's only exhausted, never explicitly `.aclose()`'d, so an early `GeneratorExit` on the outer `fn` abandons whatever inner generator was mid-iteration; reproduced with a tracked async generator whose `finally:` cleanup never runs after `.flat_map(...).limit(1)`; (b) `BaseStream.close()` (`base_stream.py`) iterates `_close_handlers` with a plain `for` loop and no `try`/`except`, so a raising handler stops every handler after it from running, unlike Java's try-with-resources convention (which this API models) of running every closer regardless and reporting suppressed exceptions; reproduced with `on_close(bad).on_close(good)` where `good` never runs after `bad` raises; (c) `StreamBuilder.build()` (`stream_builder.py`) passes `self._elements` into `Stream(...)` by reference rather than snapshotting it, and since `_normalize` iterates lazily at consumption time, `add()` calls made *after* `build()` still leak into the already-built stream — diverges from Java's `Stream.Builder` contract, which throws `IllegalStateException` on `add`/`accept` after `build()`; reproduced with `b.add(1).add(2); s = b.build(); b.add(3)` yielding `[1, 2, 3]` from `s`. | No blockers, no dependents; each is a self-contained fix in a different file ((a) close the inner generator explicitly in `flat_map`'s `fn`, e.g. via `aclosing()`; (b) collect/re-raise or suppress-and-continue in `close()`; (c) snapshot `list(self._elements)` in `build()`, or mark the builder built and raise on further `add()`/`accept()`). No breaking changes expected beyond the bug fixes themselves. |
 
 `Stream.reduce(identity, accumulator, combiner)` (3-arg, with a combiner for
 parallel merging) has moved to **Later** below — see the resolved
@@ -48,6 +49,30 @@ core semantic.
 
 ## Done
 
+- Added `counting()`, `summing_int`/`summing_long`/`summing_double`, and
+  `averaging_int`/`averaging_long`/`averaging_double` (`collector.py`) —
+  numeric reducing collectors, `collector.py`'s equivalent of the matching
+  `Collectors` statics, following the same factory-returns-closure shape
+  `joining()` established. `counting()` returns the `int` element count;
+  `summing_int`/`summing_long`/`summing_double` map each element then sum
+  the results (`int` for the first two, `float` for the last);
+  `averaging_int`/`averaging_long`/`averaging_double` map each element and
+  return the arithmetic mean as a `float` (`0.0` for an empty stream).
+  Java's `Collectors` distinguishes `summingInt`/`summingLong`/
+  `summingDouble` and the `averaging*` trio by primitive type — a
+  distinction Python's numeric tower doesn't have — so each pair/trio is
+  implemented identically apart from `summing_double`'s explicit `float()`
+  coercion; kept as separate, Java-parity-named functions rather than
+  collapsing to `summing(mapper)`/`averaging(mapper)`, since these are
+  distinct Java method names (not one overloaded method, unlike `joining()`'s
+  three arg-count variants). Added a new `NumberMapper` type alias to
+  `type.py`. Mapper dispatch reuses the existing `_maybe_await` helper, so
+  sync and async mappers both work. Added `tests/test_counting.py`,
+  `tests/test_summing.py`, `tests/test_averaging.py`: non-empty/empty
+  streams and sync/async mappers for each function, plus a `float`-type
+  assertion for `summing_double`. Updated README's `Collectors` table with
+  seven new rows. No breaking changes. See
+  `openspec/changes/add-collectors-counting-summing-averaging`.
 - Added `joining()` / `joining(delimiter)` / `joining(delimiter, prefix,
   suffix)` (`collector.py`) — a string-concatenation collector for use with
   `Stream.collect()`, `collector.py`'s equivalent of `Collectors.joining`
