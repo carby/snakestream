@@ -15,11 +15,10 @@ an earlier item or on a Next-bucket decision last.
 
 | # | Item | Why this position |
 |---|---|---|
-| 1 | **`joining()` / `joining(delimiter)` / `joining(delimiter, prefix, suffix)`** — string-concatenation collector, `collector.py`'s equivalent of `Collectors.joining`. | No blockers, no dependents; simplest of the new collectors (a single accumulating string, no map/set/grouping structure), and self-contained like `to_list`/`to_generator`. |
-| 2 | **`counting()`, `summingInt`/`summingLong`/`summingDouble()`, `averagingInt`/`averagingLong`/`averagingDouble()`** — simple reducing collectors, `collector.py`'s equivalent of the matching `Collectors` statics. | No blockers, no dependents; each is a small fold over the composed generator (count / running sum / running mean), no shared new machinery beyond what `to_list` already establishes as the collector shape. |
-| 3 | **`minBy(comparator)`, `maxBy(comparator)`, `reducing(...)`** — collector wrappers around already-implemented `Stream.min`/`max`/`reduce` logic, exposed as `collect()`-compatible collectors rather than terminal-op methods. | No blockers; mechanically re-exposes existing `_min_max`/reduce internals (`stream.py`) as collectors, so it's additive glue rather than new reduction logic. Positioned after the simpler collectors (#1–#2) since it's more directly tied to internals a reviewer will want fresh context on. |
-| 4 | **`toMap(keyMapper, valueMapper, [mergeFunction])`, `toSet()`** — structural collectors materializing into a `dict`/`set` instead of `to_list`'s `list`. | No hard blocker, but the key/value-mapper and duplicate-key-merge conventions decided here are exactly what #5 (`groupingBy`) needs to reuse for its own key mapper — do this before its dependent. |
-| 5 | **`groupingBy(classifier, [downstream])`, `partitioningBy(predicate, [downstream])`** — grouping collectors, `collector.py`'s equivalent of `Collectors.groupingBy`/`partitioningBy`, including support for a downstream collector (e.g. `groupingBy(classifier, counting())`). | Depends on #4 — `groupingBy`'s classifier is the same key-mapper shape `toMap` settles, and downstream-collector composition is easiest to design once at least one other collector (to compose with) already exists. Last of the new collectors. |
+| 1 | **`counting()`, `summingInt`/`summingLong`/`summingDouble()`, `averagingInt`/`averagingLong`/`averagingDouble()`** — simple reducing collectors, `collector.py`'s equivalent of the matching `Collectors` statics. | No blockers, no dependents; each is a small fold over the composed generator (count / running sum / running mean), no shared new machinery beyond what `to_list` already establishes as the collector shape. |
+| 2 | **`minBy(comparator)`, `maxBy(comparator)`, `reducing(...)`** — collector wrappers around already-implemented `Stream.min`/`max`/`reduce` logic, exposed as `collect()`-compatible collectors rather than terminal-op methods. | No blockers; mechanically re-exposes existing `_min_max`/reduce internals (`stream.py`) as collectors, so it's additive glue rather than new reduction logic. Positioned after the simpler collector (#1) since it's more directly tied to internals a reviewer will want fresh context on. |
+| 3 | **`toMap(keyMapper, valueMapper, [mergeFunction])`, `toSet()`** — structural collectors materializing into a `dict`/`set` instead of `to_list`'s `list`. | No hard blocker, but the key/value-mapper and duplicate-key-merge conventions decided here are exactly what #4 (`groupingBy`) needs to reuse for its own key mapper — do this before its dependent. |
+| 4 | **`groupingBy(classifier, [downstream])`, `partitioningBy(predicate, [downstream])`** — grouping collectors, `collector.py`'s equivalent of `Collectors.groupingBy`/`partitioningBy`, including support for a downstream collector (e.g. `groupingBy(classifier, counting())`). | Depends on #3 — `groupingBy`'s classifier is the same key-mapper shape `toMap` settles, and downstream-collector composition is easiest to design once at least one other collector (to compose with) already exists. Last of the new collectors. |
 
 `Stream.reduce(identity, accumulator, combiner)` (3-arg, with a combiner for
 parallel merging) has moved to **Later** below — see the resolved
@@ -49,6 +48,31 @@ core semantic.
 
 ## Done
 
+- Added `joining()` / `joining(delimiter)` / `joining(delimiter, prefix,
+  suffix)` (`collector.py`) — a string-concatenation collector for use with
+  `Stream.collect()`, `collector.py`'s equivalent of `Collectors.joining`
+  and the first entry in the `Collectors`-parity effort tracked by this
+  roadmap. Implemented as a single `joining(delimiter: str = "", prefix:
+  str = "", suffix: str = "")` factory function, collapsing Java's three
+  overloads into default arguments rather than `@overload`s, since the
+  underlying behavior doesn't actually branch by argument count (contrast
+  with `collect()`'s two genuinely different code paths, which do use
+  `@overload`). It returns a plain `async def` closure over the composed
+  `AsyncGenerator[str, None]`, matching `collector.py`'s existing
+  plain-function collector shape (`to_list`/`to_generator`) rather than a
+  callable class — no per-composition state is needed since
+  prefix/delimiter/suffix are fixed at factory-call time. The join uses
+  `delimiter.join(parts)`, so a non-`str` element naturally raises
+  `TypeError` (matching Java's `Collectors.joining()`, defined only on
+  `Stream<CharSequence>`) with no explicit `isinstance` check needed; an
+  empty stream returns `prefix + suffix`, matching Java's Javadoc exactly.
+  Added a new `Collectors` table section to README (none existed yet) to
+  give this and future `Collectors`-family additions a place to be
+  tracked. Added `tests/test_joining.py`: no-arg join, delimiter-only,
+  delimiter+prefix+suffix, single-element (no delimiter applied), empty
+  stream with and without prefix/suffix, and the `TypeError` regression for
+  a non-`str` element. No breaking changes. See
+  `openspec/changes/add-collector-joining`.
 - Added `Stream.to_array()` (`stream.py`) — a terminal operation returning a
   `list` of every element pulled through the composed chain, functionally
   identical to `collect(to_list)`. Java's `toArray()`/`toArray(generator)`

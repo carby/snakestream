@@ -137,6 +137,12 @@ In snakestream this has been omitted since python has generators and those can b
 | x | to_array()                              | List[T] | instance | Returns a list containing the elements of this stream. Equivalent to `collect(to_list)`; Java's `toArray()` returns an array, but Python has no distinct array type competing with `list`. |
 |   | ~~toArray(generator: IntFunction[Array[T]])~~ | Array[T] | instance | Not relevant. Exists in Java to work around the lack of runtime generic-array construction, letting callers get a correctly-typed array instead of `Object[]`. Python's `list` has no array/generic-array distinction to work around, so there's no equivalent problem for this overload to solve. |
 
+### Collectors
+
+| done | function                                              | returns   | type    | summary                                                                 |
+| ---- | ------------------------------------------------------ | --------- | ------- | ------------------------------------------------------------------------ |
+| x | joining(delimiter: str = "", prefix: str = "", suffix: str = "") | Collector | factory | Returns a collector, for use with `collect()`, that concatenates the stream's `str` elements, separated by `delimiter` and wrapped in `prefix`/`suffix`. |
+
 ## Migration
 These are a list of the known breaking changes. Until release 1.0.0 focus will be on implementing features and changing things that does not align with how streams work in java.
 - **0.3.5 -> next:** `Stream.of()` no longer accepts keyword arguments. `Stream.of(a=1, b=2)` used to produce `[("a", 1), ("b", 2)]`; this had no Java equivalent and was undiscoverable from the signature. Callers must switch to `Stream.of(*some_dict.items())` for the equivalent stream of tuples.
