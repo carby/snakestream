@@ -97,6 +97,7 @@ In snakestream this has been omitted since python has generators and those can b
 | x | any_match(predicate: Predicate) | bool                        | instance | Returns whether any elements of this stream match the provided predicate                |
 | x | builder()                       | StreamBuilder               | static   | Returns a builder for a Stream                                                          |
 | x | collect(collector: Callable)    | Union[List, AsyncGenerator] | instance | Performs a mutable reduction operation on the elements of this stream using a Collector |
+| x | collect(supplier: Supplier, accumulator: BiConsumer, combiner: BiConsumer) | R | instance | Performs a mutable reduction on the elements of this stream: `supplier` creates the result container, `accumulator` folds each element into it. `combiner` is accepted for signature parity but not invoked - snakestream's `collect()` always folds over one composed stream, sequential or parallel, with no independent partitions to merge. |
 | x | concat(a: Stream, b: Stream)    | Stream                      | static   | Creates a lazily concatenated stream whose elements are all the elements of the first stream followed by all the elements of the second stream |
 | x | count()                         | int                         | instance | Returns the count of elements in this stream                                            |
 | x | distinct()                      | Stream                      | instance | Returns a stream consisting of the distinct elements (using ==) of this stream          |
@@ -143,7 +144,6 @@ BaseStream:
 - unordered()
 
 Stream:
-- collect(Supplier<R> supplier, BiConsumer<R,? super T> accumulator, BiConsumer<R,R> combiner)
 - reduce(T identity, BinaryOperator<T> accumulator, BinaryOperator<T> combiner) // have done the one without a combiner
 - toArray()
 - toArray(IntFunction<A[]> generator)
