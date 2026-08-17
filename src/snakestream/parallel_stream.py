@@ -23,8 +23,7 @@ async def _guarded(source: AsyncGenerator, lock: asyncio.Lock) -> AsyncGenerator
 
 class ParallelStream(Stream[T]):
     def __init__(self, source: Any, close_handlers: list[CloseHandler] | None = None) -> None:
-        super().__init__(source)
-        self._close_handlers = close_handlers or []
+        super().__init__(source, close_handlers)
 
     def _compose(self) -> AsyncGenerator:
         return self._parallel(self._chain, self._stream)
