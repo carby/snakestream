@@ -109,7 +109,7 @@ In snakestream this has been omitted since python has generators and those can b
 |   | ~~flat_map_to_int(flat_mapper: FlatMapper)~~ | Stream       | instance | Not relevant, same reasoning as `flat_map_to_double`. | 
 |   | ~~flat_map_to_long(flat_mapper: FlatMapper)~~ | Stream      | instance | Not relevant. The interpreter automatically handles larger than 32bit numbers. | 
 | x | for_each(consumer: Callable[T]) | Any                         | instance | Performs an action for each element of this stream | 
-|   | _for_each_ordered(consumer: Callable[T])_ | Any           | instance | Not implemented yet, depends on the implementaton of `ordered()` | 
+| x | for_each_ordered(consumer: Callable[T]) | Any               | instance | Performs an action for each element of this stream, in the encounter order of the stream if the stream has a defined encounter order | 
 |   | ~~generate(supplier: Callable[T])~~           | Stream        | static   | Not relevant. We can send in generators directly to `Stream.of()` already|
 | x | iterate(seed: T, nxt: Callable[[T], T]) | Stream | static | Returns an infinite sequential ordered Stream produced by iterative application of a function f to an initial element seed, producing a Stream consisting of seed, f(seed), f(f(seed)), etc. |
 | x | limit(max_size: int)                    | Stream | instance | Returns a stream consisting of the elements of this stream, truncated to be no longer than max_size() in length. |
@@ -144,7 +144,6 @@ BaseStream:
 
 Stream:
 - collect(Supplier<R> supplier, BiConsumer<R,? super T> accumulator, BiConsumer<R,R> combiner)
-- forEachOrdered(Consumer<? super T> action)
 - reduce(T identity, BinaryOperator<T> accumulator, BinaryOperator<T> combiner) // have done the one without a combiner
 - toArray()
 - toArray(IntFunction<A[]> generator)

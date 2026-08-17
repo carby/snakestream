@@ -248,6 +248,11 @@ class Stream(BaseStream[T]):
             await _maybe_await(consumer, n)
         return None
 
+    async def for_each_ordered(self, consumer: Callable[[T], Any]) -> None:
+        async for n in self._sequential(self._chain[:], self._stream):
+            await _maybe_await(consumer, n)
+        return None
+
     """
     async def find_first(self) -> Optional[Any]:
         # until we have ordered parallel stream then we

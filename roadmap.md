@@ -15,16 +15,15 @@ an earlier item or on a Next-bucket decision last.
 
 | # | Item | Why this position |
 |---|---|---|
-| 1 | **`Stream.forEachOrdered(action)`** — ordered variant of `for_each()`, meaningful once parallel streams can guarantee order. | `unordered()`/ordering semantics now decided (see Done); no remaining blockers, no dependents. |
-| 2 | **`Stream.collect(supplier, accumulator, combiner)`** — Java's 3-arg mutable-reduction `collect()`, distinct from snakestream's existing single-arg `collect(collector)`. | No blockers; independent Java-parity addition, no currently-known consumer need. |
-| 3 | **`BaseStream.spliterator()`** — Java's parallel-decomposition iterator. | No hard blocker, but needs a decision first: Java-specific mechanism for splitting work across threads, and snakestream's `ParallelStream` already parallelizes differently (racing `asyncio` tasks over a shared generator), so this may end up intentionally-skipped rather than implemented. |
-| 4 | **`Stream.toArray()`** / **`Stream.toArray(generator)`** — materialize the stream into an array-like structure. | No hard blocker, but needs a decision first: no Java array/generic-array-factory equivalent in Python, so what the Pythonic form even is (a `list`? redundant with `collect(to_list)`?) has to be settled before implementing. |
-| 5 | **`Stream.reduce(identity, accumulator, combiner)`** — 3-arg reduce with a combiner for parallel merging, distinct from the already-implemented 2-arg `reduce(identity, accumulator)`. | Blocked on the **Next**-bucket `.parallel()`/`PROCESSES` semantics decision — the combiner only matters once parallel reduction is well-defined. Last in line. |
-| 6 | **`joining()` / `joining(delimiter)` / `joining(delimiter, prefix, suffix)`** — string-concatenation collector, `collector.py`'s equivalent of `Collectors.joining`. | No blockers, no dependents; simplest of the new collectors (a single accumulating string, no map/set/grouping structure), and self-contained like `to_list`/`to_generator`. |
-| 7 | **`counting()`, `summingInt`/`summingLong`/`summingDouble()`, `averagingInt`/`averagingLong`/`averagingDouble()`** — simple reducing collectors, `collector.py`'s equivalent of the matching `Collectors` statics. | No blockers, no dependents; each is a small fold over the composed generator (count / running sum / running mean), no shared new machinery beyond what `to_list` already establishes as the collector shape. |
-| 8 | **`minBy(comparator)`, `maxBy(comparator)`, `reducing(...)`** — collector wrappers around already-implemented `Stream.min`/`max`/`reduce` logic, exposed as `collect()`-compatible collectors rather than terminal-op methods. | No blockers; mechanically re-exposes existing `_min_max`/reduce internals (`stream.py`) as collectors, so it's additive glue rather than new reduction logic. Positioned after the simpler collectors (#6–#7) since it's more directly tied to internals a reviewer will want fresh context on. |
-| 9 | **`toMap(keyMapper, valueMapper, [mergeFunction])`, `toSet()`** — structural collectors materializing into a `dict`/`set` instead of `to_list`'s `list`. | No hard blocker, but the key/value-mapper and duplicate-key-merge conventions decided here are exactly what #10 (`groupingBy`) needs to reuse for its own key mapper — do this before its dependent. |
-| 10 | **`groupingBy(classifier, [downstream])`, `partitioningBy(predicate, [downstream])`** — grouping collectors, `collector.py`'s equivalent of `Collectors.groupingBy`/`partitioningBy`, including support for a downstream collector (e.g. `groupingBy(classifier, counting())`). | Depends on #9 — `groupingBy`'s classifier is the same key-mapper shape `toMap` settles, and downstream-collector composition is easiest to design once at least one other collector (to compose with) already exists. Last of the new collectors. |
+| 1 | **`Stream.collect(supplier, accumulator, combiner)`** — Java's 3-arg mutable-reduction `collect()`, distinct from snakestream's existing single-arg `collect(collector)`. | No blockers; independent Java-parity addition, no currently-known consumer need. |
+| 2 | **`BaseStream.spliterator()`** — Java's parallel-decomposition iterator. | No hard blocker, but needs a decision first: Java-specific mechanism for splitting work across threads, and snakestream's `ParallelStream` already parallelizes differently (racing `asyncio` tasks over a shared generator), so this may end up intentionally-skipped rather than implemented. |
+| 3 | **`Stream.toArray()`** / **`Stream.toArray(generator)`** — materialize the stream into an array-like structure. | No hard blocker, but needs a decision first: no Java array/generic-array-factory equivalent in Python, so what the Pythonic form even is (a `list`? redundant with `collect(to_list)`?) has to be settled before implementing. |
+| 4 | **`Stream.reduce(identity, accumulator, combiner)`** — 3-arg reduce with a combiner for parallel merging, distinct from the already-implemented 2-arg `reduce(identity, accumulator)`. | Blocked on the **Next**-bucket `.parallel()`/`PROCESSES` semantics decision — the combiner only matters once parallel reduction is well-defined. Last in line. |
+| 5 | **`joining()` / `joining(delimiter)` / `joining(delimiter, prefix, suffix)`** — string-concatenation collector, `collector.py`'s equivalent of `Collectors.joining`. | No blockers, no dependents; simplest of the new collectors (a single accumulating string, no map/set/grouping structure), and self-contained like `to_list`/`to_generator`. |
+| 6 | **`counting()`, `summingInt`/`summingLong`/`summingDouble()`, `averagingInt`/`averagingLong`/`averagingDouble()`** — simple reducing collectors, `collector.py`'s equivalent of the matching `Collectors` statics. | No blockers, no dependents; each is a small fold over the composed generator (count / running sum / running mean), no shared new machinery beyond what `to_list` already establishes as the collector shape. |
+| 7 | **`minBy(comparator)`, `maxBy(comparator)`, `reducing(...)`** — collector wrappers around already-implemented `Stream.min`/`max`/`reduce` logic, exposed as `collect()`-compatible collectors rather than terminal-op methods. | No blockers; mechanically re-exposes existing `_min_max`/reduce internals (`stream.py`) as collectors, so it's additive glue rather than new reduction logic. Positioned after the simpler collectors (#5–#6) since it's more directly tied to internals a reviewer will want fresh context on. |
+| 8 | **`toMap(keyMapper, valueMapper, [mergeFunction])`, `toSet()`** — structural collectors materializing into a `dict`/`set` instead of `to_list`'s `list`. | No hard blocker, but the key/value-mapper and duplicate-key-merge conventions decided here are exactly what #9 (`groupingBy`) needs to reuse for its own key mapper — do this before its dependent. |
+| 9 | **`groupingBy(classifier, [downstream])`, `partitioningBy(predicate, [downstream])`** — grouping collectors, `collector.py`'s equivalent of `Collectors.groupingBy`/`partitioningBy`, including support for a downstream collector (e.g. `groupingBy(classifier, counting())`). | Depends on #8 — `groupingBy`'s classifier is the same key-mapper shape `toMap` settles, and downstream-collector composition is easiest to design once at least one other collector (to compose with) already exists. Last of the new collectors. |
 
 ## Next
 
@@ -48,6 +47,30 @@ core semantic.
 
 ## Done
 
+- Added `Stream.for_each_ordered(consumer)` (`stream.py`) — an ordered variant
+  of `for_each()`, invoking `consumer` in the stream's encounter order even
+  when called on a `ParallelStream` instance, matching Java's
+  `Stream.forEachOrdered()`. `for_each()` drives consumption via
+  `self._compose()`, which `ParallelStream` overrides to fan the chain out
+  across racing branches with no order guarantee; `for_each_ordered()`
+  instead drives consumption via `self._sequential(self._chain[:],
+  self._stream)` directly — the same building block `Stream._compose()`
+  already uses — so it gets a strictly ordered, single-flight pull through
+  the chain regardless of which subclass `self` is. This intentionally
+  forfeits `.parallel()`'s concurrency for that one terminal call, the same
+  trade-off Java's own `forEachOrdered()` makes on a parallel stream. The
+  existing `BaseStream._ordered`/`unordered()` flag (see below) is not
+  consumed here — every snakestream source has a real underlying order, and
+  Java's own `forEachOrdered()` Javadoc ties the "if the stream has one"
+  caveat to streams with no defined encounter order to begin with, which
+  `unordered()` doesn't currently model. `for_each()`'s existing behavior is
+  unchanged. Added `tests/test_for_each_ordered.py`: ordered/async-consumer
+  coverage on sequential `Stream`, plus a same-chain-and-timing pair of
+  parallel tests using a jumbled source and a positional (not value-based)
+  per-element delay in a `.map()` step — one showing plain `for_each()` on a
+  `ParallelStream` can come out scrambled under that reordering pressure, the
+  other showing `for_each_ordered()` on the identical chain stays in source
+  order. See `openspec/changes/add-stream-foreach-ordered`.
 - Removed duplicate `_close_handlers` initialization. `BaseStream.__init__`
   (`base_stream.py`) always set `self._close_handlers = []`, but both
   `Stream.__init__` (`stream.py`) and `ParallelStream.__init__`
