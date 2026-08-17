@@ -56,9 +56,17 @@ Once we reach some sort of feature parity with Java 8 then maybe we move on to i
 
 - Create a stream from a List, Generator, AsyncGenerator, Itertor, AsyncIterator or just an object
 - Process your stream with both synchronous or asynchronous functions.
-- Switch between parallel and sequential mode
+- Switch between parallel and sequential mode ([not true CPU parallelism yet](#about-parallel))
 - [Autoclose](#auto-close) streams with `contextlib`
 - Generate indefinite streams [simpler than in Java](#the-generate-function)
+
+### About `.parallel()`
+
+Unlike Java's `parallelStream()`, snakestream's `.parallel()` does not run on separate OS threads or processes. It races `asyncio` tasks over a shared generator, which speeds up I/O-bound work (e.g. a mapper that awaits a network call) but is still GIL-bound and offers no real speedup for CPU-bound work.
+
+We know `.concurrent()`/`CONCURRENCY` would be the more idiomatic name for what this actually does, but we're deliberately keeping the `.parallel()`/`PROCESSES` naming so that if real (multiprocess) parallelism is implemented later, it doesn't require a second breaking rename.
+
+Real parallelism is blocked on a genuine technical problem, not just unscoped effort: a process-pool-backed implementation would need to serialize every mapper/predicate/comparator/accumulator/combiner across the process boundary, and stdlib `pickle` can't serialize lambdas or local closures — the idiomatic way to call every operation in this library. It also can't pickle generators or async generators at all, so the stream's source can never be shipped to a worker whole. And even fully picklable, purely synchronous callables don't finish the job, since an async user callable would require each worker process to bootstrap its own event loop rather than just calling a function. Until there's both a concrete use case for true parallelism and an answer to that serialization problem, `.parallel()` will keep meaning "concurrent," not "parallel." See `roadmap.md`'s **Later** section for details.
 
 ### Auto Close
 
