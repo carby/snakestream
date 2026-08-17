@@ -5,11 +5,21 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast, overload
 from collections.abc import AsyncGenerator, Callable, Coroutine
 
 from snakestream.callable_dispatch import _maybe_await
-from snakestream.type import NumberMapper
+from snakestream.sort import check_comparator_result_type
+from snakestream.type import (
+    R,
+    T,
+    BinaryOperator,
+    Comparator,
+    Mapper,
+    NumberMapper,
+)
+
+_UNSET = object()
 
 
 async def to_generator(composition: AsyncGenerator) -> AsyncGenerator[Any, None]:
@@ -129,3 +139,79 @@ def averaging_double(
         return total / count if count else 0.0
 
     return _average
+
+
+async def _extremum(composition: AsyncGenerator[T, None], comparator: Comparator[T], asc: bool) -> T | None:
+    async def compare(a: T, b: T) -> int:
+        sign = await _maybe_await(comparator, a, b)
+        check_comparator_result_type(sign)
+        return sign
+
+    found = cast(T, _UNSET)
+    async for n in composition:
+        if found is _UNSET:
+            found = n
+            continue
+
+        # comparator(n, found): negative if n orders before found, positive
+        # if after. found (the earlier element) is kept on a tie.
+        sign = await compare(n, found)
+        is_new_extreme = sign < 0 if asc else sign > 0
+        if is_new_extreme:
+            found = n
+    return None if found is _UNSET else found
+
+
+def min_by(comparator: Comparator[T]) -> Callable[[AsyncGenerator[T, None]], Coroutine[Any, Any, T | None]]:
+    async def _min(composition: AsyncGenerator[T, None]) -> T | None:
+        return await _extremum(composition, comparator, asc=True)
+
+    return _min
+
+
+def max_by(comparator: Comparator[T]) -> Callable[[AsyncGenerator[T, None]], Coroutine[Any, Any, T | None]]:
+    async def _max(composition: AsyncGenerator[T, None]) -> T | None:
+        return await _extremum(composition, comparator, asc=False)
+
+    return _max
+
+
+@overload
+def reducing(
+    binary_operator: BinaryOperator[T],
+) -> Callable[[AsyncGenerator[T, None]], Coroutine[Any, Any, T | None]]: ...  # pragma: no cover
+
+
+@overload
+def reducing(
+    identity: T, binary_operator: BinaryOperator[T]
+) -> Callable[[AsyncGenerator[T, None]], Coroutine[Any, Any, T]]: ...  # pragma: no cover
+
+
+@overload
+def reducing(
+    identity: R, mapper: Mapper[T, R], binary_operator: BinaryOperator[R]
+) -> Callable[[AsyncGenerator[T, None]], Coroutine[Any, Any, R]]: ...  # pragma: no cover
+
+
+def reducing(identity: Any = _UNSET, mapper: Any = _UNSET, binary_operator: Any = _UNSET) -> Any:
+    if mapper is _UNSET:
+        # Called as reducing(binary_operator): the single positional arg is
+        # the fold operator, with no identity and no element mapper.
+        identity, mapper, binary_operator = _UNSET, None, identity
+    elif binary_operator is _UNSET:
+        # Called as reducing(identity, binary_operator): the second
+        # positional arg is the fold operator, with no element mapper.
+        mapper, binary_operator = None, mapper
+
+    async def _reduce(composition: AsyncGenerator[Any, None]) -> Any:
+        acc = identity
+        async for n in composition:
+            value = n if mapper is None else await _maybe_await(mapper, n)
+            if acc is _UNSET:
+                acc = value
+                continue
+            acc = await _maybe_await(binary_operator, acc, value)
+        return None if acc is _UNSET else acc
+
+    return _reduce

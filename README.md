@@ -149,6 +149,9 @@ In snakestream this has been omitted since python has generators and those can b
 | x | averaging_int(mapper) | Collector | factory | Returns a collector that maps each element via `mapper` and returns the arithmetic mean as a `float` (`0.0` for an empty stream). |
 | x | averaging_long(mapper) | Collector | factory | Same as `averaging_int`; kept as a separate name for parity with Java's `averagingLong`. |
 | x | averaging_double(mapper) | Collector | factory | Same as `averaging_int`; kept as a separate name for parity with Java's `averagingDouble`. |
+| x | min_by(comparator) | Collector | factory | Returns a collector, for use with `collect()`, that selects the smallest element per the 3-way-int `comparator`, `None` for an empty stream, first-of-tied-elements wins. Wraps `Stream.min()`'s existing logic. |
+| x | max_by(comparator) | Collector | factory | Same as `min_by`, but selects the largest element. Wraps `Stream.max()`'s existing logic. |
+| x | reducing(binary_operator) / reducing(identity, binary_operator) / reducing(identity, mapper, binary_operator) | Collector | factory | Returns a collector that folds the stream via `binary_operator`, matching Java's three `Collectors.reducing` overloads: no-identity (seeds from the first element, `None` for an empty stream), with `identity` (returns `identity` unchanged for an empty stream), and with `identity` + `mapper` (maps each element before folding). Mirrors `Stream.reduce()`'s existing semantics. |
 
 ## Migration
 These are a list of the known breaking changes. Until release 1.0.0 focus will be on implementing features and changing things that does not align with how streams work in java.
