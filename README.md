@@ -142,6 +142,13 @@ In snakestream this has been omitted since python has generators and those can b
 | done | function                                              | returns   | type    | summary                                                                 |
 | ---- | ------------------------------------------------------ | --------- | ------- | ------------------------------------------------------------------------ |
 | x | joining(delimiter: str = "", prefix: str = "", suffix: str = "") | Collector | factory | Returns a collector, for use with `collect()`, that concatenates the stream's `str` elements, separated by `delimiter` and wrapped in `prefix`/`suffix`. |
+| x | counting() | Collector | factory | Returns a collector, for use with `collect()`, that counts the stream's elements as an `int`. |
+| x | summing_int(mapper) | Collector | factory | Returns a collector that maps each element via `mapper` and sums the results as an `int`. |
+| x | summing_long(mapper) | Collector | factory | Same as `summing_int`; kept as a separate name for parity with Java's `summingLong`, since Python has no `int`/`long` distinction. |
+| x | summing_double(mapper) | Collector | factory | Returns a collector that maps each element via `mapper` and sums the results as a `float`. |
+| x | averaging_int(mapper) | Collector | factory | Returns a collector that maps each element via `mapper` and returns the arithmetic mean as a `float` (`0.0` for an empty stream). |
+| x | averaging_long(mapper) | Collector | factory | Same as `averaging_int`; kept as a separate name for parity with Java's `averagingLong`. |
+| x | averaging_double(mapper) | Collector | factory | Same as `averaging_int`; kept as a separate name for parity with Java's `averagingDouble`. |
 
 ## Migration
 These are a list of the known breaking changes. Until release 1.0.0 focus will be on implementing features and changing things that does not align with how streams work in java.
