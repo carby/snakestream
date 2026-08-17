@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from typing import Any
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable, Coroutine
 
 
 async def to_generator(composition: AsyncGenerator) -> AsyncGenerator[Any, None]:
@@ -19,3 +19,15 @@ async def to_list(composition: AsyncGenerator) -> list[Any]:
     async for n in composition:
         ret.append(n)
     return ret
+
+
+def joining(
+    delimiter: str = "", prefix: str = "", suffix: str = ""
+) -> Callable[[AsyncGenerator[str, None]], Coroutine[Any, Any, str]]:
+    async def _join(composition: AsyncGenerator[str, None]) -> str:
+        parts = []
+        async for n in composition:
+            parts.append(n)
+        return prefix + delimiter.join(parts) + suffix
+
+    return _join
