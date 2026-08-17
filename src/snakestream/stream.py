@@ -6,7 +6,7 @@ from collections.abc import AsyncGenerator, Callable, Coroutine, Generator
 
 from snakestream.base_stream import BaseStream
 from snakestream.callable_dispatch import _maybe_await
-from snakestream.collector import to_generator
+from snakestream.collector import to_generator, to_list
 from snakestream.exception import StreamBuildException
 from snakestream.sort import check_comparator_result_type, merge_sort
 from snakestream.type import (
@@ -280,6 +280,9 @@ class Stream(BaseStream[T]):
         async for n in self._sequential(self._chain[:], self._stream):
             await _maybe_await(consumer, n)
         return None
+
+    async def to_array(self) -> list[T]:
+        return await self.collect(to_list)
 
     """
     async def find_first(self) -> Optional[Any]:
