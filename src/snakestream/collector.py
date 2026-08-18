@@ -17,6 +17,7 @@ from snakestream.type import (
     Comparator,
     Mapper,
     NumberMapper,
+    Predicate,
 )
 
 _UNSET = object()
@@ -245,3 +246,35 @@ def to_set() -> Callable[[AsyncGenerator[T, None]], Coroutine[Any, Any, set[T]]]
         return result
 
     return _to_set
+
+
+async def _generator_of(items: list[T]) -> AsyncGenerator[T, None]:
+    for item in items:
+        yield item
+
+
+def grouping_by(
+    classifier: Mapper[T, R],
+    downstream: Callable[[AsyncGenerator[T, None]], Coroutine[Any, Any, Any]] = to_list,
+) -> Callable[[AsyncGenerator[T, None]], Coroutine[Any, Any, dict[R, Any]]]:
+    async def _grouping_by(composition: AsyncGenerator[T, None]) -> dict[R, Any]:
+        groups: dict[R, list[T]] = {}
+        async for n in composition:
+            key = await _maybe_await(classifier, n)
+            groups.setdefault(key, []).append(n)
+        return {key: await downstream(_generator_of(items)) for key, items in groups.items()}
+
+    return _grouping_by
+
+
+def partitioning_by(
+    predicate: Predicate[T],
+    downstream: Callable[[AsyncGenerator[T, None]], Coroutine[Any, Any, Any]] = to_list,
+) -> Callable[[AsyncGenerator[T, None]], Coroutine[Any, Any, dict[bool, Any]]]:
+    async def _partitioning_by(composition: AsyncGenerator[T, None]) -> dict[bool, Any]:
+        partitions: dict[bool, list[T]] = {True: [], False: []}
+        async for n in composition:
+            partitions[bool(await _maybe_await(predicate, n))].append(n)
+        return {key: await downstream(_generator_of(items)) for key, items in partitions.items()}
+
+    return _partitioning_by
