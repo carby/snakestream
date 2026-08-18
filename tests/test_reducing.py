@@ -104,3 +104,31 @@ async def test_reducing_no_identity_async_operator_is_awaited() -> None:
 
     # then
     assert result == 10
+
+
+@pytest.mark.asyncio
+async def test_reducing_sync_mapper_with_async_binary_operator() -> None:
+    """mapper and binary_operator are classified independently."""
+
+    async def async_add(a: int, b: int) -> int:
+        await asyncio.sleep(0.01)
+        return a + b
+
+    # when
+    result = await Stream.of(["a", "bb", "ccc"]).collect(reducing(0, len, async_add))
+
+    # then
+    assert result == 6
+
+
+@pytest.mark.asyncio
+async def test_reducing_async_mapper_with_sync_binary_operator() -> None:
+    async def async_len(s: str) -> int:
+        await asyncio.sleep(0.01)
+        return len(s)
+
+    # when
+    result = await Stream.of(["a", "bb", "ccc"]).collect(reducing(0, async_len, lambda a, b: a + b))
+
+    # then
+    assert result == 6
