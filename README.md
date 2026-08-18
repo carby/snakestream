@@ -152,6 +152,8 @@ In snakestream this has been omitted since python has generators and those can b
 | x | min_by(comparator) | Collector | factory | Returns a collector, for use with `collect()`, that selects the smallest element per the 3-way-int `comparator`, `None` for an empty stream, first-of-tied-elements wins. Wraps `Stream.min()`'s existing logic. |
 | x | max_by(comparator) | Collector | factory | Same as `min_by`, but selects the largest element. Wraps `Stream.max()`'s existing logic. |
 | x | reducing(binary_operator) / reducing(identity, binary_operator) / reducing(identity, mapper, binary_operator) | Collector | factory | Returns a collector that folds the stream via `binary_operator`, matching Java's three `Collectors.reducing` overloads: no-identity (seeds from the first element, `None` for an empty stream), with `identity` (returns `identity` unchanged for an empty stream), and with `identity` + `mapper` (maps each element before folding). Mirrors `Stream.reduce()`'s existing semantics. |
+| x | to_map(key_mapper, value_mapper, merge_function=None) | Collector | factory | Returns a collector, for use with `collect()`, that builds a `dict` from `key_mapper`/`value_mapper` applied to each element. Raises `ValueError` on a duplicate key unless `merge_function` is given, in which case the colliding values are resolved via `merge_function(existing, new)`. |
+| x | to_set() | Collector | factory | Returns a collector, for use with `collect()`, that builds a `set` from the stream's elements. |
 
 ## Migration
 These are a list of the known breaking changes. Until release 1.0.0 focus will be on implementing features and changing things that does not align with how streams work in java.

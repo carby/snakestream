@@ -215,3 +215,33 @@ def reducing(identity: Any = _UNSET, mapper: Any = _UNSET, binary_operator: Any 
         return None if acc is _UNSET else acc
 
     return _reduce
+
+
+def to_map(
+    key_mapper: Mapper[T, R],
+    value_mapper: Mapper[T, Any],
+    merge_function: BinaryOperator[Any] | None = None,
+) -> Callable[[AsyncGenerator[T, None]], Coroutine[Any, Any, dict[R, Any]]]:
+    async def _to_map(composition: AsyncGenerator[T, None]) -> dict[R, Any]:
+        result: dict[R, Any] = {}
+        async for n in composition:
+            key = await _maybe_await(key_mapper, n)
+            value = await _maybe_await(value_mapper, n)
+            if key in result:
+                if merge_function is None:
+                    raise ValueError(f"Duplicate key: {key!r}")
+                value = await _maybe_await(merge_function, result[key], value)
+            result[key] = value
+        return result
+
+    return _to_map
+
+
+def to_set() -> Callable[[AsyncGenerator[T, None]], Coroutine[Any, Any, set[T]]]:
+    async def _to_set(composition: AsyncGenerator[T, None]) -> set[T]:
+        result: set[T] = set()
+        async for n in composition:
+            result.add(n)
+        return result
+
+    return _to_set
