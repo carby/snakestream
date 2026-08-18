@@ -13,15 +13,19 @@ the design work.
 Ordered by dependency — items with no blockers first, items that depend on
 an earlier item or on a Next-bucket decision last.
 
-All six items below came out of a code-quality read of `src/` immediately
-after the Sink-chain redesign landed (2026-08-18). The redesign shipped its
-stated scope, but left the codebase half-converted: the intermediate ops moved
-to the push protocol, the terminals and collectors did not, and the op/sink
-pair convention it introduced has no type backing it. These are the cleanup.
+These came out of a code-quality read of `src/` immediately after the
+Sink-chain redesign landed (2026-08-18). The redesign shipped its stated scope,
+but left the codebase half-converted: the intermediate ops moved to the push
+protocol, the terminals and collectors did not, and the op/sink pair convention
+it introduced has no type backing it. These are the cleanup.
+
+A seventh item — replacing the hand-copied async-dispatch pattern with a
+`CallSite` object — was proposed, measured, and rejected on the evidence; see
+**Done** below. The duplication it targeted is now a documented,
+deliberately-accepted cost rather than an open item.
 
 | Item | Why now |
 |---|---|
-| **Replace the hand-copied async-dispatch pattern with one `CallSite` object** in `callable_dispatch.py`. The module currently documents a 6-line `is_async`/`checked`/`isawaitable` shape as a comment (`callable_dispatch.py:18-40`) and then every call site retypes it by hand — 9 sites in `stream.py` (`_FilterSink.accept`, `_MapSink.accept`, `_PeekSink.accept`, `_collect_mutable`, `reduce`, `for_each`, `for_each_ordered`, `_min_max`, `_match`) plus ~10 more in `collector.py`. `_classify_step` was added as a partial escape hatch but returns a 3-tuple the caller must unpack and re-await, which reads worse than the inline version it replaces. Fold both into a small class holding `(fn, is_async, checked)` with an `async __call__` that does the classify-and-await, so `_FilterSink.accept` becomes `if await self._predicate(element): await self.downstream.accept(element)`. | A documented pattern that must be hand-copied is a missing abstraction, and this one is copied ~26 times. Same one-branch-per-element cost, so no perf regression against the 2.6x win the `optimize-callable-dispatch` change bought. It also enforces by construction the per-composition lifetime rule that comment currently has to warn about in prose ("never in the enclosing function, or classification leaks across compositions/branches") — you build the `CallSite` exactly where you'd have built the `is_async`/`checked` pair. Every sink drops two `__init__` lines and its `cast(...)`, and the mccabe pressure in `to_map`/`reducing` that motivated `_classify_step` disappears, so `_classify_step` can be deleted rather than kept as a second shape. No blockers; mechanical and behavior-preserving, and it shrinks every item below it. |
 | **Introduce an `Op` ABC** (`link(downstream) -> Sink`, plus a `make_shared_state()` defaulting to `None`) and type the chain against it. Today the op half of the op/sink convention exists only as convention: `base_stream.py` has `_chain: list[Any]`, `_derive(op: Any)`, `_sequential(intermediaries: list[Any], ...)`, and `parallel_stream.py:36` discovers shared state with `getattr(op, "make_shared_state", None)`. | The Sink-chain redesign defined `Sink`/`IntermediateSink`/`TerminalSink` as real ABCs in `sink.py` but never gave the op side the same treatment, so half the protocol it introduced is untyped. Turning the `getattr` sniff into a plain method call is the visible payoff; the larger one is that `ty` (already gated in CI on the 3.14 leg) currently can't see anything about the chain. No blockers, and it's a precondition for the next item. |
 | **Collapse the seven near-identical `*Op` classes** in `stream.py` (`_FilterOp`, `_MapOp`, `_PeekOp`, `_SortedOp`, `_FlatMapOp`, `_LimitOp`, `_SkipOp`) — each is the same three lines of "hold the ctor args, hand them to the sink" — onto a shared base that stores `*args` and forwards them to a `_sink_cls`. In the same pass, give the three stateful sinks a `StatefulSink` base: `self._x = state_map[self._op] if self._op in state_map else <default>` appears verbatim at `stream.py:191`, `218`, and `257` and is just `state_map.get(self._op, default)`. Also replace `_LimitSink._count: list[int]` and `_SkipSink._skipped: list[int]` — one-element lists used as mutable boxes — with a small named counter type. | Depends on the `Op` ABC above. The stateful three still need to pass `self` as their state key so they stay explicit, but the other four collapse to a class attribute each. The one-element-list boxes matter beyond taste: `_LimitSink.accept`'s reserve-before-await race comment (`stream.py:225-231`) is the subtlest code in the file and `self._count[0] >= self._max_size` is the wrong notation to read it in. |
 | **Split `stream.py`'s op/sink definitions into `ops.py`.** Lines 46-276 are the eight op/sink pairs; lines 278-537 are the public `Stream` API. | 537 lines of two unrelated concerns, and the file someone opens looking for the public surface makes them scroll past the whole execution layer first. Cheap once the item above has shrunk the op half. Sequenced after it so the move is a move and not a move-plus-rewrite. |
@@ -56,6 +60,61 @@ core semantic.
 
 ## Done
 
+- **Investigated and rejected** replacing `callable_dispatch.py`'s hand-copied
+  async-dispatch pattern with a `CallSite` object. The pattern is genuinely
+  duplicated — `callable_dispatch.py` documents a 6-line shape as a 40-line
+  comment and 24 per-element sites across `stream.py`, `collector.py` and
+  `sort.py` retype it by hand, with `_classify_step` existing only to relieve
+  mccabe pressure in `to_map`/`reducing` and `sort.py` carrying the same state
+  as a positionally-indexed `state = [is_async, checked]` list. The proposal
+  was to wrap each callable in a small object owning that state.
+
+  Killed on measurement, at the benchmark gate the change's own tasks placed
+  after converting a single site. Harness matched the one
+  `optimize-callable-dispatch` and `redesign-pipeline-sink-chain` used (Python
+  3.14.5, 20,000 elements, chain of 8 `.map()` ops, best of 5, three runs per
+  variant); only `_MapSink` was converted, so with 8 `.map()` ops the figures
+  isolate per-site, per-element cost:
+
+  | Variant | ns/element | vs baseline |
+  |---|---|---|
+  | Baseline (inline shape, as shipped) | 1907, 1992, 2162 | — |
+  | Floor (dispatch logic deleted; sync-only, incorrect) | 1826, 1878, 1998 | ~0% |
+  | `CallSite.call()` sync, caller branches on `.is_async` | 2529, 2589, 2840 | **+32%** |
+  | `CallSite` with `async def __call__` | 3399, 3444, 3468 | **+75%** |
+
+  The decisive figure is the floor: deleting the dispatch logic outright buys
+  nothing measurable over the baseline, so the inline five-branch shape costs
+  approximately zero — two attribute loads and two branches the CPU predicts
+  correctly after the first element, with no Python-level call and no
+  allocation. The comparison is therefore not "abstraction vs. cheaper
+  abstraction" but "abstraction vs. free", and both variants pay a
+  Python-level call per element per site that the inline code does not (~180
+  ns/site/element for the coroutine frame, ~70 ns for the bound-method call
+  alone). The design's stated fallback — a two-shape `CallSite` picking a sync
+  fast path in `__init__` — does not help, since the fast path still has to be
+  reached through the call that is itself the cost. `optimize-callable-dispatch`
+  bought 2.6x by hoisting exactly these branches out of the per-element path;
+  the two variants give back roughly half and roughly a fifth of that.
+
+  **Consequence:** the duplication is now a deliberately-accepted cost with
+  numbers behind it rather than an open cleanup item, and should not be
+  re-proposed without new evidence. Anyone adding a 25th dispatch site should
+  still copy the canonical-shape comment in `callable_dispatch.py` — that
+  comment is load-bearing, not a smell to be refactored away. No code changed;
+  the working tree was reverted to HEAD and the full suite (394 tests) passes
+  unmodified. See `openspec/changes/add-callsite-dispatch` for the proposal,
+  design, and `benchmark-findings.md`.
+
+  **One residual finding worth acting on separately:** the investigation
+  established that per-callable classification independence — `to_map`'s
+  key/value/merge functions and `reducing`'s mapper/binary operator each
+  classifying on their own, so any mixture of sync and async among them works
+  — is real behavior with **no test coverage**. `tests/test_to_map.py` and
+  `tests/test_reducing.py` each cover all-sync and all-async but never a mixed
+  pair. The rejected change's delta spec wrote this up as an ADDED requirement
+  with five scenarios; that requirement and its tests are independent of the
+  `CallSite` refactor and remain worth adding.
 - Redesigned pipeline execution from nested async-generator delegation to a
   push-based `Sink` protocol (`begin(state_map)`/`accept(element)`/`end()`/
   `cancellation_requested()`), replacing the closures-in-`_chain` model. New
