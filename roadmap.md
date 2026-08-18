@@ -103,18 +103,26 @@ core semantic.
   still copy the canonical-shape comment in `callable_dispatch.py` — that
   comment is load-bearing, not a smell to be refactored away. No code changed;
   the working tree was reverted to HEAD and the full suite (394 tests) passes
-  unmodified. See `openspec/changes/add-callsite-dispatch` for the proposal,
+  unmodified. See
+  `openspec/changes/archive/2026-08-18-add-callsite-dispatch` for the proposal,
   design, and `benchmark-findings.md`.
 
-  **One residual finding worth acting on separately:** the investigation
+  **One residual finding was salvaged and acted on.** The investigation
   established that per-callable classification independence — `to_map`'s
   key/value/merge functions and `reducing`'s mapper/binary operator each
   classifying on their own, so any mixture of sync and async among them works
-  — is real behavior with **no test coverage**. `tests/test_to_map.py` and
-  `tests/test_reducing.py` each cover all-sync and all-async but never a mixed
-  pair. The rejected change's delta spec wrote this up as an ADDED requirement
-  with five scenarios; that requirement and its tests are independent of the
-  `CallSite` refactor and remain worth adding.
+  — was real behavior with **no test coverage**: `tests/test_to_map.py` and
+  `tests/test_reducing.py` each covered all-sync and all-async but never a
+  mixed pair. Closed by adding the five mixed-mode tests (sync key + async
+  value, async key + sync value, sync mappers + async merge on a colliding
+  key, sync mapper + async operator, async mapper + sync operator) and
+  promoting the rejected change's drafted delta into the `callable-dispatch`
+  spec as a new **Classification state is per callable** requirement. All five
+  passed on first run — the behavior was already correct, so this is coverage
+  and documentation of existing behavior, not a fix. Written directly to
+  `openspec/specs/callable-dispatch/spec.md` rather than through a change of
+  its own, since the requirement text already existed in the rejected
+  change and would otherwise have been archived away unapplied.
 - Redesigned pipeline execution from nested async-generator delegation to a
   push-based `Sink` protocol (`begin(state_map)`/`accept(element)`/`end()`/
   `cancellation_requested()`), replacing the closures-in-`_chain` model. New
