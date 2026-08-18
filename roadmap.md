@@ -13,9 +13,8 @@ the design work.
 Ordered by dependency — items with no blockers first, items that depend on
 an earlier item or on a Next-bucket decision last.
 
-| # | Item | Why this position |
-|---|---|---|
-| 1 | **Add `sorted()`'s row to README's Stream API table** — `sorted()` has been implemented since before this roadmap existed (`stream.py:191`) but was never given a row in the table; the migration log references it three times, which is what makes the omission easy to miss. | No blockers, doc-only, zero risk. Surfaced 2026-08-18 doing a Java-8-parity cross-reference — the table currently reads as if `sorted()` doesn't exist. |
+Empty — the previous top item (`sorted()`'s README row) is done; see **Done**
+below.
 
 `Stream.reduce(identity, accumulator, combiner)` (3-arg, with a combiner for
 parallel merging) has moved to **Later** below — see the resolved
@@ -46,6 +45,11 @@ core semantic.
 
 ## Done
 
+- Added `sorted()`'s row to README's Stream API table. `sorted()` had been
+  implemented since before this roadmap existed (`stream.py:191`) but was
+  never given a row in the table; the migration log referenced it three
+  times, which is what made the omission easy to miss. Doc-only, no code
+  change.
 - Specialized `callable_dispatch.py`'s dispatch from per-result to
   per-callable: `is_async_callable(fn)` classifies a callable once
   (recognizing a plain `async def` function and a callable object whose
