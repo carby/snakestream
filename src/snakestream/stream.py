@@ -271,12 +271,12 @@ class Stream(BaseStream[T]):
             identity = await _maybe_await(accumulator, identity, n)
         return identity
 
-    async def for_each(self, consumer: Callable[[T], Any]) -> None:
+    async def for_each(self, consumer: Consumer[T]) -> None:
         async for n in self._compose():
             await _maybe_await(consumer, n)
         return None
 
-    async def for_each_ordered(self, consumer: Callable[[T], Any]) -> None:
+    async def for_each_ordered(self, consumer: Consumer[T]) -> None:
         async for n in self._sequential(self._chain[:], self._stream):
             await _maybe_await(consumer, n)
         return None
