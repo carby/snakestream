@@ -27,7 +27,6 @@ one area.
 
 | Item | Why next |
 |---|---|
-| **Decide mutable-builder vs. immutable-pipeline semantics** — every intermediate op (`filter`, `map`, `distinct`, etc.) does `self._chain.append(fn); return self`, mutating the instance rather than returning a new one. Diverges from Java's immutable stream semantics; a `Stream` reference can't be safely reused or forked once chaining starts. | Highest blast radius of any item here — affects every consumer of the chain-of-closures model described in `CLAUDE.md`. Needs an explicit decision (keep and document current behavior vs. change to return-new-instance-per-op) before any code moves, since it's a breaking change either way. |
 | **Redesign pipeline execution from nested async-generator delegation to a push-based (Sink-chain) model** — every intermediate op in `stream.py` (`filter`, `map`, `flat_map`, `sorted`, `peek`, `_DistinctOp`, `_LimitOp`, `_SkipOp`) is implemented as `async def fn(iterable): async for i in iterable: yield ...`, so pulling one element through a chain of *k* ops recurses *k* deep at `__anext__()`/`async for` delegation time — independent of and not fixed by the `_sequential()` build-time rewrite (see Done). A long enough `.map()` chain still hits `RecursionError` on consumption. | Discovered while implementing the `_sequential()` rewrite (see `rewrite-sequential-iterative` in Done), which fixed only the build-time half of that item's stated risk. Needs a design decision first: replacing generator-delegation with a single driving loop that threads each item through all ops via a plain `for op in ops:` loop (à la Java Stream's `Sink` chain) touches every op in `stream.py` plus `parallel_stream.py`'s per-branch consumption — highest blast radius alongside the mutable-builder decision above. |
 | **Redesign `collector.py`'s collectors around a `Collector(supplier, accumulator, combiner, finisher)` shape**, matching Java's `Collector<T,A,R>` interface, instead of today's single monolithic `async def _collect(composition): async for n in composition: ...` closures. | Not actually blocked on real parallelism — `collect(supplier, accumulator, combiner)` already shipped with `combiner` accepted-but-unused for Java signature parity, ahead of any real partitioned execution (see Done), and this could follow the same precedent: build the `Collector` shape now, have `ParallelStream.collect()` ignore `combiner` and fall back to today's serial accumulation, and only wire it up once real per-branch execution exists. Real design cost instead: `grouping_by`/`partitioning_by`'s `downstream` parameter would need to become a `Collector` itself (so its per-key containers, not just final results, can be combined later), which is a breaking signature change to two collectors that just shipped — scope that decision before starting. |
 
@@ -45,6 +44,49 @@ core semantic.
 
 ## Done
 
+- Decided and implemented the mutable-builder vs. immutable-pipeline
+  question (the former top **Next**-bucket item, previously "Decide
+  mutable-builder vs. immutable-pipeline semantics"). Explored three
+  positions during a design session: (A) keep mutate-and-return-self and
+  just document the aliasing risk; (B) copy-on-write with the old
+  reference left silently usable (superficially "forkable," but still a
+  footgun since the underlying `self._stream` is single-pass, so both
+  forks would race it exactly like `ParallelStream` branches do); (C)
+  Java-exact — new instance plus invalidating the old reference on reuse.
+  Landed on a scoped version of (C): every intermediate op (`map`,
+  `filter`, `flat_map`, `sorted`, `distinct`, `peek`, `limit`, `skip`) and
+  both mode switches (`sequential()`, `parallel()`) now return a **new**
+  `Stream`/`ParallelStream` instance via a new `BaseStream._derive()`
+  helper (`base_stream.py`) instead of mutating and returning `self`;
+  using an already-superseded old reference for any further
+  pipeline-building or terminal call now raises a new
+  `IllegalStateException` (`exception.py`), checked via a
+  `self._consumed` flag set only by the ops that build a new instance.
+  Deliberately did **not** go full Java-exact: terminal ops
+  (`collect`, `reduce`, `for_each`, etc.) check `self._consumed` but never
+  set it, so repeating a terminal op on a reference that was never used to
+  build a further instance keeps today's exact behavior (an exhausted
+  source yields an empty result rather than raising) — reversing that
+  would have undone the already-shipped, tested `fix-stream-rerun-state`
+  contract that `pipeline-composition` documents, which was judged a
+  separate, already-settled decision this change shouldn't revisit.
+  `on_close()`/`close()` were kept completely exempt from the new check,
+  matching how Java itself tracks close handlers at the pipeline's source
+  stage rather than per operation, independent of any per-op immutability
+  question. Discovered during implementation: `BaseStream.__init__`'s
+  `self._close_handlers = close_handlers or []` treated an *empty* list as
+  falsy and silently created a new list instead of keeping the passed-in
+  reference — invisible before since intermediate ops never re-invoked the
+  constructor, but every op does now via `_derive()`, breaking
+  close-handler continuity across the very first op called before any
+  `on_close()`. Fixed to `[] if close_handlers is None else close_handlers`.
+  Added `tests/test_pipeline_immutability.py`: new-instance-per-op checks
+  and invalidation-raises checks for all 8 intermediate ops, invalidation
+  checks across all terminal ops and both mode switches, derived-instance
+  usability, the unextended-reference non-regression case, and the
+  `on_close()`/`close()` exemption. Added a new `pipeline-immutability`
+  spec. Updated README's migration log (**BREAKING**). See
+  `openspec/changes/make-stream-ops-immutable`.
 - Implemented `Stream.find_first()` (`stream.py`), matching Java's
   `Stream.findFirst()`. The previous body was a dead
   docstring-commented-out stub — a string literal, never executed — with a
