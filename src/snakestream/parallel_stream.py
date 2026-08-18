@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator
 from snakestream.stream import PROCESSES, Stream
-from snakestream.type import T, CloseHandler
+from snakestream.type import T, CloseHandler, StateMap
 
 
 async def _guarded(source: AsyncGenerator, lock: asyncio.Lock) -> AsyncGenerator:
@@ -29,15 +29,15 @@ class ParallelStream(Stream[T]):
         return self._parallel(self._chain, self._stream)
 
     async def _parallel(
-        self, intermediaries: list[Callable], iterable: AsyncGenerator, processes: int = PROCESSES
+        self, intermediaries: list[Any], iterable: AsyncGenerator, processes: int = PROCESSES
     ) -> AsyncGenerator:
-        state_map: dict[Callable, Any] = {}
-        for fn in intermediaries:
-            make_state = getattr(fn, "make_state", None)
-            if make_state is not None:
-                state_map[fn] = make_state()
+        state_map: StateMap = {}
+        for op in intermediaries:
+            make_shared_state = getattr(op, "make_shared_state", None)
+            if make_shared_state is not None:
+                state_map[op] = make_shared_state()
         lock = asyncio.Lock()
-        async_iterators = [self._sequential(intermediaries[:], _guarded(iterable, lock), state_map) for n in range(processes)]
+        async_iterators = [self._drive(intermediaries[:], _guarded(iterable, lock), state_map) for n in range(processes)]
         tasks: list[asyncio.Task[Any] | None] = [asyncio.ensure_future(n.__anext__()) for n in async_iterators]
 
         try:
@@ -68,6 +68,6 @@ class ParallelStream(Stream[T]):
         self._check_not_consumed()
         if not self.is_ordered():
             return await self.find_any()
-        async for n in self._sequential(self._chain[:], self._stream):
+        async for n in self._drive(self._chain[:], self._stream):
             return n
         return None

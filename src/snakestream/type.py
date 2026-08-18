@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from collections.abc import Awaitable, Callable
 
 if TYPE_CHECKING:
@@ -6,6 +6,10 @@ if TYPE_CHECKING:
 
 T = TypeVar("T")
 R = TypeVar("R")
+
+# Sink protocol: the state passed through begin(), keyed by the originating
+# operation object so a sink can look up its own shared state.
+StateMap = dict[Any, Any]
 
 Predicate = Callable[[T], bool | Awaitable[bool]]
 

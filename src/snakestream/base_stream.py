@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Generic
-from collections.abc import AsyncGenerator, AsyncIterable, Callable
+from collections.abc import AsyncGenerator, AsyncIterable
 
 from snakestream.exception import IllegalStateException
-from snakestream.type import T, CloseHandler
+from snakestream.sink import GeneratorBridgeSink, Sink
+from snakestream.type import T, CloseHandler, StateMap
 
 if TYPE_CHECKING:
     from snakestream.stream import Stream  # pragma: no cover
@@ -27,10 +28,26 @@ def _accept(source: Any) -> AsyncGenerator | None:
     return None
 
 
+class _maybe_aclosing:
+    """Like contextlib.aclosing(), but a no-op on __aexit__ if the wrapped
+    object has no aclose() — some accepted sources (e.g. a bare async
+    iterator implementing only __anext__) don't."""
+
+    def __init__(self, thing: AsyncGenerator) -> None:
+        self._thing = thing
+
+    async def __aenter__(self) -> AsyncGenerator:
+        return self._thing
+
+    async def __aexit__(self, *exc_info: Any) -> None:
+        if hasattr(self._thing, "aclose"):
+            await self._thing.aclose()
+
+
 class BaseStream(Generic[T]):
     def __init__(self, source: Any, close_handlers: list[CloseHandler] | None = None) -> None:
         self._stream: AsyncGenerator[T, None] = _accept(source) or _normalize(source)
-        self._chain: list[Callable] = []
+        self._chain: list[Any] = []
         self._close_handlers: list[CloseHandler] = [] if close_handlers is None else close_handlers
         self._ordered: bool = True
         self._consumed: bool = False
@@ -39,27 +56,44 @@ class BaseStream(Generic[T]):
         if self._consumed:
             raise IllegalStateException("this stream has already been extended into a new instance or terminally consumed")
 
-    def _derive(self, closure: Callable) -> BaseStream[Any]:
+    def _derive(self, op: Any) -> BaseStream[Any]:
         self._check_not_consumed()
         new_stream = type(self)(self._stream, self._close_handlers)
-        new_stream._chain = self._chain + [closure]
+        new_stream._chain = self._chain + [op]
         new_stream._ordered = self._ordered
         self._consumed = True
         return new_stream
 
-    def _sequential(
+    def _sequential(self, intermediaries: list[Any], terminal: Sink[Any]) -> Sink[Any]:
+        sink = terminal
+        for op in reversed(intermediaries):
+            sink = op.link(sink)
+        return sink
+
+    async def _drive(
         self,
-        intermediaries: list[Callable],
-        iterable: AsyncGenerator,
-        state_map: dict[Callable, Any] | None = None,
-    ) -> AsyncGenerator:
-        for fn in intermediaries:
-            state = state_map.get(fn) if state_map is not None else None
-            iterable = fn(iterable, state) if state is not None else fn(iterable)
-        return iterable
+        chain: list[Any],
+        source: AsyncGenerator,
+        state_map: StateMap | None = None,
+    ) -> AsyncGenerator[T, None]:
+        if state_map is None:
+            state_map = {}
+        bridge: GeneratorBridgeSink = GeneratorBridgeSink()
+        head = self._sequential(chain, bridge)
+        async with _maybe_aclosing(source) as src:
+            await head.begin(state_map)
+            async for item in src:
+                await head.accept(item)
+                for out in bridge.drain():
+                    yield out
+                if head.cancellation_requested():
+                    break
+            await head.end()
+            for out in bridge.drain():
+                yield out
 
     def _compose(self) -> AsyncGenerator[T, None]:
-        return self._sequential(self._chain[:], self._stream)
+        return self._drive(self._chain[:], self._stream)
 
     def sequential(self) -> Stream[T]:
         from .stream import Stream
