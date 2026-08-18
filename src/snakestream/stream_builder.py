@@ -18,4 +18,4 @@ class StreamBuilder(Generic[T]):
         self._elements.append(element)
 
     def build(self) -> Stream[T]:
-        return Stream(self._elements)
+        return Stream(list(self._elements))

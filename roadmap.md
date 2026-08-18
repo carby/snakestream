@@ -15,8 +15,7 @@ an earlier item or on a Next-bucket decision last.
 
 | # | Item | Why this position |
 |---|---|---|
-| 1 | **Fix three resource/lifecycle defects found in review**: (a) `flat_map()` (`stream.py`) leaks the current inner stream's async generator when the outer chain short-circuits (e.g. a downstream `.limit()`) — each outer element gets a fresh `flat_mapper(i).collect(to_generator)` generator that's only exhausted, never explicitly `.aclose()`'d, so an early `GeneratorExit` on the outer `fn` abandons whatever inner generator was mid-iteration; reproduced with a tracked async generator whose `finally:` cleanup never runs after `.flat_map(...).limit(1)`; (b) `BaseStream.close()` (`base_stream.py`) iterates `_close_handlers` with a plain `for` loop and no `try`/`except`, so a raising handler stops every handler after it from running, unlike Java's try-with-resources convention (which this API models) of running every closer regardless and reporting suppressed exceptions; reproduced with `on_close(bad).on_close(good)` where `good` never runs after `bad` raises; (c) `StreamBuilder.build()` (`stream_builder.py`) passes `self._elements` into `Stream(...)` by reference rather than snapshotting it, and since `_normalize` iterates lazily at consumption time, `add()` calls made *after* `build()` still leak into the already-built stream — diverges from Java's `Stream.Builder` contract, which throws `IllegalStateException` on `add`/`accept` after `build()`; reproduced with `b.add(1).add(2); s = b.build(); b.add(3)` yielding `[1, 2, 3]` from `s`. | No blockers, no dependents; each is a self-contained fix in a different file ((a) close the inner generator explicitly in `flat_map`'s `fn`, e.g. via `aclosing()`; (b) collect/re-raise or suppress-and-continue in `close()`; (c) snapshot `list(self._elements)` in `build()`, or mark the builder built and raise on further `add()`/`accept()`). No breaking changes expected beyond the bug fixes themselves. |
-| 2 | **Implement `Stream.find_first()`** (`stream.py`), matching Java's `Stream.findFirst()`. The current body is a dead docstring-commented-out stub (`stream.py:287-292`) reading `"""async def find_first(self): ... return await self.find_any()"""` — never executed, since it's a string literal, not code — with a comment claiming it's blocked on "ordered parallel stream." That blocker doesn't actually apply to `Stream`: `Stream._compose()` is already sequential, so `find_first()` there is identical in body to `find_any()` (`stream.py:294-296`) today. The real gap is narrower and `ParallelStream`-specific: `ParallelStream._compose()` (`parallel_stream.py:28-62`) races `PROCESSES` branches via `asyncio.wait(..., FIRST_COMPLETED)`, so first-*arrival* isn't first-*encounter-order* — a naive inherited `find_first()` would silently return the wrong element on a `ParallelStream`. Decided approach: implement `find_first()` on `Stream` with the trivial ordered body, and add a `ParallelStream` override that checks `self.is_ordered()` (`base_stream.py:73-74`) — when true, fall back to a strictly ordered pull (e.g. via `self._sequential(self._chain[:], self._stream)`, the same building block `for_each_ordered()` already uses per the Done entry below) to get correct first-encounter-order semantics; when the stream has been marked `unordered()`, race like `find_any()` since there's no order guarantee to preserve. | No blockers — `is_ordered()`/`unordered()` already exist and are otherwise unconsumed (per the `add-stream-unordered` Done entry, which built the flag specifically to unblock this), and `for_each_ordered()`'s ordered-pull pattern is a direct precedent to reuse for the `ParallelStream` override. Positioned last since it's the one item here likely to need README parity-table and migration-log updates (uncommenting a previously "not implemented yet" row) rather than being a pure internal fix like #1. |
+| 1 | **Implement `Stream.find_first()`** (`stream.py`), matching Java's `Stream.findFirst()`. The current body is a dead docstring-commented-out stub (`stream.py:287-292`) reading `"""async def find_first(self): ... return await self.find_any()"""` — never executed, since it's a string literal, not code — with a comment claiming it's blocked on "ordered parallel stream." That blocker doesn't actually apply to `Stream`: `Stream._compose()` is already sequential, so `find_first()` there is identical in body to `find_any()` (`stream.py:294-296`) today. The real gap is narrower and `ParallelStream`-specific: `ParallelStream._compose()` (`parallel_stream.py:28-62`) races `PROCESSES` branches via `asyncio.wait(..., FIRST_COMPLETED)`, so first-*arrival* isn't first-*encounter-order* — a naive inherited `find_first()` would silently return the wrong element on a `ParallelStream`. Decided approach: implement `find_first()` on `Stream` with the trivial ordered body, and add a `ParallelStream` override that checks `self.is_ordered()` (`base_stream.py:73-74`) — when true, fall back to a strictly ordered pull (e.g. via `self._sequential(self._chain[:], self._stream)`, the same building block `for_each_ordered()` already uses per the Done entry below) to get correct first-encounter-order semantics; when the stream has been marked `unordered()`, race like `find_any()` since there's no order guarantee to preserve. | No blockers — `is_ordered()`/`unordered()` already exist and are otherwise unconsumed (per the `add-stream-unordered` Done entry, which built the flag specifically to unblock this), and `for_each_ordered()`'s ordered-pull pattern is a direct precedent to reuse for the `ParallelStream` override. Positioned here since it's the one item in this bucket likely to need README parity-table and migration-log updates (uncommenting a previously "not implemented yet" row) rather than being a pure internal fix. |
 
 `Stream.reduce(identity, accumulator, combiner)` (3-arg, with a combiner for
 parallel merging) has moved to **Later** below — see the resolved
@@ -47,6 +46,47 @@ core semantic.
 
 ## Done
 
+- Fixed three resource/lifecycle defects found in review: (a) `flat_map()`
+  (`stream.py`) leaked the current inner stream's async generator when the
+  outer chain short-circuited (e.g. a downstream `.limit()`) — each outer
+  element's fresh `flat_mapper(i).collect(to_generator)` generator was only
+  ever exhausted, never explicitly `.aclose()`'d, so an early `GeneratorExit`
+  on the outer chain abandoned whatever inner generator was mid-iteration.
+  Fixed by wrapping that inner generator in `contextlib.aclosing()`
+  (`stream.py`). Discovered during implementation: `aclosing()` alone wasn't
+  sufficient — `collect(to_generator)` returns a second-layer wrapper
+  generator (`collector.py`'s `to_generator()`) whose `async for n in
+  composition: yield n` body didn't propagate `.aclose()` to `composition`
+  either, confirmed with a minimal repro showing a plain `async for` never
+  auto-closes what it iterates. Fixed `to_generator()` to also wrap
+  `composition` in `aclosing()`, guarded by `hasattr(composition, "aclose")`
+  since `to_generator()` also accepts plain `AsyncIterable`/`AsyncIterator`
+  objects without an `aclose` method (e.g. a custom `__anext__`-only
+  iterator, already covered by `tests/test_of.py::test_input_async_iterator`).
+  This closes the gap only as deep as `flat_map()`'s stated repro case (a
+  single-level inner stream); N-layers-deep propagation across every op in
+  `stream.py` remains out of scope, tracked under the **Next**-bucket
+  Sink-chain redesign item. (b) `BaseStream.close()` (`base_stream.py`)
+  iterated `_close_handlers` with a plain `for` loop and no `try`/`except`,
+  so a raising handler stopped every handler after it from running, unlike
+  Java's try-with-resources convention of running every closer regardless.
+  Fixed by calling every handler inside a per-handler `try`/`except
+  Exception`, collecting failures, then raising the first captured exception
+  once every handler has run (not an `ExceptionGroup`, since this project's
+  CI matrix still targets Python 3.10). (c) `StreamBuilder.build()`
+  (`stream_builder.py`) passed `self._elements` into `Stream(...)` by
+  reference rather than snapshotting it, so `add()`/`accept()` calls made
+  *after* `build()` leaked into the already-built stream. Fixed by
+  snapshotting via `list(self._elements)`. Added regression tests in
+  `tests/test_close.py`, `tests/test_flat_map.py`, and a new
+  `tests/test_stream_builder.py`. Added a new `stream-builder` spec
+  capturing `StreamBuilder`'s previously-undocumented `add()`/`accept()`/
+  `build()` contract, and extended `stream-close-handling` and
+  `pipeline-composition` for the `close()`/`flat_map()` fixes. Updated
+  README's migration log: `StreamBuilder.build()`'s snapshot behavior is
+  tracked as **BREAKING** per `CLAUDE.md`'s convention (relying on
+  post-build mutation leaking into a built stream was never a documented
+  feature). See `openspec/changes/fix-resource-lifecycle-defects`.
 - Fixed three `type.py` callable-alias defects found in review: (a)
   `Mapper = Callable[[T], R | None]` now includes `Awaitable[R | None]`,
   matching `Predicate`/`Comparator`'s existing sync-or-async pattern and

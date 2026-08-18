@@ -119,6 +119,38 @@ async def test_construct_with_initial_close_handlers(mocker, int_2_letter) -> No
     mock_callback.assert_called_once()
 
 
+def test_close_runs_remaining_handlers_after_one_raises(mocker) -> None:
+    bad = mocker.Mock(side_effect=ValueError("boom"))
+    good = mocker.Mock()
+
+    stream = Stream.of([1, 2, 3])
+    stream.on_close(bad).on_close(good)
+
+    # when
+    with pytest.raises(ValueError, match="boom"):
+        stream.close()
+
+    # then
+    bad.assert_called_once()
+    good.assert_called_once()
+
+
+def test_close_with_multiple_raising_handlers_runs_all_and_raises_first(mocker) -> None:
+    bad_a = mocker.Mock(side_effect=ValueError("first"))
+    bad_b = mocker.Mock(side_effect=ValueError("second"))
+
+    stream = Stream.of([1, 2, 3])
+    stream.on_close(bad_a).on_close(bad_b)
+
+    # when
+    with pytest.raises(ValueError, match="first"):
+        stream.close()
+
+    # then
+    bad_a.assert_called_once()
+    bad_b.assert_called_once()
+
+
 @pytest.mark.asyncio
 async def test_autoclose_simple(mocker, monkeypatch, int_2_letter):
     # given

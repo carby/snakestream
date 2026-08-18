@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import aclosing
 from inspect import iscoroutinefunction
 from typing import TYPE_CHECKING, Any, cast, overload
 from collections.abc import AsyncGenerator, Callable, Coroutine, Generator
@@ -164,8 +165,9 @@ class Stream(BaseStream[T]):
 
         async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
             async for i in iterable:
-                async for j in flat_mapper(i).collect(to_generator):
-                    yield j
+                async with aclosing(flat_mapper(i).collect(to_generator)) as inner:
+                    async for j in inner:
+                        yield j
 
         self._chain.append(fn)
         return cast("Stream[R]", self)
