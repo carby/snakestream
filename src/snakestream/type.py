@@ -10,11 +10,10 @@ R = TypeVar("R")
 Predicate = Callable[[T], bool | Awaitable[bool]]
 
 # Intermediaries
-Filterer = Callable[[T], T]
-Mapper = Callable[[T], R | None]
+Mapper = Callable[[T], R | None | Awaitable[R | None]]
 FlatMapper = Callable[[T], "Stream[R]"]
 Comparator = Callable[[T, T], int | Awaitable[int]]
-Consumer = Callable[[T], T]
+Consumer = Callable[[T], None | Awaitable[None]]
 CloseHandler = Callable[[], None]
 
 # Terminals
