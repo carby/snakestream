@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from contextlib import aclosing
 from typing import Any, cast, overload
 from collections.abc import AsyncGenerator, Callable, Coroutine
 
@@ -24,8 +25,13 @@ _UNSET = object()
 
 
 async def to_generator(composition: AsyncGenerator) -> AsyncGenerator[Any, None]:
-    async for n in composition:
-        yield n
+    if hasattr(composition, "aclose"):
+        async with aclosing(composition):
+            async for n in composition:
+                yield n
+    else:
+        async for n in composition:
+            yield n
 
 
 async def to_list(composition: AsyncGenerator) -> list[Any]:

@@ -78,8 +78,14 @@ class BaseStream(Generic[T]):
         return self
 
     def close(self) -> None:
+        exceptions: list[Exception] = []
         for close_handler in self._close_handlers:
-            close_handler()
+            try:
+                close_handler()
+            except Exception as e:
+                exceptions.append(e)
+        if exceptions:
+            raise exceptions[0]
 
     def is_parallel(self) -> bool:
         return False
