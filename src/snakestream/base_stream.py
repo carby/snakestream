@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Generic
 from collections.abc import AsyncGenerator, AsyncIterable, Callable
 
+from snakestream.exception import IllegalStateException
 from snakestream.type import T, CloseHandler
 
 if TYPE_CHECKING:
@@ -30,8 +31,21 @@ class BaseStream(Generic[T]):
     def __init__(self, source: Any, close_handlers: list[CloseHandler] | None = None) -> None:
         self._stream: AsyncGenerator[T, None] = _accept(source) or _normalize(source)
         self._chain: list[Callable] = []
-        self._close_handlers: list[CloseHandler] = close_handlers or []
+        self._close_handlers: list[CloseHandler] = [] if close_handlers is None else close_handlers
         self._ordered: bool = True
+        self._consumed: bool = False
+
+    def _check_not_consumed(self) -> None:
+        if self._consumed:
+            raise IllegalStateException("this stream has already been extended into a new instance or terminally consumed")
+
+    def _derive(self, closure: Callable) -> BaseStream[Any]:
+        self._check_not_consumed()
+        new_stream = type(self)(self._stream, self._close_handlers)
+        new_stream._chain = self._chain + [closure]
+        new_stream._ordered = self._ordered
+        self._consumed = True
+        return new_stream
 
     def _sequential(
         self,
@@ -50,20 +64,25 @@ class BaseStream(Generic[T]):
     def sequential(self) -> Stream[T]:
         from .stream import Stream
 
+        self._check_not_consumed()
         new_source = self._compose()
         new_stream = Stream(new_source, self._close_handlers)
         new_stream._ordered = self._ordered
+        self._consumed = True
         return new_stream
 
     def parallel(self) -> ParallelStream[T]:
         from .parallel_stream import ParallelStream
 
+        self._check_not_consumed()
         new_source = self._compose()
         new_stream = ParallelStream(new_source, self._close_handlers)
         new_stream._ordered = self._ordered
+        self._consumed = True
         return new_stream
 
     def iterator(self) -> AsyncGenerator[T, None]:
+        self._check_not_consumed()
         return self._compose()
 
     def unordered(self) -> BaseStream[T]:

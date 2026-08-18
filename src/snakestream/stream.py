@@ -145,16 +145,14 @@ class Stream(BaseStream[T]):
                 if keep:
                     yield i
 
-        self._chain.append(fn)
-        return self
+        return cast("Stream[T]", self._derive(fn))
 
     def map(self, mapper: Mapper[T, R]) -> Stream[R]:
         async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
             async for i in iterable:
                 yield await _maybe_await(mapper, i)
 
-        self._chain.append(fn)
-        return cast("Stream[R]", self)
+        return cast("Stream[R]", self._derive(fn))
 
     def flat_map(self, flat_mapper: FlatMapper[T, R]) -> Stream[R]:
         # Pre-call rejection, not a dispatch site: flat_mapper must return a
@@ -169,8 +167,7 @@ class Stream(BaseStream[T]):
                     async for j in inner:
                         yield j
 
-        self._chain.append(fn)
-        return cast("Stream[R]", self)
+        return cast("Stream[R]", self._derive(fn))
 
     def sorted(self, comparator: Comparator[T] | None = None, reverse=False) -> Stream[T]:
         async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
@@ -196,12 +193,10 @@ class Stream(BaseStream[T]):
                 for n in cache:
                     yield n
 
-        self._chain.append(fn)
-        return self
+        return cast("Stream[T]", self._derive(fn))
 
     def distinct(self) -> Stream[T]:
-        self._chain.append(_DistinctOp())
-        return self
+        return cast("Stream[T]", self._derive(_DistinctOp()))
 
     def peek(self, consumer: Consumer[T]) -> Stream[T]:
         async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
@@ -209,16 +204,13 @@ class Stream(BaseStream[T]):
                 await _maybe_await(consumer, i)
                 yield i
 
-        self._chain.append(fn)
-        return self
+        return cast("Stream[T]", self._derive(fn))
 
     def limit(self, max_size: int) -> Stream[T]:
-        self._chain.append(_LimitOp(max_size))
-        return self
+        return cast("Stream[T]", self._derive(_LimitOp(max_size)))
 
     def skip(self, n: int) -> Stream[T]:
-        self._chain.append(_SkipOp(n))
-        return self
+        return cast("Stream[T]", self._derive(_SkipOp(n)))
 
     # Terminals
     @overload
@@ -230,6 +222,7 @@ class Stream(BaseStream[T]):
     ) -> Coroutine[Any, Any, R]: ...
 
     def collect(self, *args: Any) -> Any:
+        self._check_not_consumed()
         if len(args) == 1:
             (collector,) = args
             return collector(self._compose())
@@ -257,6 +250,7 @@ class Stream(BaseStream[T]):
     async def reduce(self, accumulator: BinaryOperator[T]) -> T | None: ...
 
     async def reduce(self, identity: Any = _UNSET, accumulator: Any = _UNSET) -> Any:
+        self._check_not_consumed()
         if accumulator is _UNSET:
             # Called as reduce(accumulator): the single positional arg is the
             # accumulator, and the identity is seeded from the stream itself.
@@ -274,24 +268,29 @@ class Stream(BaseStream[T]):
         return identity
 
     async def for_each(self, consumer: Consumer[T]) -> None:
+        self._check_not_consumed()
         async for n in self._compose():
             await _maybe_await(consumer, n)
         return None
 
     async def for_each_ordered(self, consumer: Consumer[T]) -> None:
+        self._check_not_consumed()
         async for n in self._sequential(self._chain[:], self._stream):
             await _maybe_await(consumer, n)
         return None
 
     async def to_array(self) -> list[T]:
+        self._check_not_consumed()
         return await self.collect(to_list)
 
     async def find_first(self) -> T | None:
+        self._check_not_consumed()
         async for n in self._compose():
             return n
         return None
 
     async def find_any(self) -> T | None:
+        self._check_not_consumed()
         async for n in self._compose():
             return n
 
@@ -302,6 +301,8 @@ class Stream(BaseStream[T]):
         return await self._min_max(comparator, asc=True)
 
     async def _min_max(self, comparator: Comparator[T], asc: bool) -> T | None:
+        self._check_not_consumed()
+
         async def compare(a: T, b: T) -> int:
             sign = await _maybe_await(comparator, a, b)
             check_comparator_result_type(sign)
@@ -325,6 +326,7 @@ class Stream(BaseStream[T]):
         return None if found is _UNSET else found
 
     async def _match(self, predicate: Predicate[T], short_circuit_on: bool, default: bool) -> bool:
+        self._check_not_consumed()
         async for n in self._compose():
             if bool(await _maybe_await(predicate, n)) is short_circuit_on:
                 return short_circuit_on
@@ -340,6 +342,7 @@ class Stream(BaseStream[T]):
         return await self._match(predicate, short_circuit_on=True, default=False)
 
     async def count(self) -> int:
+        self._check_not_consumed()
         c = 0
         async for _ in self._compose():
             c += 1
