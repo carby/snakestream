@@ -10,6 +10,23 @@ async def async_generator() -> AsyncGenerator:
         yield i
 
 
+class _AsyncIteratorNoAclose:
+    """A bare async iterator with no aclose(), unlike an async generator."""
+
+    def __init__(self, end: int) -> None:
+        self._end = end
+        self._i = 0
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self._i >= self._end:
+            raise StopAsyncIteration
+        self._i += 1
+        return self._i
+
+
 @pytest.mark.asyncio
 async def test_to_list_simple() -> None:
     # when
@@ -31,6 +48,14 @@ async def test_to_generator_simple() -> None:
 
     with pytest.raises(StopAsyncIteration):
         await actual.__anext__()
+
+
+@pytest.mark.asyncio
+async def test_to_generator_no_aclose_on_source() -> None:
+    # when
+    actual = to_generator(_AsyncIteratorNoAclose(3))
+    # then
+    assert [n async for n in actual] == [1, 2, 3]
 
 
 @pytest.mark.asyncio

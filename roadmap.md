@@ -27,8 +27,7 @@ one area.
 
 | Item | Why next |
 |---|---|
-| **Redesign pipeline execution from nested async-generator delegation to a push-based (Sink-chain) model** — every intermediate op in `stream.py` (`filter`, `map`, `flat_map`, `sorted`, `peek`, `_DistinctOp`, `_LimitOp`, `_SkipOp`) is implemented as `async def fn(iterable): async for i in iterable: yield ...`, so pulling one element through a chain of *k* ops recurses *k* deep at `__anext__()`/`async for` delegation time — independent of and not fixed by the `_sequential()` build-time rewrite (see Done). | **Justification rewritten after benchmarking (2026-08-18); the original performance and `RecursionError` claims did not hold up.** Measured, Python 3.14, 20,000 elements, ns/element: at a chain of 8 ops, today costs 5,681; a flat driving loop costs 5,972 (**no gain — slower at short chains**); a Java-faithful Sink chain costs 4,806 (**15–17%**). Separately, Java's own `Sink` design is *also* O(k) stack-deep per element — `Sink.ChainedReference.accept()` calls `downstream.accept()` — so porting it does **not** fix `RecursionError`; only a flat driving loop or trampoline would, and that is the variant measuring zero speedup. The recursion ceiling was measured directly: a `.map()` chain consumes fine at k=800 and raises at k=1000 (default `sys.getrecursionlimit()`), i.e. it only bites on chains far longer than real code builds. The surviving reason to want this is **architectural, not performance**: an op protocol of `begin`/`accept`/`end` is the same interface a `Collector(supplier, accumulator, combiner, finisher)` needs (`begin`≡`supplier`, `accept`≡`accumulator`, `end`≡`finisher`), so the Collector item below stops being a separate redesign and becomes "make `collect()` accept a terminal op" — which also argues for sequencing this **before** that one, not in parallel with it. It would additionally make the ad-hoc `make_state()`/`state_map` convention (today an optional-second-positional-arg protocol only `_DistinctOp`/`_LimitOp`/`_SkipOp` implement) first-class as `begin(shared_state)`, and let `flat_map()` shed its `aclosing()`/`to_generator` machinery. Two scoping decisions to settle before starting: (a) push all the way to the terminal (Java-faithful) vs. push internally while `_compose()` still returns an `AsyncGenerator` — the latter leaves all 11 terminal ops, every collector, `iterator()` and `_concat` untouched, since each is `async for n in self._compose()`, and confines the change to three files; (b) whether the op protocol gets a terminal seat immediately or the Collector item retrofits one. Note that pushing to the terminal needs a pull bridge for `iterator()`/`to_generator`, which is what Java uses `Spliterator` for — itself parked in **Later** — so that variant is effectively blocked. |
-| **Redesign `collector.py`'s collectors around a `Collector(supplier, accumulator, combiner, finisher)` shape**, matching Java's `Collector<T,A,R>` interface, instead of today's single monolithic `async def _collect(composition): async for n in composition: ...` closures. | Not actually blocked on real parallelism — `collect(supplier, accumulator, combiner)` already shipped with `combiner` accepted-but-unused for Java signature parity, ahead of any real partitioned execution (see Done), and this could follow the same precedent: build the `Collector` shape now, have `ParallelStream.collect()` ignore `combiner` and fall back to today's serial accumulation, and only wire it up once real per-branch execution exists. Real design cost instead: `grouping_by`/`partitioning_by`'s `downstream` parameter would need to become a `Collector` itself (so its per-key containers, not just final results, can be combined later), which is a breaking signature change to two collectors that just shipped — scope that decision before starting. **Sequencing (decided 2026-08-18):** this should follow the Sink-chain item above rather than run independently — a `Collector`'s `supplier`/`accumulator`/`finisher` is the same interface as a Sink's `begin`/`accept`/`end`, and Java integrates the two directly (`ReferencePipeline.collect()` wraps a `Collector` in a terminal `ReducingSink`). Doing this one first means designing the `Collector` shape against today's pull-based `async def _collect(composition)` contract and then re-integrating it into a push world; doing it second means it just takes the terminal seat the Sink protocol already defines. |
+| **Redesign `collector.py`'s collectors around a `Collector(supplier, accumulator, combiner, finisher)` shape**, matching Java's `Collector<T,A,R>` interface, instead of today's single monolithic `async def _collect(composition): async for n in composition: ...` closures. | Not actually blocked on real parallelism — `collect(supplier, accumulator, combiner)` already shipped with `combiner` accepted-but-unused for Java signature parity, ahead of any real partitioned execution (see Done), and this could follow the same precedent: build the `Collector` shape now, have `ParallelStream.collect()` ignore `combiner` and fall back to today's serial accumulation, and only wire it up once real per-branch execution exists. Real design cost instead: `grouping_by`/`partitioning_by`'s `downstream` parameter would need to become a `Collector` itself (so its per-key containers, not just final results, can be combined later), which is a breaking signature change to two collectors that just shipped — scope that decision before starting. **The terminal seat this needs now exists** (`sink.py`'s `TerminalSink`, occupied today by `GeneratorBridgeSink`), shipped by the Sink-chain redesign below — so this item is a plug-in against an existing protocol (`begin`≡`supplier`, `accept`≡`accumulator`, `end`/`result()`≡`finisher`) rather than a protocol change. |
 | **Add the four remaining Java 8 `Collectors`: `collectingAndThen`, `mapping`, `summarizingInt`/`summarizingLong`/`summarizingDouble`, and `toCollection(supplier)`** — `collector.py` has shipped every other Java 8 `Collectors` static (`joining`, `counting`, `summing*`, `averaging*`, `minBy`/`maxBy`/`reducing`, `toMap`/`toSet`, `groupingBy`/`partitioningBy`) but these four were never picked up as roadmap items, so they never entered the Now/Next/Later tracking the rest of the `Collectors` effort went through. | Additive, no public API change to existing collectors, and no execution-model dependency — same shape as the already-shipped collector waves in Done. `summarizingInt`/`Long`/`Double` need a decision on what the returned stats object looks like (Java returns a mutable `IntSummaryStatistics`/etc.; likely a small dataclass or `NamedTuple` here rather than porting a mutable-accumulator type). `mapping`/`collectingAndThen` are downstream-collector adapters, so if the `Collector(supplier, accumulator, combiner, finisher)` redesign above lands first, implement these against that shape directly rather than against today's monolithic-closure shape and again after the redesign. Surfaced 2026-08-18 doing a Java-8-parity cross-reference. |
 
 ## Later
@@ -45,6 +44,72 @@ core semantic.
 
 ## Done
 
+- Redesigned pipeline execution from nested async-generator delegation to a
+  push-based `Sink` protocol (`begin(state_map)`/`accept(element)`/`end()`/
+  `cancellation_requested()`), replacing the closures-in-`_chain` model. New
+  `src/snakestream/sink.py` defines the protocol plus `IntermediateSink` (a
+  `downstream`-holding base that propagates `begin()`/`end()` and forwards
+  `cancellation_requested()`) and `TerminalSink` (creates its container in
+  `begin()`, accumulates in `accept()`, exposes the finished value via
+  `result()`) — the terminal seat a future `Collector` redesign can plug
+  into directly. `GeneratorBridgeSink` occupies that seat to let
+  `BaseStream._compose()` keep returning a plain `AsyncGenerator`: pushing
+  stays entirely internal to the chain, with a buffer-and-drain driving loop
+  (`BaseStream._drive()`) converting pushes back into yields, so all 11
+  terminal ops, every collector, `iterator()`, and `_concat` needed no
+  changes. All eight intermediate ops (`filter`, `map`, `flat_map`, `sorted`,
+  `peek`, `distinct`, `limit`, `skip`) are now op/sink pairs in `stream.py`
+  (`_FilterOp`/`_FilterSink`, etc.) — the op is a stateless, reusable
+  descriptor exposing `link(downstream) -> Sink` (and, for stateful ops, a
+  `make_shared_state()` factory), while the sink is built fresh per
+  composition and holds the actual per-composition state.
+  `make_state()`/`state_map` `getattr`-introspection is gone:
+  `ParallelStream._parallel()` now calls each op's `make_shared_state()`
+  directly to build one shared state map, passed into every racing branch's
+  `begin()`. `limit()`'s short-circuit moved from the op reaching up to
+  `aclose()` its own upstream to `cancellation_requested()` propagating to
+  the driving loop, which now owns closing the source (via a
+  `_maybe_aclosing()` helper tolerant of sources with no `aclose()`, needed
+  since `_drive()` — unlike the old bare-`_stream`-passthrough on an empty
+  chain — always wraps the source). `flat_map()` drops its
+  `collect(to_generator)` wrapper layer, iterating the inner stream's own
+  `._compose()` directly while keeping `aclosing()` around it, and checks
+  `downstream.cancellation_requested()` between pushed elements so a
+  downstream `.limit()` still stops it mid-inner-iteration instead of
+  over-pushing.
+
+  **Two scoping decisions taken (from `design.md`):** (a) push stays
+  internal only — `_compose()` still returns an `AsyncGenerator`, avoiding
+  the pull-bridge (`Spliterator`) that pushing all the way to the terminal
+  would need; (b) the terminal seat ships now, with one implementation
+  (`GeneratorBridgeSink`), rather than deferring it to the Collector
+  redesign.
+
+  **Benchmark (2026-08-18, this repo's dev environment, Python 3.14.5,
+  20,000 elements, chain of 8 `.map()` ops, best of 5):** 2,480.6 ns/element
+  before, 1,872.6 ns/element after — a ~24.5% gain, consistent with (and
+  better than) the proposal's 15–17% estimate; the bridge's buffer-and-yield
+  step gives back some but not all of the fully-pushed-to-terminal figure
+  the proposal separately measured.
+
+  The entire pre-existing test suite passed unmodified except one
+  internals-facing test (`test_sequential_long_chain_does_not_recurse_at_
+  build_time`) updated to construct fake ops with `.link()` instead of raw
+  closures, since `_sequential()`'s signature is now `(intermediaries,
+  terminal_sink) -> Sink` rather than `(intermediaries, iterable) ->
+  AsyncGenerator` — an intentional, documented signature change, not a
+  behavior regression. Added `tests/test_sink.py` covering the
+  `sink-protocol` spec directly (lifecycle ordering, empty source, zero/one/
+  many pushes per accept, pushing from `end()`, state-map lookup/fallback/
+  sharing, cancellation propagation, terminal `result()`). Added a direct
+  `to_generator()`-with-no-`aclose()`-source test (`tests/test_collect.py`)
+  to keep that branch covered, since `_compose()` no longer ever returns a
+  bare source without `aclose()` the way the old empty-chain passthrough
+  did. New `sink-protocol` spec; `pipeline-composition` updated to describe
+  state and cancellation via `begin(state_map)`/`cancellation_requested()`
+  instead of the old `make_state()`/`state_map` convention and `limit()`'s
+  self-closing upstream. No public API change; `collector.py` untouched.
+  See `openspec/changes/redesign-pipeline-sink-chain`.
 - Added `sorted()`'s row to README's Stream API table. `sorted()` had been
   implemented since before this roadmap existed (`stream.py:191`) but was
   never given a row in the table; the migration log referenced it three

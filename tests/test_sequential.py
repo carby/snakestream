@@ -18,17 +18,18 @@ async def test_sequential_simple(int_2_letter) -> None:
 
 
 def test_sequential_long_chain_does_not_recurse_at_build_time() -> None:
-    # given a chain of closures deep enough to blow the default recursion
-    # limit if _sequential() still recursed once per queued closure to
-    # build the composed pipeline (identity closures isolate the build-time
-    # traversal from any per-op async generator delegation at consumption
-    # time, which is a separate, larger concern tracked outside this change)
+    # given a chain of ops deep enough to blow the default recursion limit if
+    # _sequential() still recursed once per queued op to build the linked
+    # sink chain (identity ops isolate the build-time traversal from any
+    # per-op accept() delegation at consumption time, which is a separate,
+    # larger concern tracked outside this change)
     n = sys.getrecursionlimit() * 2
 
-    def identity(iterable):
-        return iterable
+    class _IdentityOp:
+        def link(self, downstream):
+            return downstream
 
-    intermediaries = [identity] * n
+    intermediaries = [_IdentityOp()] * n
     sentinel = object()
     # when
     result = Stream.of([])._sequential(intermediaries, sentinel)
