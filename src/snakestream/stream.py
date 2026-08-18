@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from contextlib import aclosing
-from inspect import iscoroutinefunction
+from inspect import isawaitable, iscoroutinefunction
 from typing import TYPE_CHECKING, Any, cast, overload
-from collections.abc import AsyncGenerator, Callable, Coroutine, Generator
+from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine, Generator
 
 from snakestream.base_stream import BaseStream
-from snakestream.callable_dispatch import _maybe_await
+from snakestream.callable_dispatch import _maybe_await, is_async_callable
 from snakestream.collector import to_generator, to_list
 from snakestream.exception import StreamBuildException
 from snakestream.sort import check_comparator_result_type, merge_sort
@@ -140,8 +140,17 @@ class Stream(BaseStream[T]):
     # Intermediaries
     def filter(self, predicate: Predicate[T]) -> Stream[T]:
         async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
+            is_async = is_async_callable(predicate)
+            checked = False
             async for i in iterable:
-                keep = await _maybe_await(predicate, i)
+                keep = predicate(i)
+                if is_async:
+                    keep = await cast("Awaitable[bool]", keep)
+                elif not checked:
+                    checked = True
+                    if isawaitable(keep):
+                        is_async = True
+                        keep = await keep
                 if keep:
                     yield i
 
@@ -149,8 +158,18 @@ class Stream(BaseStream[T]):
 
     def map(self, mapper: Mapper[T, R]) -> Stream[R]:
         async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
+            is_async = is_async_callable(mapper)
+            checked = False
             async for i in iterable:
-                yield await _maybe_await(mapper, i)
+                r = mapper(i)
+                if is_async:
+                    r = await cast("Awaitable[R | None]", r)
+                elif not checked:
+                    checked = True
+                    if isawaitable(r):
+                        is_async = True
+                        r = await r
+                yield cast(R, r)
 
         return cast("Stream[R]", self._derive(fn))
 
@@ -200,8 +219,17 @@ class Stream(BaseStream[T]):
 
     def peek(self, consumer: Consumer[T]) -> Stream[T]:
         async def fn(iterable: AsyncGenerator) -> AsyncGenerator:
+            is_async = is_async_callable(consumer)
+            checked = False
             async for i in iterable:
-                await _maybe_await(consumer, i)
+                r = consumer(i)
+                if is_async:
+                    await cast("Awaitable[None]", r)
+                elif not checked:
+                    checked = True
+                    if isawaitable(r):
+                        is_async = True
+                        await r
                 yield i
 
         return cast("Stream[T]", self._derive(fn))
@@ -239,8 +267,17 @@ class Stream(BaseStream[T]):
 
     async def _collect_mutable(self, supplier: Supplier[R], accumulator: BiConsumer[R, T]) -> R:
         container = await _maybe_await(supplier)
+        is_async = is_async_callable(accumulator)
+        checked = False
         async for n in self._compose():
-            await _maybe_await(accumulator, container, n)
+            r = accumulator(container, n)
+            if is_async:
+                await cast("Awaitable[None]", r)
+            elif not checked:
+                checked = True
+                if isawaitable(r):
+                    is_async = True
+                    await r
         return container
 
     @overload
@@ -263,20 +300,48 @@ class Stream(BaseStream[T]):
             except StopAsyncIteration:
                 return None
 
+        is_async = is_async_callable(accumulator)
+        checked = False
         async for n in composed:
-            identity = await _maybe_await(accumulator, identity, n)
+            r = accumulator(identity, n)
+            if is_async:
+                r = await cast("Awaitable[Any]", r)
+            elif not checked:
+                checked = True
+                if isawaitable(r):
+                    is_async = True
+                    r = await r
+            identity = r
         return identity
 
     async def for_each(self, consumer: Consumer[T]) -> None:
         self._check_not_consumed()
+        is_async = is_async_callable(consumer)
+        checked = False
         async for n in self._compose():
-            await _maybe_await(consumer, n)
+            r = consumer(n)
+            if is_async:
+                await cast("Awaitable[None]", r)
+            elif not checked:
+                checked = True
+                if isawaitable(r):
+                    is_async = True
+                    await r
         return None
 
     async def for_each_ordered(self, consumer: Consumer[T]) -> None:
         self._check_not_consumed()
+        is_async = is_async_callable(consumer)
+        checked = False
         async for n in self._sequential(self._chain[:], self._stream):
-            await _maybe_await(consumer, n)
+            r = consumer(n)
+            if is_async:
+                await cast("Awaitable[None]", r)
+            elif not checked:
+                checked = True
+                if isawaitable(r):
+                    is_async = True
+                    await r
         return None
 
     async def to_array(self) -> list[T]:
@@ -303,8 +368,20 @@ class Stream(BaseStream[T]):
     async def _min_max(self, comparator: Comparator[T], asc: bool) -> T | None:
         self._check_not_consumed()
 
+        is_async = is_async_callable(comparator)
+        checked = False
+
         async def compare(a: T, b: T) -> int:
-            sign = await _maybe_await(comparator, a, b)
+            nonlocal is_async, checked
+            sign = comparator(a, b)
+            if is_async:
+                sign = await cast("Awaitable[int]", sign)
+            elif not checked:
+                checked = True
+                if isawaitable(sign):
+                    is_async = True
+                    sign = await sign
+            sign = cast(int, sign)
             check_comparator_result_type(sign)
             return sign
 
@@ -327,8 +404,18 @@ class Stream(BaseStream[T]):
 
     async def _match(self, predicate: Predicate[T], short_circuit_on: bool, default: bool) -> bool:
         self._check_not_consumed()
+        is_async = is_async_callable(predicate)
+        checked = False
         async for n in self._compose():
-            if bool(await _maybe_await(predicate, n)) is short_circuit_on:
+            r = predicate(n)
+            if is_async:
+                r = await cast("Awaitable[bool]", r)
+            elif not checked:
+                checked = True
+                if isawaitable(r):
+                    is_async = True
+                    r = await r
+            if bool(r) is short_circuit_on:
                 return short_circuit_on
         return default
 

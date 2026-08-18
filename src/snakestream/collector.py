@@ -6,10 +6,11 @@
 from __future__ import annotations
 
 from contextlib import aclosing
+from inspect import isawaitable
 from typing import Any, cast, overload
-from collections.abc import AsyncGenerator, Callable, Coroutine
+from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine
 
-from snakestream.callable_dispatch import _maybe_await
+from snakestream.callable_dispatch import _classify_step, is_async_callable
 from snakestream.sort import check_comparator_result_type
 from snakestream.type import (
     R,
@@ -75,8 +76,18 @@ def summing_int(
 ) -> Callable[[AsyncGenerator[Any, None]], Coroutine[Any, Any, int]]:
     async def _sum(composition: AsyncGenerator[Any, None]) -> int:
         total = 0
+        is_async = is_async_callable(mapper)
+        checked = False
         async for n in composition:
-            total += await _maybe_await(mapper, n)
+            r = mapper(n)
+            if is_async:
+                r = await cast("Awaitable[int | float]", r)
+            elif not checked:
+                checked = True
+                if isawaitable(r):
+                    is_async = True
+                    r = await r
+            total += cast(Any, r)
         return total
 
     return _sum
@@ -87,8 +98,18 @@ def summing_long(
 ) -> Callable[[AsyncGenerator[Any, None]], Coroutine[Any, Any, int]]:
     async def _sum(composition: AsyncGenerator[Any, None]) -> int:
         total = 0
+        is_async = is_async_callable(mapper)
+        checked = False
         async for n in composition:
-            total += await _maybe_await(mapper, n)
+            r = mapper(n)
+            if is_async:
+                r = await cast("Awaitable[int | float]", r)
+            elif not checked:
+                checked = True
+                if isawaitable(r):
+                    is_async = True
+                    r = await r
+            total += cast(Any, r)
         return total
 
     return _sum
@@ -99,8 +120,18 @@ def summing_double(
 ) -> Callable[[AsyncGenerator[Any, None]], Coroutine[Any, Any, float]]:
     async def _sum(composition: AsyncGenerator[Any, None]) -> float:
         total = 0.0
+        is_async = is_async_callable(mapper)
+        checked = False
         async for n in composition:
-            total += float(await _maybe_await(mapper, n))
+            r = mapper(n)
+            if is_async:
+                r = await cast("Awaitable[int | float]", r)
+            elif not checked:
+                checked = True
+                if isawaitable(r):
+                    is_async = True
+                    r = await r
+            total += float(cast(Any, r))
         return total
 
     return _sum
@@ -112,8 +143,18 @@ def averaging_int(
     async def _average(composition: AsyncGenerator[Any, None]) -> float:
         total = 0.0
         count = 0
+        is_async = is_async_callable(mapper)
+        checked = False
         async for n in composition:
-            total += await _maybe_await(mapper, n)
+            r = mapper(n)
+            if is_async:
+                r = await cast("Awaitable[int | float]", r)
+            elif not checked:
+                checked = True
+                if isawaitable(r):
+                    is_async = True
+                    r = await r
+            total += cast(Any, r)
             count += 1
         return total / count if count else 0.0
 
@@ -126,8 +167,18 @@ def averaging_long(
     async def _average(composition: AsyncGenerator[Any, None]) -> float:
         total = 0.0
         count = 0
+        is_async = is_async_callable(mapper)
+        checked = False
         async for n in composition:
-            total += await _maybe_await(mapper, n)
+            r = mapper(n)
+            if is_async:
+                r = await cast("Awaitable[int | float]", r)
+            elif not checked:
+                checked = True
+                if isawaitable(r):
+                    is_async = True
+                    r = await r
+            total += cast(Any, r)
             count += 1
         return total / count if count else 0.0
 
@@ -140,8 +191,18 @@ def averaging_double(
     async def _average(composition: AsyncGenerator[Any, None]) -> float:
         total = 0.0
         count = 0
+        is_async = is_async_callable(mapper)
+        checked = False
         async for n in composition:
-            total += await _maybe_await(mapper, n)
+            r = mapper(n)
+            if is_async:
+                r = await cast("Awaitable[int | float]", r)
+            elif not checked:
+                checked = True
+                if isawaitable(r):
+                    is_async = True
+                    r = await r
+            total += cast(Any, r)
             count += 1
         return total / count if count else 0.0
 
@@ -149,8 +210,20 @@ def averaging_double(
 
 
 async def _extremum(composition: AsyncGenerator[T, None], comparator: Comparator[T], asc: bool) -> T | None:
+    is_async = is_async_callable(comparator)
+    checked = False
+
     async def compare(a: T, b: T) -> int:
-        sign = await _maybe_await(comparator, a, b)
+        nonlocal is_async, checked
+        sign = comparator(a, b)
+        if is_async:
+            sign = await cast("Awaitable[int]", sign)
+        elif not checked:
+            checked = True
+            if isawaitable(sign):
+                is_async = True
+                sign = await sign
+        sign = cast(int, sign)
         check_comparator_result_type(sign)
         return sign
 
@@ -213,12 +286,25 @@ def reducing(identity: Any = _UNSET, mapper: Any = _UNSET, binary_operator: Any 
 
     async def _reduce(composition: AsyncGenerator[Any, None]) -> Any:
         acc = identity
+        has_mapper = mapper is not None
+        mapper_is_async = is_async_callable(mapper) if has_mapper else False
+        mapper_checked = False
+        op_is_async = is_async_callable(binary_operator)
+        op_checked = False
         async for n in composition:
-            value = n if mapper is None else await _maybe_await(mapper, n)
+            if has_mapper:
+                value, mapper_is_async, mapper_checked = _classify_step(mapper, mapper_is_async, mapper_checked, n)
+                if mapper_is_async:
+                    value = await value
+            else:
+                value = n
             if acc is _UNSET:
                 acc = value
                 continue
-            acc = await _maybe_await(binary_operator, acc, value)
+            r, op_is_async, op_checked = _classify_step(binary_operator, op_is_async, op_checked, acc, value)
+            if op_is_async:
+                r = await r
+            acc = r
         return None if acc is _UNSET else acc
 
     return _reduce
@@ -231,13 +317,26 @@ def to_map(
 ) -> Callable[[AsyncGenerator[T, None]], Coroutine[Any, Any, dict[R, Any]]]:
     async def _to_map(composition: AsyncGenerator[T, None]) -> dict[R, Any]:
         result: dict[R, Any] = {}
+        key_is_async = is_async_callable(key_mapper)
+        key_checked = False
+        value_is_async = is_async_callable(value_mapper)
+        value_checked = False
+        merge_is_async = is_async_callable(merge_function) if merge_function is not None else False
+        merge_checked = False
         async for n in composition:
-            key = await _maybe_await(key_mapper, n)
-            value = await _maybe_await(value_mapper, n)
+            key, key_is_async, key_checked = _classify_step(key_mapper, key_is_async, key_checked, n)
+            if key_is_async:
+                key = await key
+            value, value_is_async, value_checked = _classify_step(value_mapper, value_is_async, value_checked, n)
+            if value_is_async:
+                value = await value
             if key in result:
                 if merge_function is None:
                     raise ValueError(f"Duplicate key: {key!r}")
-                value = await _maybe_await(merge_function, result[key], value)
+                merged, merge_is_async, merge_checked = _classify_step(
+                    merge_function, merge_is_async, merge_checked, result[key], value
+                )
+                value = await merged if merge_is_async else merged
             result[key] = value
         return result
 
@@ -265,9 +364,18 @@ def grouping_by(
 ) -> Callable[[AsyncGenerator[T, None]], Coroutine[Any, Any, dict[R, Any]]]:
     async def _grouping_by(composition: AsyncGenerator[T, None]) -> dict[R, Any]:
         groups: dict[R, list[T]] = {}
+        is_async = is_async_callable(classifier)
+        checked = False
         async for n in composition:
-            key = await _maybe_await(classifier, n)
-            groups.setdefault(key, []).append(n)
+            key = classifier(n)
+            if is_async:
+                key = await cast("Awaitable[R]", key)
+            elif not checked:
+                checked = True
+                if isawaitable(key):
+                    is_async = True
+                    key = await key
+            groups.setdefault(cast(R, key), []).append(n)
         return {key: await downstream(_generator_of(items)) for key, items in groups.items()}
 
     return _grouping_by
@@ -279,8 +387,18 @@ def partitioning_by(
 ) -> Callable[[AsyncGenerator[T, None]], Coroutine[Any, Any, dict[bool, Any]]]:
     async def _partitioning_by(composition: AsyncGenerator[T, None]) -> dict[bool, Any]:
         partitions: dict[bool, list[T]] = {True: [], False: []}
+        is_async = is_async_callable(predicate)
+        checked = False
         async for n in composition:
-            partitions[bool(await _maybe_await(predicate, n))].append(n)
+            r = predicate(n)
+            if is_async:
+                r = await cast("Awaitable[bool]", r)
+            elif not checked:
+                checked = True
+                if isawaitable(r):
+                    is_async = True
+                    r = await r
+            partitions[bool(r)].append(n)
         return {key: await downstream(_generator_of(items)) for key, items in partitions.items()}
 
     return _partitioning_by
