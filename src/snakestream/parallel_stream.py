@@ -63,3 +63,10 @@ class ParallelStream(Stream[T]):
 
     def is_parallel(self) -> bool:
         return True
+
+    async def find_first(self) -> T | None:
+        if not self.is_ordered():
+            return await self.find_any()
+        async for n in self._sequential(self._chain[:], self._stream):
+            return n
+        return None

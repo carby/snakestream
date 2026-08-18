@@ -15,7 +15,6 @@ an earlier item or on a Next-bucket decision last.
 
 | # | Item | Why this position |
 |---|---|---|
-| 1 | **Implement `Stream.find_first()`** (`stream.py`), matching Java's `Stream.findFirst()`. The current body is a dead docstring-commented-out stub (`stream.py:287-292`) reading `"""async def find_first(self): ... return await self.find_any()"""` — never executed, since it's a string literal, not code — with a comment claiming it's blocked on "ordered parallel stream." That blocker doesn't actually apply to `Stream`: `Stream._compose()` is already sequential, so `find_first()` there is identical in body to `find_any()` (`stream.py:294-296`) today. The real gap is narrower and `ParallelStream`-specific: `ParallelStream._compose()` (`parallel_stream.py:28-62`) races `PROCESSES` branches via `asyncio.wait(..., FIRST_COMPLETED)`, so first-*arrival* isn't first-*encounter-order* — a naive inherited `find_first()` would silently return the wrong element on a `ParallelStream`. Decided approach: implement `find_first()` on `Stream` with the trivial ordered body, and add a `ParallelStream` override that checks `self.is_ordered()` (`base_stream.py:73-74`) — when true, fall back to a strictly ordered pull (e.g. via `self._sequential(self._chain[:], self._stream)`, the same building block `for_each_ordered()` already uses per the Done entry below) to get correct first-encounter-order semantics; when the stream has been marked `unordered()`, race like `find_any()` since there's no order guarantee to preserve. | No blockers — `is_ordered()`/`unordered()` already exist and are otherwise unconsumed (per the `add-stream-unordered` Done entry, which built the flag specifically to unblock this), and `for_each_ordered()`'s ordered-pull pattern is a direct precedent to reuse for the `ParallelStream` override. Positioned here since it's the one item in this bucket likely to need README parity-table and migration-log updates (uncommenting a previously "not implemented yet" row) rather than being a pure internal fix. |
 
 `Stream.reduce(identity, accumulator, combiner)` (3-arg, with a combiner for
 parallel merging) has moved to **Later** below — see the resolved
@@ -46,6 +45,36 @@ core semantic.
 
 ## Done
 
+- Implemented `Stream.find_first()` (`stream.py`), matching Java's
+  `Stream.findFirst()`. The previous body was a dead
+  docstring-commented-out stub — a string literal, never executed — with a
+  comment claiming it was blocked on "ordered parallel stream." That
+  blocker didn't actually apply to `Stream`: `Stream._compose()` is already
+  sequential, so `find_first()` there is identical in body to `find_any()`.
+  The real gap was narrower and `ParallelStream`-specific:
+  `ParallelStream._compose()` races `PROCESSES` branches via
+  `asyncio.wait(..., FIRST_COMPLETED)`, so first-*arrival* isn't
+  first-*encounter-order*. Fixed by adding a `ParallelStream.find_first()`
+  override that checks `self.is_ordered()`: when ordered (the default),
+  pulls via `self._sequential(self._chain[:], self._stream)` — the same
+  building block `for_each_ordered()` uses — for a strictly ordered,
+  single-flight pull through the chain, guaranteeing the true first element
+  in encounter order at the cost of `.parallel()`'s concurrency for this
+  one terminal call (the same trade-off Java's own `forEachOrdered()`/
+  ordered `findFirst()` make); when the stream has been marked
+  `unordered()`, delegates to `find_any()`'s existing racing behavior,
+  matching Java's documented relaxation of `findFirst()`'s encounter-order
+  guarantee for unordered streams. This is the first consumer of the
+  `is_ordered()`/`unordered()` flag added by `add-stream-unordered`. Added
+  `tests/test_find_first.py`: non-empty/empty `Stream`,
+  first-element-only pulled, and — mirroring `test_for_each_ordered.py`'s
+  jumbled-source-with-positional-delay pattern — ordered-`ParallelStream`
+  coverage proving `find_first()` returns the true first element rather
+  than the first to arrive, plus unordered-`ParallelStream` coverage
+  showing it races without waiting for a full ordered pull. Updated
+  README's parity table (`find_first()` row, previously "Not implemented
+  yet"). No breaking changes. See
+  `openspec/changes/add-stream-find-first`.
 - Fixed three resource/lifecycle defects found in review: (a) `flat_map()`
   (`stream.py`) leaked the current inner stream's async generator when the
   outer chain short-circuited (e.g. a downstream `.limit()`) — each outer
