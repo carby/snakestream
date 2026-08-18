@@ -33,13 +33,13 @@ substantially faster, and the two are independent.
   per-element loop, keeping a single loop body:
 
   ```python
-  is_async = is_async_callable(mapper)   # hoisted, once
+  is_async = is_async_callable(mapper)  # hoisted, once
   checked = False
   async for i in iterable:
       r = mapper(i)
       if is_async:
           r = await r
-      elif not checked:                  # first-element safety net
+      elif not checked:  # first-element safety net
           checked = True
           if isawaitable(r):
               is_async = True
