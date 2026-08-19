@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from contextlib import aclosing
 from inspect import isawaitable, iscoroutinefunction
 from typing import TYPE_CHECKING, Any, cast, overload
 from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine, Generator
@@ -9,8 +8,17 @@ from snakestream.base_stream import BaseStream
 from snakestream.callable_dispatch import _maybe_await, is_async_callable
 from snakestream.collector import to_list
 from snakestream.exception import StreamBuildException
-from snakestream.sink import Counter, IntermediateSink, Op, Sink, StatefulOp, StatefulSink, StatelessOp
-from snakestream.sort import check_comparator_result_type, merge_sort
+from snakestream.ops import (
+    _DistinctOp,
+    _FilterOp,
+    _FlatMapOp,
+    _LimitOp,
+    _MapOp,
+    _PeekOp,
+    _SkipOp,
+    _SortedOp,
+)
+from snakestream.sort import check_comparator_result_type
 from snakestream.type import (
     R,
     T,
@@ -40,187 +48,6 @@ async def _concat(a: Stream, b: Stream) -> AsyncGenerator:
         yield i
     async for j in b._compose():
         yield j
-
-
-class _FilterSink(IntermediateSink[T]):
-    def __init__(self, downstream: Sink[Any], predicate: Predicate) -> None:
-        super().__init__(downstream)
-        self._predicate = predicate
-        self._is_async = is_async_callable(predicate)
-        self._checked = False
-
-    async def accept(self, element: Any) -> None:
-        keep = self._predicate(element)
-        if self._is_async:
-            keep = await cast("Awaitable[bool]", keep)
-        elif not self._checked:
-            self._checked = True
-            if isawaitable(keep):
-                self._is_async = True
-                keep = await keep
-        if keep:
-            await self.downstream.accept(element)
-
-
-class _FilterOp(StatelessOp):
-    _sink_cls = _FilterSink
-
-
-class _MapSink(IntermediateSink[T]):
-    def __init__(self, downstream: Sink[Any], mapper: Mapper) -> None:
-        super().__init__(downstream)
-        self._mapper = mapper
-        self._is_async = is_async_callable(mapper)
-        self._checked = False
-
-    async def accept(self, element: Any) -> None:
-        r = self._mapper(element)
-        if self._is_async:
-            r = await cast("Awaitable[Any]", r)
-        elif not self._checked:
-            self._checked = True
-            if isawaitable(r):
-                self._is_async = True
-                r = await r
-        await self.downstream.accept(r)
-
-
-class _MapOp(StatelessOp):
-    _sink_cls = _MapSink
-
-
-class _PeekSink(IntermediateSink[T]):
-    def __init__(self, downstream: Sink[Any], consumer: Consumer) -> None:
-        super().__init__(downstream)
-        self._consumer = consumer
-        self._is_async = is_async_callable(consumer)
-        self._checked = False
-
-    async def accept(self, element: Any) -> None:
-        r = self._consumer(element)
-        if self._is_async:
-            await cast("Awaitable[None]", r)
-        elif not self._checked:
-            self._checked = True
-            if isawaitable(r):
-                self._is_async = True
-                await r
-        await self.downstream.accept(element)
-
-
-class _PeekOp(StatelessOp):
-    _sink_cls = _PeekSink
-
-
-class _SortedSink(IntermediateSink[T]):
-    def __init__(self, downstream: Sink[Any], comparator: Comparator | None, reverse: bool) -> None:
-        super().__init__(downstream)
-        self._comparator = comparator
-        self._reverse = reverse
-        self._buffer: list[Any] = []
-
-    async def accept(self, element: Any) -> None:
-        self._buffer.append(element)
-
-    async def end(self) -> None:
-        cache = self._buffer
-        if self._comparator is not None:
-            # Always merge_sort here rather than list.sort()+cmp_to_key: the
-            # comparator may be an async-__call__ object, which needs an await
-            # merge_sort's _merge already does. Trades away Timsort's speed for
-            # sync comparators; see the add-maybe-await-helper design doc.
-            cache = await merge_sort(cache, self._comparator)
-        else:
-            cache.sort()
-        items = reversed(cache) if self._reverse else cache
-        for item in items:
-            await self.downstream.accept(item)
-        await super().end()
-
-
-class _SortedOp(StatelessOp):
-    _sink_cls = _SortedSink
-
-
-class _FlatMapSink(IntermediateSink[T]):
-    def __init__(self, downstream: Sink[Any], flat_mapper: FlatMapper) -> None:
-        super().__init__(downstream)
-        self._flat_mapper = flat_mapper
-
-    async def accept(self, element: Any) -> None:
-        async with aclosing(self._flat_mapper(element)._compose()) as inner:
-            async for j in inner:
-                await self.downstream.accept(j)
-                if self.downstream.cancellation_requested():
-                    break
-
-
-class _FlatMapOp(StatelessOp):
-    _sink_cls = _FlatMapSink
-
-
-class _DistinctSink(StatefulSink[T]):
-    async def accept(self, element: Any) -> None:
-        if element in self._state:
-            return
-        self._state.add(element)
-        await self.downstream.accept(element)
-
-
-class _DistinctOp(StatefulOp):
-    _sink_cls = _DistinctSink
-
-    def make_shared_state(self) -> set:
-        return set()
-
-
-class _LimitSink(StatefulSink[T]):
-    def __init__(self, downstream: Sink[Any], op: Op, max_size: int) -> None:
-        super().__init__(downstream, op)
-        self._max_size = max_size
-        self._cancelled = False
-
-    async def accept(self, element: Any) -> None:
-        if self._state.value >= self._max_size:
-            self._cancelled = True
-            return
-        # reserve the slot before pushing downstream: a genuinely async
-        # downstream can cede control, so checking and reserving must be
-        # atomic (no await between them) to stay correct across racing
-        # branches sharing self._state
-        self._state.value += 1
-        if self._state.value >= self._max_size:
-            self._cancelled = True
-        await self.downstream.accept(element)
-
-    def cancellation_requested(self) -> bool:
-        return self._cancelled or super().cancellation_requested()
-
-
-class _LimitOp(StatefulOp):
-    _sink_cls = _LimitSink
-
-    def make_shared_state(self) -> Counter:
-        return Counter()
-
-
-class _SkipSink(StatefulSink[T]):
-    def __init__(self, downstream: Sink[Any], op: Op, n: int) -> None:
-        super().__init__(downstream, op)
-        self._n = n
-
-    async def accept(self, element: Any) -> None:
-        if self._state.value < self._n:
-            self._state.value += 1
-            return
-        await self.downstream.accept(element)
-
-
-class _SkipOp(StatefulOp):
-    _sink_cls = _SkipSink
-
-    def make_shared_state(self) -> Counter:
-        return Counter()
 
 
 class Stream(BaseStream[T]):

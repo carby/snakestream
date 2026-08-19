@@ -19,10 +19,11 @@ but left the codebase half-converted: the intermediate ops moved to the push
 protocol, the terminals and collectors did not, and the op/sink pair convention
 it introduced has no type backing it. These are the cleanup.
 
-The first two of them — introducing an `Op` ABC and typing the chain against
-it, then collapsing the eight op classes onto shared bases — have landed; see
-**Done** below. The items remaining here are the ones they unblock and the ones
-that never depended on them.
+The first three of them — introducing an `Op` ABC and typing the chain against
+it, collapsing the eight op classes onto shared bases, and splitting the op/sink
+definitions out into `ops.py` — have landed; see **Done** below. The items
+remaining here are the ones they unblock and the ones that never depended on
+them.
 
 A seventh item — replacing the hand-copied async-dispatch pattern with a
 `CallSite` object — was proposed, measured, and rejected on the evidence; see
@@ -31,9 +32,8 @@ deliberately-accepted cost rather than an open item.
 
 | Item | Why now |
 |---|---|
-| **Split `stream.py`'s op/sink definitions into `ops.py`.** Lines 45-223 are the eight op/sink pairs; lines 226-485 are the public `Stream` API. | 485 lines of two unrelated concerns, and the file someone opens looking for the public surface makes them scroll past the whole execution layer first. **Now ready:** the op-collapse item above has landed (see **Done**), so the op half is down to eight two-to-four-line declarations and this is a pure move — cut the two blocks, add the imports, change nothing else. |
 | **Convert the terminal operations to real `TerminalSink`s** — `reduce`, `count`, `for_each`, `_match`, `_min_max`, `find_first` — and add a `BaseStream._drive_to(terminal)` that pushes source → head → terminal and returns `terminal.result()`. Keep `_drive()`/`GeneratorBridgeSink` only for what genuinely needs a generator: `iterator()`, the `sequential()`/`parallel()` handoff, `_concat`, and collectors. | This is the half-conversion the redesign explicitly scoped out (design decision (a): "push stays internal only"), and it's the one with real consequences now that the rest has settled. Today every terminal pulls from `_compose()`, which drives the push chain into `GeneratorBridgeSink`, which buffers each element into a list so the driving loop can yield it so the terminal can push it into an accumulator — push → buffer → pull → push per element. Two costs: (i) `TerminalSink`'s `_create_container`/`_finish`/`result()` apparatus has exactly one subclass, the bridge, which overrides most of it, so the "terminal seat" the redesign shipped is currently scaffolding for terminals that were never written; (ii) short-circuiting terminals can't participate in `cancellation_requested()` — `any_match` just abandons the generator and can't tell an upstream `_LimitSink` or a `flat_map` inner loop to stop, which is the same class of bug `limit()` was fixed for. Should also recover part of the ~24.5% the redesign measured but gave back to the bridge's buffer-and-yield step. Larger than the items above and moves real semantics, so it wants its own change; listed last in **Now** rather than moved to **Next** because the terminal seat it fills already exists and the Collector redesign in **Next** plugs into the same protocol. |
-| **Small cleanups**, batchable into one change: `for_each_ordered` (`stream.py:433`) is `for_each` (`:418`) verbatim except for `self._drive(self._chain[:], self._stream)` vs `self._compose()` — same duplication between `ParallelStream.find_first` and `Stream.find_first`; both want one private helper taking the source generator. `_sequential` (`base_stream.py:67`) does no sequential execution — it links a chain into a sink — and doesn't touch `self`, so it should be renamed and made module-level. `_derive` builds `self._chain + [op]` and `_compose` copies again with `self._chain[:]`, but `_drive` never mutates it, so the `[:]` can go. `GeneratorBridgeSink.drain()` allocates a fresh list per element in the drive loop's hot path (`base_stream.py:87`). `cancellation_requested()` is only checked *after* `accept` (`base_stream.py:89`), so a satisfied `limit()` still pulls one extra element from the source. `to_array` (`:448`) calls `_check_not_consumed` and then `collect`, which checks again. `Stream.__init__` and `ParallelStream.__init__` are pure `super().__init__` pass-throughs. `find_any` (`:458`) falls off the end implicitly where `find_first` has an explicit `return None`. | Individually trivial, collectively the reason the post-redesign read felt messy. The `cancellation_requested()` ordering and the `_sequential` rename are the two with actual substance — the rest are one-liners. Sequenced last so it can sweep up whatever the items above leave behind rather than colliding with them. |
+| **Small cleanups**, batchable into one change: `for_each_ordered` (`stream.py:208`) is `for_each` (`:193`) verbatim except for `self._drive(self._chain[:], self._stream)` vs `self._compose()` — same duplication between `ParallelStream.find_first` and `Stream.find_first`; both want one private helper taking the source generator. `_sequential` (`base_stream.py:67`) does no sequential execution — it links a chain into a sink — and doesn't touch `self`, so it should be renamed and made module-level. `_derive` builds `self._chain + [op]` and `_compose` copies again with `self._chain[:]`, but `_drive` never mutates it, so the `[:]` can go. `GeneratorBridgeSink.drain()` allocates a fresh list per element in the drive loop's hot path (`base_stream.py:87`). `cancellation_requested()` is only checked *after* `accept` (`base_stream.py:89`), so a satisfied `limit()` still pulls one extra element from the source. `to_array` (`:223`) calls `_check_not_consumed` and then `collect`, which checks again. `Stream.__init__` and `ParallelStream.__init__` are pure `super().__init__` pass-throughs. `find_any` (`:233`) falls off the end implicitly where `find_first` has an explicit `return None`. | Individually trivial, collectively the reason the post-redesign read felt messy. The `cancellation_requested()` ordering and the `_sequential` rename are the two with actual substance — the rest are one-liners. Sequenced last so it can sweep up whatever the items above leave behind rather than colliding with them. |
 
 `Stream.reduce(identity, accumulator, combiner)` (3-arg, with a combiner for
 parallel merging) has moved to **Later** below — see the resolved
@@ -62,6 +62,45 @@ core semantic.
 | **Java 9 `Stream` additions** — `takeWhile(predicate)`, `dropWhile(predicate)`, `Stream.ofNullable(t)`, and the 3-arg `iterate(seed, hasNext, next)` overload (distinct from the already-implemented 2-arg `iterate(seed, next)`). | README states the project's intent explicitly: "once we reach some sort of feature parity with Java 8 then maybe we move on to implement the improvements in Java 9." The **Now**/**Next** buckets are still closing out Java 8 parity gaps (`unordered()`, the `Collectors` framework, etc.), so pulling Java 9 work forward would jump the stated sequencing rather than reflecting lower value — revisit once Java 8 parity is substantially done. |
 
 ## Done
+
+- **Split the op/sink definitions out of `stream.py` into `ops.py`.** The eight
+  op/sink pairs (`_FilterSink`/`_FilterOp` through `_SkipSink`/`_SkipOp`) moved
+  verbatim into a new `src/snakestream/ops.py`, leaving `stream.py` as the public
+  `Stream` API plus `PROCESSES`, `_UNSET` and `_concat`. `stream.py` went from
+  485 to 312 lines; `ops.py` is 199. The class bodies are byte-identical to what
+  they were in `stream.py` — verified by diffing the moved block against the
+  original lines before deleting them — so the whole change is the cut, the new
+  module's import header, and one import line in `stream.py`.
+
+  Sinks moved with their ops rather than staying behind: after the op-collapse
+  change each op is a two-to-four-line `_sink_cls = <its sink>` declaration, so
+  the pair is only readable together. The ops were not folded into `sink.py`
+  either — that file is the protocol (`Sink`, `Op`, `IntermediateSink`,
+  `TerminalSink`, `StatelessOp`/`StatefulOp`, `GeneratorBridgeSink`), and mixing
+  the concrete ops into it would re-create the same two-concerns-in-one-file
+  problem one module over.
+
+  No import cycle: `ops.py` imports from `sink.py`, `sort.py`,
+  `callable_dispatch.py` and `type.py` only. `_FlatMapSink` is the one op that
+  touches a `Stream`, and it does so purely by duck typing
+  (`self._flat_mapper(element)._compose()`); its `FlatMapper` annotation resolves
+  through `type.py`'s existing `TYPE_CHECKING` guard, so no guard was needed in
+  `ops.py`. `stream.py` shed `aclosing`, `merge_sort` and all seven `sink.py`
+  imports in the cut, keeping `check_comparator_result_type`, `is_async_callable`
+  and `isawaitable`, which the `Stream` API still uses.
+
+  Behavior-neutral, and no spec or README edit was needed: every moved name is
+  private and unexported, so no public API surface changed and neither
+  `sink-protocol` nor `pipeline-composition` describes which module the concrete
+  ops live in (they describe the protocol classes in `sink.py`). The change
+  therefore declared `skip_specs: true` and shipped no spec delta. The only test
+  edit was `tests/test_op_protocol.py`'s import of the eight op classes moving to
+  `snakestream.ops`; `tests/test_sequential.py` and `tests/test_sink.py` define
+  their doubles against `sink.py` and needed no change. 421 tests pass at 99%
+  coverage — identical to the pre-change run, with `ops.py` at 100%. The **Small
+  cleanups** item's `stream.py` line references were re-pointed to their new
+  lines. See
+  `openspec/changes/archive/2026-08-19-split-ops-into-ops-module`.
 
 - **Collapsed the eight op classes onto shared bases.** `sink.py` gained
   `StatelessOp` and `StatefulOp` — both storing the arguments the op was
