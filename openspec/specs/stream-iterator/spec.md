@@ -20,7 +20,7 @@ Defines the contract for `BaseStream.iterator()`, an escape-hatch terminal-ish o
 - **THEN** no error occurs, and only the elements actually pulled are computed through the chain
 
 ### Requirement: iterator() works identically for sequential and parallel streams
-`BaseStream.iterator()` SHALL work on both `Stream` (sequential composition via `_sequential()`) and `ParallelStream` (parallel composition via `_parallel()`) without requiring a subclass-specific override, relying on each subclass's existing `_compose()` implementation.
+`BaseStream.iterator()` SHALL work on both `Stream` (sequential composition, linking the chain onto one sink via `_wrap_sink()`) and `ParallelStream` (parallel composition via `_parallel()`) without requiring a subclass-specific override, relying on each subclass's existing `_compose()` implementation.
 
 #### Scenario: iterator() on a ParallelStream
 - **WHEN** `.iterator()` is called on a `ParallelStream` with a queued chain of intermediate operations

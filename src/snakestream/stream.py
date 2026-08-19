@@ -34,7 +34,6 @@ from snakestream.type import (
     Accumulator,
     BiConsumer,
     BinaryOperator,
-    CloseHandler,
     Comparator,
     Consumer,
     FlatMapper,
@@ -59,9 +58,6 @@ async def _concat(a: Stream, b: Stream) -> AsyncGenerator:
 
 
 class Stream(BaseStream[T]):
-    def __init__(self, source: Any, close_handlers: list[CloseHandler] | None = None) -> None:
-        super().__init__(source, close_handlers)
-
     @staticmethod
     def of(*args: T) -> Stream[T]:
         if len(args) == 1:
@@ -175,7 +171,7 @@ class Stream(BaseStream[T]):
         return await self._drive_to_sequential(_ForEachSink(consumer))
 
     async def to_array(self) -> list[T]:
-        self._check_not_consumed()
+        # collect() runs _check_not_consumed() itself
         return await self.collect(to_list)
 
     async def find_first(self) -> T | None:

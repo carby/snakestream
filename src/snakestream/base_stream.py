@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Generic
+from typing import TYPE_CHECKING, Any, Generic, cast
 from collections.abc import AsyncGenerator, AsyncIterable
 
 from snakestream.exception import IllegalStateException
@@ -44,6 +44,15 @@ class _maybe_aclosing:
             await self._thing.aclose()
 
 
+def _wrap_sink(intermediaries: list[Op], terminal: Sink[Any]) -> Sink[Any]:
+    """Link a chain of ops onto a terminal sink, innermost last, and return the
+    head. Java's AbstractPipeline.wrapSink() does exactly this."""
+    sink = terminal
+    for op in reversed(intermediaries):
+        sink = op.link(sink)
+    return sink
+
+
 class BaseStream(Generic[T]):
     def __init__(self, source: Any, close_handlers: list[CloseHandler] | None = None) -> None:
         self._stream: AsyncGenerator[T, None] = _accept(source) or _normalize(source)
@@ -64,12 +73,6 @@ class BaseStream(Generic[T]):
         self._consumed = True
         return new_stream
 
-    def _sequential(self, intermediaries: list[Op], terminal: Sink[Any]) -> Sink[Any]:
-        sink = terminal
-        for op in reversed(intermediaries):
-            sink = op.link(sink)
-        return sink
-
     async def _drive(
         self,
         chain: list[Op],
@@ -79,18 +82,26 @@ class BaseStream(Generic[T]):
         if state_map is None:
             state_map = {}
         bridge: GeneratorBridgeSink = GeneratorBridgeSink()
-        head = self._sequential(chain, bridge)
+        head = _wrap_sink(chain, bridge)
         async with _maybe_aclosing(source) as src:
             await head.begin(state_map)
-            async for item in src:
-                await head.accept(item)
-                for out in bridge.drain():
-                    yield out
-                if head.cancellation_requested():
-                    break
+            # a chain can already be cancelled before it has seen anything
+            # (limit(0)); pulling even one element would run every upstream
+            # op on a value nobody wants
+            if not head.cancellation_requested():
+                async for item in src:
+                    await head.accept(item)
+                    if bridge.buffer:
+                        for out in bridge.buffer:
+                            yield out
+                        bridge.buffer.clear()
+                    if head.cancellation_requested():
+                        break
             await head.end()
-            for out in bridge.drain():
-                yield out
+            if bridge.buffer:
+                for out in bridge.buffer:
+                    yield out
+                bridge.buffer.clear()
 
     async def _drive_to(self, terminal: TerminalSink[Any]) -> Any:
         """Drive the chain into a terminal sink and return its result.
@@ -106,38 +117,42 @@ class BaseStream(Generic[T]):
         into the terminal. Never overridden, so it stays ordered on a
         ParallelStream too."""
         self._check_not_consumed()
-        head = self._sequential(self._chain, terminal)
+        head = _wrap_sink(self._chain, terminal)
         async with _maybe_aclosing(self._stream) as src:
             await head.begin({})
-            async for item in src:
-                await head.accept(item)
-                if head.cancellation_requested():
-                    break
+            if not head.cancellation_requested():
+                async for item in src:
+                    await head.accept(item)
+                    if head.cancellation_requested():
+                        break
             await head.end()
         return terminal.result()
 
     def _compose(self) -> AsyncGenerator[T, None]:
-        return self._drive(self._chain[:], self._stream)
+        return self._drive(self._chain, self._stream)
+
+    def _handoff(self, cls: type[BaseStream[Any]]) -> Any:
+        """Compose the current chain into a fresh generator and hand it to a
+        new stream of the given class, consuming this one. The mode switches
+        differ only by that class, so they share this body; each keeps its own
+        local import, since hoisting both here would import parallel_stream on
+        a sequential() call."""
+        self._check_not_consumed()
+        new_source = self._compose()
+        new_stream = cls(new_source, self._close_handlers)
+        new_stream._ordered = self._ordered
+        self._consumed = True
+        return new_stream
 
     def sequential(self) -> Stream[T]:
         from .stream import Stream
 
-        self._check_not_consumed()
-        new_source = self._compose()
-        new_stream = Stream(new_source, self._close_handlers)
-        new_stream._ordered = self._ordered
-        self._consumed = True
-        return new_stream
+        return cast("Stream[T]", self._handoff(Stream))
 
     def parallel(self) -> ParallelStream[T]:
         from .parallel_stream import ParallelStream
 
-        self._check_not_consumed()
-        new_source = self._compose()
-        new_stream = ParallelStream(new_source, self._close_handlers)
-        new_stream._ordered = self._ordered
-        self._consumed = True
-        return new_stream
+        return cast("ParallelStream[T]", self._handoff(ParallelStream))
 
     def iterator(self) -> AsyncGenerator[T, None]:
         self._check_not_consumed()

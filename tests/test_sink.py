@@ -142,10 +142,13 @@ class _CappingSink(IntermediateSink):
 
 async def _drive(head, source, state_map=None) -> None:
     await head.begin(state_map if state_map is not None else {})
-    for item in source:
-        await head.accept(item)
-        if head.cancellation_requested():
-            break
+    # mirrors BaseStream._drive(): a chain already cancelled at begin() must
+    # not be given a single element
+    if not head.cancellation_requested():
+        for item in source:
+            await head.accept(item)
+            if head.cancellation_requested():
+                break
     await head.end()
 
 
@@ -442,16 +445,43 @@ async def test_terminal_sink_over_empty_source_returns_empty_container() -> None
 
 
 @pytest.mark.asyncio
-async def test_generator_bridge_drain_and_result() -> None:
+async def test_generator_bridge_buffers_and_is_cleared_in_place() -> None:
+    # the driving loop reads .buffer and clears it in place rather than being
+    # handed a fresh list per element
     bridge = GeneratorBridgeSink()
     await bridge.begin({})
     await bridge.accept(1)
     await bridge.accept(2)
-    assert bridge.drain() == [1, 2]
-    assert bridge.drain() == []
+    assert bridge.buffer == [1, 2]
+    bridge.buffer.clear()
+    assert bridge.buffer == []
     await bridge.accept(3)
     await bridge.end()
-    assert bridge.drain() == [3]
+    assert bridge.buffer == [3]
+
+
+@pytest.mark.asyncio
+async def test_generator_bridge_buffer_identity_is_stable_across_clears() -> None:
+    # clearing in place must not rebind the buffer: the driving loop holds the
+    # bridge, not the list, but accept() appends to whatever _container is
+    bridge = GeneratorBridgeSink()
+    await bridge.begin({})
+    held = bridge.buffer
+    await bridge.accept(1)
+    bridge.buffer.clear()
+    await bridge.accept(2)
+    assert held is bridge.buffer
+    assert bridge.buffer == [2]
+
+
+@pytest.mark.asyncio
+async def test_generator_bridge_begin_gives_a_fresh_buffer() -> None:
+    # a second composition must not see the first's leftovers
+    bridge = GeneratorBridgeSink()
+    await bridge.begin({})
+    await bridge.accept(1)
+    await bridge.begin({})
+    assert bridge.buffer == []
 
 
 @pytest.mark.asyncio
@@ -459,7 +489,7 @@ async def test_generator_bridge_over_empty_source() -> None:
     bridge = GeneratorBridgeSink()
     await bridge.begin({})
     await bridge.end()
-    assert bridge.drain() == []
+    assert bridge.buffer == []
 
 
 # --- Short-circuiting terminal sink -----------------------------------------
@@ -516,3 +546,75 @@ async def test_terminal_cancellation_stops_the_driving_loop_and_still_finishes()
     assert pulled == [1]
     assert ("end", counting) in log
     assert terminal.result() == 1
+
+
+class _CancelledFromBeginOp(Op):
+    """An op whose sink is cancelled from the moment it begins - the shape
+    limit(0) has."""
+
+    def link(self, downstream):
+        return _CancelledFromBeginSink(downstream)
+
+
+class _CancelledFromBeginSink(IntermediateSink):
+    def __init__(self, downstream) -> None:
+        super().__init__(downstream)
+        self.accepted: list = []
+
+    async def accept(self, element) -> None:
+        self.accepted.append(element)
+        await self.downstream.accept(element)
+
+    def cancellation_requested(self) -> bool:
+        return True
+
+
+@pytest.mark.asyncio
+async def test_a_chain_cancelled_at_begin_is_given_no_elements_but_still_ends() -> None:
+    # given a chain whose head reports cancellation immediately after begin()
+    log: list = []
+    counting = _CountingOp(log)
+    terminal = _RecordingTerminalSink()
+    head = _CancelledFromBeginOp().link(counting.link(terminal))
+    pulled = []
+
+    def source():
+        for i in [1, 2, 3]:
+            pulled.append(i)
+            yield i
+
+    # when
+    await _drive(head, source())
+
+    # then: nothing was pulled and no accept() ran anywhere in the chain
+    assert pulled == []
+    assert terminal.result() == []
+    assert [entry for entry in log if entry[0] == "accept"] == []
+    # but the lifecycle still completed
+    assert ("begin", counting) in log
+    assert ("end", counting) in log
+
+
+@pytest.mark.asyncio
+async def test_real_driving_loop_honours_cancellation_reported_at_begin() -> None:
+    # given: the same shape driven by BaseStream._drive() rather than by this
+    # module's test double
+    from snakestream.collector import to_list
+    from snakestream.stream import Stream
+
+    pulled = []
+
+    def source():
+        for i in [1, 2, 3]:
+            pulled.append(i)
+            yield i
+
+    stream = Stream.of(source())
+    stream._chain = [_CancelledFromBeginOp()]
+
+    # when
+    result = await stream.collect(to_list)
+
+    # then
+    assert result == []
+    assert pulled == []

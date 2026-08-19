@@ -1,13 +1,15 @@
 ## Purpose
 
-Defines the contract for turning a `BaseStream`'s queued chain of intermediate-operation closures into an executable pipeline via `_compose()` (and the `_sequential()`/`_parallel()` helpers it uses). Covers two guarantees: that composing a chain never consumes or mutates it, so a stream can be composed and re-composed across multiple terminal operations; and that stateful intermediate operations (`distinct()`, `limit()`) start with fresh state on each composition rather than leaking state from a prior run, in both `Stream` (sequential) and `ParallelStream` (parallel, where state must additionally stay globally correct across racing branches within one composition).
+Defines the contract for turning a `BaseStream`'s queued chain of intermediate-operation closures into an executable pipeline via `_compose()` (and the `_wrap_sink()`/`_parallel()` helpers it uses). Covers two guarantees: that composing a chain never consumes or mutates it, so a stream can be composed and re-composed across multiple terminal operations; and that stateful intermediate operations (`distinct()`, `limit()`) start with fresh state on each composition rather than leaking state from a prior run, in both `Stream` (sequential) and `ParallelStream` (parallel, where state must additionally stay globally correct across racing branches within one composition).
 
 ## Requirements
 
 ### Requirement: Chain is not consumed by composition
-Composing a stream's queued chain of intermediate operations into an executable pipeline (`BaseStream._compose()`, and the `_sequential()`/`_parallel()` helpers it uses) SHALL NOT mutate or drain `self._chain`. The chain SHALL remain intact and usable for a subsequent composition after a prior composition has been fully or partially consumed.
+Composing a stream's queued chain of intermediate operations into an executable pipeline (`BaseStream._compose()`, and the `_wrap_sink()`/`_parallel()` helpers it uses) SHALL NOT mutate or drain `self._chain`. The chain SHALL remain intact and usable for a subsequent composition after a prior composition has been fully or partially consumed.
 
 The entries in `self._chain` SHALL be stateless operation objects, reusable across compositions; the stateful sinks that execute them SHALL be constructed fresh per composition. Composition SHALL NOT mutate any entry in the chain.
+
+Because composition never mutates the chain, it SHALL NOT be necessary to defensively copy `self._chain` before handing it to a driving loop; the guarantee rests on the loop not mutating it, not on the caller copying it.
 
 #### Scenario: Second terminal operation after full consumption
 - **WHEN** a terminal operation (e.g. `collect()`) is called on a `Stream` and its result is fully consumed, and then a second terminal operation is called on the same `Stream` instance
@@ -24,6 +26,10 @@ The entries in `self._chain` SHALL be stateless operation objects, reusable acro
 #### Scenario: Chain entries are not mutated by composition
 - **WHEN** a chain containing a stateful operation (`distinct()`, `limit(n)`, `skip(n)`) is composed and consumed
 - **THEN** the operation object stored in `self._chain` holds no per-composition state afterwards, and a subsequent composition builds a fresh sink from it
+
+#### Scenario: The chain list handed to a driving loop is left intact
+- **WHEN** a `ParallelStream` composes one chain into several racing branches, each driven over the same list of operation objects
+- **THEN** that list is the same length and holds the same operation objects after every branch has run as it did before
 
 ### Requirement: Stateful sequential closures reset per composition
 For `Stream` (sequential, non-parallel) pipelines, the internal state used by `distinct()` (the set of seen elements) and `limit()` (the count of elements accepted so far) SHALL be freshly initialized at the start of each composition, not shared across separate compositions of the same chain.
@@ -68,11 +74,17 @@ When the driving loop stops pulling because cancellation was requested and close
 
 This SHALL be delivered through the sink protocol's cancellation mechanism rather than by the operation closing its own upstream: `limit(n)`'s sink SHALL report `cancellation_requested()` as `True` once it has accepted `n` elements, and the loop driving the composed chain SHALL check that report after each `accept()` and stop pulling before issuing another pull. Closing the source SHALL be the responsibility of the driving loop, not of `limit()` itself.
 
+The guarantee SHALL hold for `n = 0` as well: `limit(0)` is cancelled before the composed pipeline has seen any element, so **no** element SHALL be pulled from the source and no upstream operation's per-element side effect (a `peek()` consumer, a `map()` mapper) SHALL run. This requires the driving loop to check cancellation before its first pull, not only after each `accept()`.
+
 The same no-over-pull guarantee SHALL hold when the cancellation originates at a **terminal** sink rather than at a mid-chain `limit()`: a driving loop that pushes into a terminal SHALL check the head sink's `cancellation_requested()` after each `accept()` and stop pulling before issuing another pull, and SHALL close the source on that early exit.
 
 #### Scenario: limit() does not pull past the nth element
 - **WHEN** a `Stream` chain containing `.peek(fn).limit(n)` is composed and consumed against a source with more than `n` elements
 - **THEN** `fn` is called exactly `n` times, not `n + 1` times
+
+#### Scenario: limit(0) pulls nothing at all
+- **WHEN** a `Stream` chain containing `.peek(fn).limit(0)` is composed and consumed against a non-empty source
+- **THEN** the composed output is empty, `fn` is never called, and no element is pulled from the source
 
 #### Scenario: limit() on an exactly-sized source still terminates cleanly
 - **WHEN** a `Stream` chain containing `.limit(n)` is composed against a source with exactly `n` elements
@@ -162,13 +174,13 @@ resolves them, not necessarily the first `n` elements in source order.
 
 ### Requirement: Building a composed pipeline does not recurse per chained operation
 
-`BaseStream._compose()` (and the `_sequential()` helper it uses for sequential composition) SHALL build the executable pipeline without recursing once per queued intermediate operation. Building (as opposed to consuming) a chain of intermediate operations SHALL NOT fail with `RecursionError` regardless of how many operations are queued, up to ordinary Python list-size limits.
+`BaseStream._compose()` (and the `_wrap_sink()` helper it uses to link the sink chain) SHALL build the executable pipeline without recursing once per queued intermediate operation. Building (as opposed to consuming) a chain of intermediate operations SHALL NOT fail with `RecursionError` regardless of how many operations are queued, up to ordinary Python list-size limits.
 
 Note: this requirement covers only the build-time traversal that links the sink chain. It does not cover recursion that occurs while *consuming* the composed pipeline: each intermediate sink's `accept()` calls `downstream.accept()`, so pushing one element through a chain of *k* operations is O(k) stack-deep. That is a separate concern, not addressed by this requirement, and is unchanged by the push-based redesign — the same O(k) per-element depth existed under the previous `async for`/`__anext__()` delegation model, and Java's own `Sink.ChainedReference` has it too.
 
 #### Scenario: A long chain of intermediate operations builds successfully
 
-- **WHEN** `BaseStream._sequential()` is called with a long list of queued operations (deep enough that a per-op-recursive implementation would approach Python's default recursion limit)
+- **WHEN** the sink-chain linking helper is called with a long list of queued operations (deep enough that a per-op-recursive implementation would approach Python's default recursion limit)
 - **THEN** linking the sink chain completes without raising `RecursionError`
 
 ### Requirement: flat_map() closes its per-element inner generator on early termination
