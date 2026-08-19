@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any, Generic
 from collections.abc import AsyncGenerator, AsyncIterable
 
 from snakestream.exception import IllegalStateException
-from snakestream.sink import GeneratorBridgeSink, Sink
+from snakestream.sink import GeneratorBridgeSink, Op, Sink
 from snakestream.type import T, CloseHandler, StateMap
 
 if TYPE_CHECKING:
@@ -47,7 +47,7 @@ class _maybe_aclosing:
 class BaseStream(Generic[T]):
     def __init__(self, source: Any, close_handlers: list[CloseHandler] | None = None) -> None:
         self._stream: AsyncGenerator[T, None] = _accept(source) or _normalize(source)
-        self._chain: list[Any] = []
+        self._chain: list[Op] = []
         self._close_handlers: list[CloseHandler] = [] if close_handlers is None else close_handlers
         self._ordered: bool = True
         self._consumed: bool = False
@@ -56,7 +56,7 @@ class BaseStream(Generic[T]):
         if self._consumed:
             raise IllegalStateException("this stream has already been extended into a new instance or terminally consumed")
 
-    def _derive(self, op: Any) -> BaseStream[Any]:
+    def _derive(self, op: Op) -> BaseStream[Any]:
         self._check_not_consumed()
         new_stream = type(self)(self._stream, self._close_handlers)
         new_stream._chain = self._chain + [op]
@@ -64,7 +64,7 @@ class BaseStream(Generic[T]):
         self._consumed = True
         return new_stream
 
-    def _sequential(self, intermediaries: list[Any], terminal: Sink[Any]) -> Sink[Any]:
+    def _sequential(self, intermediaries: list[Op], terminal: Sink[Any]) -> Sink[Any]:
         sink = terminal
         for op in reversed(intermediaries):
             sink = op.link(sink)
@@ -72,7 +72,7 @@ class BaseStream(Generic[T]):
 
     async def _drive(
         self,
-        chain: list[Any],
+        chain: list[Op],
         source: AsyncGenerator,
         state_map: StateMap | None = None,
     ) -> AsyncGenerator[T, None]:

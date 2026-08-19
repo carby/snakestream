@@ -9,7 +9,7 @@ from snakestream.base_stream import BaseStream
 from snakestream.callable_dispatch import _maybe_await, is_async_callable
 from snakestream.collector import to_list
 from snakestream.exception import StreamBuildException
-from snakestream.sink import IntermediateSink, Sink
+from snakestream.sink import IntermediateSink, Op, Sink
 from snakestream.sort import check_comparator_result_type, merge_sort
 from snakestream.type import (
     R,
@@ -63,7 +63,7 @@ class _FilterSink(IntermediateSink[T]):
             await self.downstream.accept(element)
 
 
-class _FilterOp:
+class _FilterOp(Op):
     def __init__(self, predicate: Predicate) -> None:
         self._predicate = predicate
 
@@ -90,7 +90,7 @@ class _MapSink(IntermediateSink[T]):
         await self.downstream.accept(r)
 
 
-class _MapOp:
+class _MapOp(Op):
     def __init__(self, mapper: Mapper) -> None:
         self._mapper = mapper
 
@@ -117,7 +117,7 @@ class _PeekSink(IntermediateSink[T]):
         await self.downstream.accept(element)
 
 
-class _PeekOp:
+class _PeekOp(Op):
     def __init__(self, consumer: Consumer) -> None:
         self._consumer = consumer
 
@@ -151,7 +151,7 @@ class _SortedSink(IntermediateSink[T]):
         await super().end()
 
 
-class _SortedOp:
+class _SortedOp(Op):
     def __init__(self, comparator: Comparator | None, reverse: bool) -> None:
         self._comparator = comparator
         self._reverse = reverse
@@ -173,7 +173,7 @@ class _FlatMapSink(IntermediateSink[T]):
                     break
 
 
-class _FlatMapOp:
+class _FlatMapOp(Op):
     def __init__(self, flat_mapper: FlatMapper) -> None:
         self._flat_mapper = flat_mapper
 
@@ -198,7 +198,7 @@ class _DistinctSink(IntermediateSink[T]):
         await self.downstream.accept(element)
 
 
-class _DistinctOp:
+class _DistinctOp(Op):
     def make_shared_state(self) -> set:
         return set()
 
@@ -235,7 +235,7 @@ class _LimitSink(IntermediateSink[T]):
         return self._cancelled or super().cancellation_requested()
 
 
-class _LimitOp:
+class _LimitOp(Op):
     def __init__(self, max_size: int) -> None:
         self._max_size = max_size
 
@@ -264,7 +264,7 @@ class _SkipSink(IntermediateSink[T]):
         await self.downstream.accept(element)
 
 
-class _SkipOp:
+class _SkipOp(Op):
     def __init__(self, n: int) -> None:
         self._n = n
 

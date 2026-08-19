@@ -1,6 +1,6 @@
 import pytest
 
-from snakestream.sink import GeneratorBridgeSink, IntermediateSink, TerminalSink
+from snakestream.sink import GeneratorBridgeSink, IntermediateSink, Op, TerminalSink
 
 
 class _RecordingTerminalSink(TerminalSink):
@@ -11,7 +11,7 @@ class _RecordingTerminalSink(TerminalSink):
         self._container.append(element)
 
 
-class _CountingOp:
+class _CountingOp(Op):
     """A stateful op: shares a [begin_count, end_count] pair via the state
     map so tests can assert lifecycle ordering across a chain."""
 
@@ -41,7 +41,7 @@ class _CountingSink(IntermediateSink):
         await super().end()
 
 
-class _PassThroughOp:
+class _PassThroughOp(Op):
     def link(self, downstream):
         return _PassThroughSink(downstream)
 
@@ -80,7 +80,7 @@ class _BufferingSink(IntermediateSink):
         await super().end()
 
 
-class _StatefulOp:
+class _StatefulOp(Op):
     def make_shared_state(self) -> list:
         return [0]
 
@@ -103,7 +103,7 @@ class _StatefulSink(IntermediateSink):
         await self.downstream.accept(element)
 
 
-class _CappingOp:
+class _CappingOp(Op):
     def __init__(self, cap: int) -> None:
         self._cap = cap
 
