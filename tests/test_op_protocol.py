@@ -2,7 +2,7 @@ import pytest
 
 from snakestream.collector import to_list
 from snakestream.sink import GeneratorBridgeSink, Op, Sink
-from snakestream.stream import (
+from snakestream.ops import (
     _DistinctOp,
     _FilterOp,
     _FlatMapOp,
@@ -11,8 +11,8 @@ from snakestream.stream import (
     _PeekOp,
     _SkipOp,
     _SortedOp,
-    Stream,
 )
+from snakestream.stream import Stream
 
 
 _SHIPPED_OPS = [
