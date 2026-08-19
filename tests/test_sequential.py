@@ -2,6 +2,7 @@ import sys
 
 import pytest
 from snakestream.collector import to_list
+from snakestream.sink import Op
 from snakestream.stream import Stream
 
 
@@ -25,7 +26,7 @@ def test_sequential_long_chain_does_not_recurse_at_build_time() -> None:
     # larger concern tracked outside this change)
     n = sys.getrecursionlimit() * 2
 
-    class _IdentityOp:
+    class _IdentityOp(Op):
         def link(self, downstream):
             return downstream
 

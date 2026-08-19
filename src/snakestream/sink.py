@@ -23,6 +23,24 @@ class Sink(ABC, Generic[T]):
         return False
 
 
+class Op(ABC):
+    """The op half of the op/sink pair: an intermediate operation as held in a
+    stream's chain. It carries the arguments the user passed and builds the
+    Sink that does the per-element work, once per sink chain it is linked into.
+
+    make_shared_state() returns one fresh instance of the state this op's sinks
+    share when several chains are built from the same op list (see
+    ParallelStream), or None for a stateless op. None means "no shared state",
+    so an op that does need state returns a container — a set, a list, a
+    counter object — never None."""
+
+    @abstractmethod
+    def link(self, downstream: Sink[Any]) -> Sink[Any]: ...
+
+    def make_shared_state(self) -> Any:
+        return None
+
+
 class IntermediateSink(Sink[T]):
     """Base for sinks that hold exactly one downstream sink and push results
     to it. begin()/end() propagate down the chain by default; a subclass that

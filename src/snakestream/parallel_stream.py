@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 from collections.abc import AsyncGenerator
+from snakestream.sink import Op
 from snakestream.stream import PROCESSES, Stream
 from snakestream.type import T, CloseHandler, StateMap
 
@@ -29,13 +30,13 @@ class ParallelStream(Stream[T]):
         return self._parallel(self._chain, self._stream)
 
     async def _parallel(
-        self, intermediaries: list[Any], iterable: AsyncGenerator, processes: int = PROCESSES
+        self, intermediaries: list[Op], iterable: AsyncGenerator, processes: int = PROCESSES
     ) -> AsyncGenerator:
         state_map: StateMap = {}
         for op in intermediaries:
-            make_shared_state = getattr(op, "make_shared_state", None)
-            if make_shared_state is not None:
-                state_map[op] = make_shared_state()
+            state = op.make_shared_state()
+            if state is not None:
+                state_map[op] = state
         lock = asyncio.Lock()
         async_iterators = [self._drive(intermediaries[:], _guarded(iterable, lock), state_map) for n in range(processes)]
         tasks: list[asyncio.Task[Any] | None] = [asyncio.ensure_future(n.__anext__()) for n in async_iterators]
