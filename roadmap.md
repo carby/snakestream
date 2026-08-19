@@ -19,11 +19,11 @@ but left the codebase half-converted: the intermediate ops moved to the push
 protocol, the terminals and collectors did not, and the op/sink pair convention
 it introduced has no type backing it. These are the cleanup.
 
-The first three of them — introducing an `Op` ABC and typing the chain against
-it, collapsing the eight op classes onto shared bases, and splitting the op/sink
-definitions out into `ops.py` — have landed; see **Done** below. The items
-remaining here are the ones they unblock and the ones that never depended on
-them.
+The first four of them — introducing an `Op` ABC and typing the chain against
+it, collapsing the eight op classes onto shared bases, splitting the op/sink
+definitions out into `ops.py`, and converting the terminal operations to real
+`TerminalSink`s — have landed; see **Done** below. The item remaining here is
+the one that never depended on them.
 
 A seventh item — replacing the hand-copied async-dispatch pattern with a
 `CallSite` object — was proposed, measured, and rejected on the evidence; see
@@ -32,8 +32,7 @@ deliberately-accepted cost rather than an open item.
 
 | Item | Why now |
 |---|---|
-| **Convert the terminal operations to real `TerminalSink`s** — `reduce`, `count`, `for_each`, `_match`, `_min_max`, `find_first` — and add a `BaseStream._drive_to(terminal)` that pushes source → head → terminal and returns `terminal.result()`. Keep `_drive()`/`GeneratorBridgeSink` only for what genuinely needs a generator: `iterator()`, the `sequential()`/`parallel()` handoff, `_concat`, and collectors. | This is the half-conversion the redesign explicitly scoped out (design decision (a): "push stays internal only"), and it's the one with real consequences now that the rest has settled. Today every terminal pulls from `_compose()`, which drives the push chain into `GeneratorBridgeSink`, which buffers each element into a list so the driving loop can yield it so the terminal can push it into an accumulator — push → buffer → pull → push per element. Two costs: (i) `TerminalSink`'s `_create_container`/`_finish`/`result()` apparatus has exactly one subclass, the bridge, which overrides most of it, so the "terminal seat" the redesign shipped is currently scaffolding for terminals that were never written; (ii) short-circuiting terminals can't participate in `cancellation_requested()` — `any_match` just abandons the generator and can't tell an upstream `_LimitSink` or a `flat_map` inner loop to stop, which is the same class of bug `limit()` was fixed for. Should also recover part of the ~24.5% the redesign measured but gave back to the bridge's buffer-and-yield step. Larger than the items above and moves real semantics, so it wants its own change; listed last in **Now** rather than moved to **Next** because the terminal seat it fills already exists and the Collector redesign in **Next** plugs into the same protocol. |
-| **Small cleanups**, batchable into one change: `for_each_ordered` (`stream.py:208`) is `for_each` (`:193`) verbatim except for `self._drive(self._chain[:], self._stream)` vs `self._compose()` — same duplication between `ParallelStream.find_first` and `Stream.find_first`; both want one private helper taking the source generator. `_sequential` (`base_stream.py:67`) does no sequential execution — it links a chain into a sink — and doesn't touch `self`, so it should be renamed and made module-level. `_derive` builds `self._chain + [op]` and `_compose` copies again with `self._chain[:]`, but `_drive` never mutates it, so the `[:]` can go. `GeneratorBridgeSink.drain()` allocates a fresh list per element in the drive loop's hot path (`base_stream.py:87`). `cancellation_requested()` is only checked *after* `accept` (`base_stream.py:89`), so a satisfied `limit()` still pulls one extra element from the source. `to_array` (`:223`) calls `_check_not_consumed` and then `collect`, which checks again. `Stream.__init__` and `ParallelStream.__init__` are pure `super().__init__` pass-throughs. `find_any` (`:233`) falls off the end implicitly where `find_first` has an explicit `return None`. | Individually trivial, collectively the reason the post-redesign read felt messy. The `cancellation_requested()` ordering and the `_sequential` rename are the two with actual substance — the rest are one-liners. Sequenced last so it can sweep up whatever the items above leave behind rather than colliding with them. |
+| **Small cleanups**, batchable into one change: `_sequential` (`base_stream.py:67`) does no sequential execution — it links a chain into a sink — and doesn't touch `self`, so it should be renamed and made module-level. `_derive` builds `self._chain + [op]` and `_compose` copies again with `self._chain[:]`, but `_drive` never mutates it, so the `[:]` can go. `GeneratorBridgeSink.drain()` allocates a fresh list per element in the drive loop's hot path (`base_stream.py:87`). `cancellation_requested()` is only checked *after* `accept` (`base_stream.py:89` and, since the terminal-sink change, `:112` too), so a satisfied `limit()` still pulls one extra element from the source. `to_array` (`stream.py:214`) calls `_check_not_consumed` and then `collect`, which checks again. `Stream.__init__` and `ParallelStream.__init__` are pure `super().__init__` pass-throughs. | Individually trivial, collectively the reason the post-redesign read felt messy. The `cancellation_requested()` ordering and the `_sequential` rename are the two with actual substance — the rest are one-liners. Sequenced last so it can sweep up whatever the items above leave behind rather than colliding with them. The `for_each_ordered`/`for_each` and `ParallelStream.find_first`/`Stream.find_first` duplication entries were dissolved by the terminal-sink change (each pair now differs only in which drive method it calls) and have been struck from this list, as has `find_any`'s implicit fall-off — both find methods are now one `_drive_to(_FindSink())` line. |
 
 `Stream.reduce(identity, accumulator, combiner)` (3-arg, with a combiner for
 parallel merging) has moved to **Later** below — see the resolved
@@ -62,6 +61,99 @@ core semantic.
 | **Java 9 `Stream` additions** — `takeWhile(predicate)`, `dropWhile(predicate)`, `Stream.ofNullable(t)`, and the 3-arg `iterate(seed, hasNext, next)` overload (distinct from the already-implemented 2-arg `iterate(seed, next)`). | README states the project's intent explicitly: "once we reach some sort of feature parity with Java 8 then maybe we move on to implement the improvements in Java 9." The **Now**/**Next** buckets are still closing out Java 8 parity gaps (`unordered()`, the `Collectors` framework, etc.), so pulling Java 9 work forward would jump the stated sequencing rather than reflecting lower value — revisit once Java 8 parity is substantially done. |
 
 ## Done
+
+- **Converted the terminal operations to real `TerminalSink`s**, closing the
+  half-conversion the Sink-chain redesign explicitly scoped out. `BaseStream`
+  gained `_drive_to(terminal)` — link the chain onto a terminal sink, push
+  source → head → terminal, return `terminal.result()` — and
+  `_drive_to_sequential(terminal)`, the never-overridden ordered form. The pair
+  mirrors the existing `_compose()`/`_drive()` split: `_drive_to()` dispatches
+  (`ParallelStream` overrides it), `_drive_to_sequential()` stays ordered on
+  either subclass. A new `src/snakestream/terminals.py` (206 lines) holds seven
+  terminal sinks — `_CountSink`, `_ForEachSink`, `_ReduceSink`, `_MinMaxSink`,
+  `_MutableReductionSink`, `_FindSink`, `_MatchSink` — plus `_UNSET`, which
+  moved out of `stream.py` since a sink cannot import it back. Every terminal
+  method in `stream.py` is now one or two lines; `stream.py` went from 215
+  statements to 111.
+
+  `_drive()`/`GeneratorBridgeSink` were kept for exactly what needs a
+  generator, as scoped: `iterator()`, `collect(collector)` (so `to_array()` and
+  every collector are untouched), `_concat`, the `sequential()`/`parallel()`
+  handoff, and `flat_map`'s inner-stream composition. No terminal reaches the
+  bridge any more, and the `TerminalSink` seat now has six real occupants that
+  use `_create_container`/`_finish`/`result()` as intended rather than
+  overriding them — which is the template the **Next**-bucket `Collector`
+  redesign needed, and which it is now **unblocked** by.
+
+  **Two behavior changes, both intended, neither breaking.** (a) Short-circuiting
+  terminals now report `cancellation_requested()`, so a settled `any_match` /
+  `all_match` / `none_match` / `find_first` / `find_any` stops the whole chain
+  instead of abandoning a generator: `.peek(fn).any_match(p)` calls `fn` once,
+  not once per element, and `.flat_map(m).find_first()` takes one element from
+  the first inner stream and closes it rather than draining it. A user relying
+  on a side-effecting `peek()` or mapper firing past the short-circuit point
+  would see the difference — it is the same class of fix `limit()` got, so it is
+  a behavior note rather than a **BREAKING** migration-log entry; no signature
+  or return value changed. (b) `ParallelStream` terminals gained cancellation at
+  the outer loop only.
+
+  **`ParallelStream` drives the terminal over the racing generator** rather than
+  sharing one terminal sink across the branches: `_drive_to()` is overridden to
+  push `_compose()`'s output into the single terminal. Parallel semantics are
+  therefore identical to before and the bridge's cost stays on that path — the
+  measured win is sequential-only. Sharing a terminal across branches was
+  rejected: it would make `begin()`/`end()` refcounted, the accumulator
+  concurrently mutated, and would need `_ReduceSink`/`_MinMaxSink` to define a
+  merge across partitions, which is exactly the `combiner` work parked in
+  **Later** behind real partitioned execution. Consequence, accepted: an
+  in-flight branch's own `_LimitSink`/`_FlatMapSink` never sees a terminal's
+  cancellation, since the terminal is not in that branch's chain. `_parallel()`'s
+  existing `finally:` already cancels and gathers the pending tasks, so teardown
+  is clean — a missed optimization, not a correctness gap.
+
+  **One defect found by the new tests, and one fix beyond the planned scope.**
+  `_FindSink.accept()` initially overwrote its container on every element, which
+  is correct only if nothing pushes after cancellation — but `_SortedSink.end()`
+  flushes its entire buffer downstream in one go with no driving loop in
+  between, so `.sorted().find_first()` returned the *last* element. Fixed by
+  guarding both short-circuiting sinks to ignore anything pushed after they
+  settle. That exposed the real gap one level up: `_SortedSink.end()` did not
+  check `cancellation_requested()` while flushing, so `peek()` still fired for
+  every element after the answer was known. Added that check between pushes
+  (`ops.py`), mirroring `_FlatMapSink`'s existing inner-loop check — two lines,
+  outside the change's planned task list, but without it the change's headline
+  benefit has a hole for any chain containing `sorted()`. The terminal-side
+  guards were kept rather than resting on that invariant and are pinned by
+  direct sink-level tests.
+
+  **Benchmark (2026-08-19, same harness: Python 3.14.5, 20,000 elements, chain
+  of 8 `.map()` ops, best of 5, three interleaved rounds per condition via
+  `git stash`; best round per condition shown, round 1 was a cold outlier for
+  both):**
+
+  | Scenario | Before | After | Δ |
+  |---|---|---|---|
+  | `collect(to_list)` — unchanged generator path, control | 1974.3 | 2004.7 | ~flat |
+  | `count()` | 1938.5 | 1644.3 | **−15.2%** |
+  | `for_each()` | 1982.4 | 1622.9 | **−18.1%** |
+  | `reduce()` | 1994.1 | 1671.6 | **−16.2%** |
+
+  The flat control on the generator path is what rules out machine drift: only
+  the paths that stopped round-tripping through the bridge moved. This recovers
+  a good part of what the redesign measured and gave back to the buffer-and-yield
+  step, as that item predicted.
+
+  No public API change — every name added is private and unexported, so README
+  needed no parity-table or migration-log edit. All 421 pre-existing tests pass
+  **unmodified**, which was the primary regression signal; 27 new tests were
+  added (`tests/test_terminal_sinks.py`, plus two protocol-level cases in
+  `tests/test_sink.py`) covering `reduce()`'s reseeding edge cases, terminal
+  cancellation reaching `peek`/`limit`/`flat_map`, the ordered drive on a
+  `ParallelStream`, parallel terminals, and the two short-circuit guards. 448
+  tests pass at 99% coverage (98.63% branch), `terminals.py` at 100%. New
+  `terminal-sinks` spec; `sink-protocol` and `pipeline-composition` extended for
+  terminal-originated cancellation. See
+  `openspec/changes/convert-terminals-to-sinks`.
 
 - **Split the op/sink definitions out of `stream.py` into `ops.py`.** The eight
   op/sink pairs (`_FilterSink`/`_FilterOp` through `_SkipSink`/`_SkipOp`) moved

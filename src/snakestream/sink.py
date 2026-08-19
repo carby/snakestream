@@ -132,7 +132,14 @@ class StatefulSink(IntermediateSink[T]):
 class TerminalSink(Sink[T]):
     """Base for sinks with no downstream: begin() creates an accumulation
     container, accept() accumulates into it, end() finishes it into the value
-    exposed via result()."""
+    exposed via result().
+
+    A terminal whose answer is settled before the source runs out may override
+    cancellation_requested() to report True from that point on, exactly as a
+    short-circuiting intermediate sink does. Sitting at the end of the chain,
+    that report travels up through every IntermediateSink to the head, so the
+    driving loop stops pulling. Such a sink still receives end(), and its
+    result() is the value that was fixed at the point it cancelled."""
 
     def __init__(self) -> None:
         self._container: Any = None

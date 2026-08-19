@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from inspect import isawaitable, iscoroutinefunction
+from inspect import iscoroutinefunction
 from typing import TYPE_CHECKING, Any, cast, overload
-from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine, Generator
+from collections.abc import AsyncGenerator, Callable, Coroutine, Generator
 
 from snakestream.base_stream import BaseStream
-from snakestream.callable_dispatch import _maybe_await, is_async_callable
+from snakestream.callable_dispatch import _maybe_await
 from snakestream.collector import to_list
 from snakestream.exception import StreamBuildException
 from snakestream.ops import (
@@ -18,7 +18,16 @@ from snakestream.ops import (
     _SkipOp,
     _SortedOp,
 )
-from snakestream.sort import check_comparator_result_type
+from snakestream.terminals import (
+    _UNSET,
+    _CountSink,
+    _FindSink,
+    _ForEachSink,
+    _MatchSink,
+    _MinMaxSink,
+    _MutableReductionSink,
+    _ReduceSink,
+)
 from snakestream.type import (
     R,
     T,
@@ -40,7 +49,6 @@ if TYPE_CHECKING:
 
 
 PROCESSES: int = 4
-_UNSET = object()
 
 
 async def _concat(a: Stream, b: Stream) -> AsyncGenerator:
@@ -142,19 +150,10 @@ class Stream(BaseStream[T]):
         return self._collect_mutable(supplier, accumulator)
 
     async def _collect_mutable(self, supplier: Supplier[R], accumulator: BiConsumer[R, T]) -> R:
+        # The supplier runs once per composition, so _maybe_await is the right
+        # dispatch here; the per-element accumulator is specialized in the sink.
         container = await _maybe_await(supplier)
-        is_async = is_async_callable(accumulator)
-        checked = False
-        async for n in self._compose():
-            r = accumulator(container, n)
-            if is_async:
-                await cast("Awaitable[None]", r)
-            elif not checked:
-                checked = True
-                if isawaitable(r):
-                    is_async = True
-                    await r
-        return container
+        return cast(R, await self._drive_to(_MutableReductionSink(container, accumulator)))
 
     @overload
     async def reduce(self, identity: T | R, accumulator: Accumulator[T, R]) -> T | R: ...
@@ -163,77 +162,27 @@ class Stream(BaseStream[T]):
     async def reduce(self, accumulator: BinaryOperator[T]) -> T | None: ...
 
     async def reduce(self, identity: Any = _UNSET, accumulator: Any = _UNSET) -> Any:
-        self._check_not_consumed()
         if accumulator is _UNSET:
             # Called as reduce(accumulator): the single positional arg is the
             # accumulator, and the identity is seeded from the stream itself.
             identity, accumulator = _UNSET, identity
-
-        composed = self._compose()
-        if identity is _UNSET:
-            try:
-                identity = await anext(composed)
-            except StopAsyncIteration:
-                return None
-
-        is_async = is_async_callable(accumulator)
-        checked = False
-        async for n in composed:
-            r = accumulator(identity, n)
-            if is_async:
-                r = await cast("Awaitable[Any]", r)
-            elif not checked:
-                checked = True
-                if isawaitable(r):
-                    is_async = True
-                    r = await r
-            identity = r
-        return identity
+        return await self._drive_to(_ReduceSink(identity, accumulator))
 
     async def for_each(self, consumer: Consumer[T]) -> None:
-        self._check_not_consumed()
-        is_async = is_async_callable(consumer)
-        checked = False
-        async for n in self._compose():
-            r = consumer(n)
-            if is_async:
-                await cast("Awaitable[None]", r)
-            elif not checked:
-                checked = True
-                if isawaitable(r):
-                    is_async = True
-                    await r
-        return None
+        return await self._drive_to(_ForEachSink(consumer))
 
     async def for_each_ordered(self, consumer: Consumer[T]) -> None:
-        self._check_not_consumed()
-        is_async = is_async_callable(consumer)
-        checked = False
-        async for n in self._drive(self._chain[:], self._stream):
-            r = consumer(n)
-            if is_async:
-                await cast("Awaitable[None]", r)
-            elif not checked:
-                checked = True
-                if isawaitable(r):
-                    is_async = True
-                    await r
-        return None
+        return await self._drive_to_sequential(_ForEachSink(consumer))
 
     async def to_array(self) -> list[T]:
         self._check_not_consumed()
         return await self.collect(to_list)
 
     async def find_first(self) -> T | None:
-        self._check_not_consumed()
-        async for n in self._compose():
-            return n
-        return None
+        return await self._drive_to(_FindSink())
 
     async def find_any(self) -> T | None:
-        self._check_not_consumed()
-        async for n in self._compose():
-            return n
+        return await self._drive_to(_FindSink())
 
     async def max(self, comparator: Comparator[T]) -> T | None:
         return await self._min_max(comparator, asc=False)
@@ -242,58 +191,10 @@ class Stream(BaseStream[T]):
         return await self._min_max(comparator, asc=True)
 
     async def _min_max(self, comparator: Comparator[T], asc: bool) -> T | None:
-        self._check_not_consumed()
-
-        is_async = is_async_callable(comparator)
-        checked = False
-
-        async def compare(a: T, b: T) -> int:
-            nonlocal is_async, checked
-            sign = comparator(a, b)
-            if is_async:
-                sign = await cast("Awaitable[int]", sign)
-            elif not checked:
-                checked = True
-                if isawaitable(sign):
-                    is_async = True
-                    sign = await sign
-            sign = cast(int, sign)
-            check_comparator_result_type(sign)
-            return sign
-
-        found = cast(T, _UNSET)
-        async for n in self._compose():
-            if found is _UNSET:
-                found = n
-                continue
-
-            # comparator(n, found): negative if n orders before found, positive
-            # if after. found (the earlier element) is kept on a tie.
-            sign = await compare(n, found)
-            if asc:
-                is_new_extreme = sign < 0
-            else:
-                is_new_extreme = sign > 0
-            if is_new_extreme:
-                found = n
-        return None if found is _UNSET else found
+        return await self._drive_to(_MinMaxSink(comparator, asc))
 
     async def _match(self, predicate: Predicate[T], short_circuit_on: bool, default: bool) -> bool:
-        self._check_not_consumed()
-        is_async = is_async_callable(predicate)
-        checked = False
-        async for n in self._compose():
-            r = predicate(n)
-            if is_async:
-                r = await cast("Awaitable[bool]", r)
-            elif not checked:
-                checked = True
-                if isawaitable(r):
-                    is_async = True
-                    r = await r
-            if bool(r) is short_circuit_on:
-                return short_circuit_on
-        return default
+        return await self._drive_to(_MatchSink(predicate, short_circuit_on, default))
 
     async def all_match(self, predicate: Predicate[T]) -> bool:
         return await self._match(predicate, short_circuit_on=False, default=True)
@@ -305,8 +206,4 @@ class Stream(BaseStream[T]):
         return await self._match(predicate, short_circuit_on=True, default=False)
 
     async def count(self) -> int:
-        self._check_not_consumed()
-        c = 0
-        async for _ in self._compose():
-            c += 1
-        return c
+        return await self._drive_to(_CountSink())

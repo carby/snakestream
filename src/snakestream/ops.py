@@ -111,6 +111,11 @@ class _SortedSink(IntermediateSink[T]):
         items = reversed(cache) if self._reverse else cache
         for item in items:
             await self.downstream.accept(item)
+            # the whole buffer is flushed in one go, with no driving loop in
+            # between to notice cancellation - so check it here, the same way
+            # _FlatMapSink does between the elements of one inner stream
+            if self.downstream.cancellation_requested():
+                break
         await super().end()
 
 

@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 from collections.abc import AsyncGenerator
-from snakestream.sink import Op
+from snakestream.base_stream import _maybe_aclosing
+from snakestream.sink import Op, TerminalSink
 from snakestream.stream import PROCESSES, Stream
+from snakestream.terminals import _FindSink
 from snakestream.type import T, CloseHandler, StateMap
 
 
@@ -65,10 +67,24 @@ class ParallelStream(Stream[T]):
     def is_parallel(self) -> bool:
         return True
 
-    async def find_first(self) -> T | None:
+    async def _drive_to(self, terminal: TerminalSink[Any]) -> Any:
+        """The terminal sits outside the race, accumulating what the branches
+        produce: each branch has its own sink chain, so there is no single
+        chain to link the terminal onto. Cancellation therefore reaches only
+        this loop - an in-flight branch's own sinks never see it - which is a
+        missed optimization, not a correctness gap: _parallel()'s finally
+        block cancels and gathers the pending tasks on the way out."""
         self._check_not_consumed()
+        await terminal.begin({})
+        async with _maybe_aclosing(self._compose()) as src:
+            async for n in src:
+                await terminal.accept(n)
+                if terminal.cancellation_requested():
+                    break
+        await terminal.end()
+        return terminal.result()
+
+    async def find_first(self) -> T | None:
         if not self.is_ordered():
             return await self.find_any()
-        async for n in self._drive(self._chain[:], self._stream):
-            return n
-        return None
+        return await self._drive_to_sequential(_FindSink())
