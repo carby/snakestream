@@ -5,11 +5,11 @@
 
 from __future__ import annotations
 
-from contextlib import aclosing
 from inspect import isawaitable
 from typing import Any, cast, overload
 from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine
 
+from snakestream.base_stream import _maybe_aclosing
 from snakestream.callable_dispatch import _classify_step, is_async_callable
 from snakestream.sort import check_comparator_result_type
 from snakestream.type import (
@@ -26,12 +26,10 @@ _UNSET = object()
 
 
 async def to_generator(composition: AsyncGenerator) -> AsyncGenerator[Any, None]:
-    if hasattr(composition, "aclose"):
-        async with aclosing(composition):
-            async for n in composition:
-                yield n
-    else:
-        async for n in composition:
+    # _maybe_aclosing, not aclosing: to_generator() also accepts a plain
+    # AsyncIterable with no aclose() (a custom __anext__-only iterator)
+    async with _maybe_aclosing(composition) as src:
+        async for n in src:
             yield n
 
 

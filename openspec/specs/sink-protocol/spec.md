@@ -115,6 +115,13 @@ The loop driving a sink chain SHALL query `cancellation_requested()` on the
 head sink after each `accept()` and SHALL stop pulling from the source when it
 reports `True`.
 
+The loop SHALL also query `cancellation_requested()` on the head sink once
+after `begin()` and before its **first** pull, and SHALL pull nothing at all
+when it already reports `True`. A chain can be cancelled before it has seen any
+element — a limiting op capped at zero is cancelled from the moment it begins —
+and without this query the loop would pull, and push through every upstream
+operation, one element whose result is discarded.
+
 A sink that pushes more than one element downstream without returning to the
 driving loop — a buffering sink flushing from `end()`, or a flattening sink
 expanding one accepted element — SHALL query `downstream.cancellation_requested()`
@@ -134,6 +141,10 @@ SHALL therefore keep the value it settled on.
 #### Scenario: The driving loop stops pulling once cancellation is requested
 - **WHEN** a chain containing a limiting sink capped at `n` is driven over a source with more than `n` elements
 - **THEN** exactly `n` elements are pulled from the source, and no `(n+1)`th pull occurs
+
+#### Scenario: A loop that begins already cancelled pulls nothing
+- **WHEN** a chain whose head sink reports `cancellation_requested()` as `True` immediately after `begin()` is driven over a non-empty source
+- **THEN** no element is pulled from the source at all, and no upstream sink's `accept()` is invoked
 
 #### Scenario: end() still runs after cancellation
 - **WHEN** a driving loop stops early because `cancellation_requested()` reported `True`

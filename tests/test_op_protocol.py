@@ -94,7 +94,7 @@ async def test_a_stateless_ops_sink_begins_on_an_empty_state_map() -> None:
     # when
     await sink.begin({})
     # then begin propagated downstream, creating the bridge's container
-    assert bridge.drain() == []
+    assert bridge.buffer == []
 
 
 @pytest.mark.asyncio

@@ -163,16 +163,24 @@ class TerminalSink(Sink[T]):
 
 class GeneratorBridgeSink(TerminalSink[T]):
     """Occupies the terminal seat so a pushed chain can be exposed as an
-    AsyncGenerator: buffers pushed elements for the driving loop to drain and
-    yield."""
+    AsyncGenerator: buffers pushed elements for the driving loop to yield.
+
+    The driving loop reads `buffer` directly and clears it in place rather than
+    calling a drain() that hands back a fresh list - that ran once per element,
+    on the hot path. Clearing after the yields is safe because nothing can push
+    into a bridge whose driving loop is suspended: that loop is the only thing
+    driving accept(), and each ParallelStream branch has its own bridge."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        # a plain attribute, not a property: the driving loop reads it twice
+        # per element, and a descriptor call there would give back most of
+        # what dropping the per-element allocation buys
+        self.buffer: list[T] = []
 
     def _create_container(self) -> list[T]:
-        return []
+        self.buffer = []
+        return self.buffer
 
     async def accept(self, element: T) -> None:
         self._container.append(element)
-
-    def drain(self) -> list[T]:
-        drained = self._container
-        self._container = []
-        return drained

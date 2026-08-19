@@ -117,3 +117,70 @@ async def test_limit_state_fresh_on_second_composition() -> None:
     # source is exhausted after the first run, but a second composition must
     # not raise or silently reuse the first run's size counter
     assert second == []
+
+
+@pytest.mark.asyncio
+async def test_limit_zero_does_not_run_upstream_ops() -> None:
+    # given: limit(0) is cancelled from the moment it begins, so nothing
+    # upstream of it should ever see an element
+    seen: list[int] = []
+
+    # when
+    lst = await Stream.of([1, 2, 3]).peek(seen.append).limit(0).collect(to_list)
+
+    # then
+    assert lst == []
+    assert seen == []
+
+
+@pytest.mark.asyncio
+async def test_limit_zero_does_not_pull_from_source() -> None:
+    # given: a source that records every pull before yielding
+    pulled: list[int] = []
+
+    def source():
+        for i in [1, 2, 3]:
+            pulled.append(i)
+            yield i
+
+    # when
+    lst = await Stream.of(source()).limit(0).collect(to_list)
+
+    # then
+    assert lst == []
+    assert pulled == []
+
+
+@pytest.mark.asyncio
+async def test_limit_zero_on_parallel_stream_yields_nothing() -> None:
+    # given
+    seen: list[int] = []
+
+    # when
+    lst = await Stream.of([1, 2, 3, 4]).parallel().peek(seen.append).limit(0).collect(to_list)
+
+    # then
+    assert lst == []
+    assert seen == []
+
+
+@pytest.mark.asyncio
+async def test_limit_zero_still_runs_the_full_sink_lifecycle() -> None:
+    # given a chain that pulled nothing must still have been begun and ended:
+    # sorted() flushes from end(), so an unended chain would silently swallow
+    # a downstream terminal's result rather than returning an empty one
+    lst = await Stream.of([3, 1, 2]).sorted().limit(0).collect(to_list)
+
+    # then
+    assert lst == []
+
+
+@pytest.mark.asyncio
+async def test_limit_zero_terminal_still_returns_its_empty_result() -> None:
+    # when: a terminal driven over a chain that pulls nothing
+    total = await Stream.of([1, 2, 3]).limit(0).count()
+    found = await Stream.of([1, 2, 3]).limit(0).find_first()
+
+    # then
+    assert total == 0
+    assert found is None

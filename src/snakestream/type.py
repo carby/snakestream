@@ -21,7 +21,7 @@ Consumer = Callable[[T], None | Awaitable[None]]
 CloseHandler = Callable[[], None]
 
 # Terminals
-Accumulator = Callable[[T, T | R], T | R]
+Accumulator = Callable[[T, T | R], T | R | Awaitable[T | R]]
 BinaryOperator = Callable[[T, T], T | Awaitable[T]]
 Supplier = Callable[[], R | Awaitable[R]]
 BiConsumer = Callable[[R, T], None | Awaitable[None]]

@@ -15,6 +15,7 @@ from snakestream.type import (
     FlatMapper,
     Mapper,
     Predicate,
+    StateMap,
 )
 
 
@@ -160,6 +161,14 @@ class _LimitSink(StatefulSink[T]):
         super().__init__(downstream, op)
         self._max_size = max_size
         self._cancelled = False
+
+    async def begin(self, state_map: StateMap) -> None:
+        # super() first: StatefulSink.begin() is what resolves self._state.
+        # Settling the flag here rather than only in accept() is what lets a
+        # limit(0) - or a branch whose shared counter is already full - report
+        # cancellation before the driving loop issues its first pull.
+        await super().begin(state_map)
+        self._cancelled = self._state.value >= self._max_size
 
     async def accept(self, element: Any) -> None:
         if self._state.value >= self._max_size:
