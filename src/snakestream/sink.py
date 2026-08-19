@@ -1,9 +1,21 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Generic
+from typing import Any, ClassVar, Generic
+from collections.abc import Callable
 
 from snakestream.type import StateMap, T
+
+
+class Counter:
+    """A mutable integer box. An op's shared count travels through the state
+    map as one of these, so every sink built from that op increments the same
+    instance."""
+
+    __slots__ = ("value",)
+
+    def __init__(self, value: int = 0) -> None:
+        self.value = value
 
 
 class Sink(ABC, Generic[T]):
@@ -41,6 +53,42 @@ class Op(ABC):
         return None
 
 
+class StatelessOp(Op):
+    """An Op that holds the arguments it was constructed with and hands them to
+    its sink class, in that order, after the downstream.
+
+    Stateless here means no *shared* state — nothing that has to cross
+    ParallelStream's racing branches. A sink may still buffer locally: `sorted`
+    holds the whole stream in its sink and is still a StatelessOp, because that
+    buffer belongs to one sink and is never shared with another."""
+
+    _sink_cls: ClassVar[Callable[..., Sink[Any]]]
+
+    def __init__(self, *args: Any) -> None:
+        self._args = args
+
+    def link(self, downstream: Sink[Any]) -> Sink[Any]:
+        return self._sink_cls(downstream, *self._args)
+
+
+class StatefulOp(Op):
+    """An Op whose sinks share state across the chains built from it (see
+    ParallelStream). Like StatelessOp, but link() passes the op itself as the
+    sink's second argument, so the sink can key the state map by it.
+
+    A subclass sets _sink_cls and overrides make_shared_state() to declare what
+    that state is — the only place that shape is stated, since StatefulSink
+    also falls back to that factory when the map holds no entry."""
+
+    _sink_cls: ClassVar[Callable[..., Sink[Any]]]
+
+    def __init__(self, *args: Any) -> None:
+        self._args = args
+
+    def link(self, downstream: Sink[Any]) -> Sink[Any]:
+        return self._sink_cls(downstream, self, *self._args)
+
+
 class IntermediateSink(Sink[T]):
     """Base for sinks that hold exactly one downstream sink and push results
     to it. begin()/end() propagate down the chain by default; a subclass that
@@ -58,6 +106,27 @@ class IntermediateSink(Sink[T]):
 
     def cancellation_requested(self) -> bool:
         return self.downstream.cancellation_requested()
+
+
+class StatefulSink(IntermediateSink[T]):
+    """Base for sinks whose state may be shared with the other sinks built from
+    the same op. begin() resolves that state once: the entry the state map
+    holds for this sink's op, or — when the map has none — a fresh instance
+    from the op's own make_shared_state(), so shared and local state are always
+    the same shape.
+
+    self._state is only meaningful from begin() onwards, which the protocol
+    guarantees runs before the first accept()."""
+
+    def __init__(self, downstream: Sink[Any], op: Op) -> None:
+        super().__init__(downstream)
+        self._op = op
+        self._state: Any = None
+
+    async def begin(self, state_map: StateMap) -> None:
+        shared = state_map.get(self._op)
+        self._state = self._op.make_shared_state() if shared is None else shared
+        await super().begin(state_map)
 
 
 class TerminalSink(Sink[T]):

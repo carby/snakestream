@@ -9,7 +9,7 @@ from snakestream.base_stream import BaseStream
 from snakestream.callable_dispatch import _maybe_await, is_async_callable
 from snakestream.collector import to_list
 from snakestream.exception import StreamBuildException
-from snakestream.sink import IntermediateSink, Op, Sink
+from snakestream.sink import Counter, IntermediateSink, Op, Sink, StatefulOp, StatefulSink, StatelessOp
 from snakestream.sort import check_comparator_result_type, merge_sort
 from snakestream.type import (
     R,
@@ -23,7 +23,6 @@ from snakestream.type import (
     FlatMapper,
     Mapper,
     Predicate,
-    StateMap,
     Supplier,
 )
 
@@ -63,12 +62,8 @@ class _FilterSink(IntermediateSink[T]):
             await self.downstream.accept(element)
 
 
-class _FilterOp(Op):
-    def __init__(self, predicate: Predicate) -> None:
-        self._predicate = predicate
-
-    def link(self, downstream: Sink[Any]) -> Sink[Any]:
-        return _FilterSink(downstream, self._predicate)
+class _FilterOp(StatelessOp):
+    _sink_cls = _FilterSink
 
 
 class _MapSink(IntermediateSink[T]):
@@ -90,12 +85,8 @@ class _MapSink(IntermediateSink[T]):
         await self.downstream.accept(r)
 
 
-class _MapOp(Op):
-    def __init__(self, mapper: Mapper) -> None:
-        self._mapper = mapper
-
-    def link(self, downstream: Sink[Any]) -> Sink[Any]:
-        return _MapSink(downstream, self._mapper)
+class _MapOp(StatelessOp):
+    _sink_cls = _MapSink
 
 
 class _PeekSink(IntermediateSink[T]):
@@ -117,12 +108,8 @@ class _PeekSink(IntermediateSink[T]):
         await self.downstream.accept(element)
 
 
-class _PeekOp(Op):
-    def __init__(self, consumer: Consumer) -> None:
-        self._consumer = consumer
-
-    def link(self, downstream: Sink[Any]) -> Sink[Any]:
-        return _PeekSink(downstream, self._consumer)
+class _PeekOp(StatelessOp):
+    _sink_cls = _PeekSink
 
 
 class _SortedSink(IntermediateSink[T]):
@@ -151,13 +138,8 @@ class _SortedSink(IntermediateSink[T]):
         await super().end()
 
 
-class _SortedOp(Op):
-    def __init__(self, comparator: Comparator | None, reverse: bool) -> None:
-        self._comparator = comparator
-        self._reverse = reverse
-
-    def link(self, downstream: Sink[Any]) -> Sink[Any]:
-        return _SortedSink(downstream, self._comparator, self._reverse)
+class _SortedOp(StatelessOp):
+    _sink_cls = _SortedSink
 
 
 class _FlatMapSink(IntermediateSink[T]):
@@ -173,61 +155,41 @@ class _FlatMapSink(IntermediateSink[T]):
                     break
 
 
-class _FlatMapOp(Op):
-    def __init__(self, flat_mapper: FlatMapper) -> None:
-        self._flat_mapper = flat_mapper
-
-    def link(self, downstream: Sink[Any]) -> Sink[Any]:
-        return _FlatMapSink(downstream, self._flat_mapper)
+class _FlatMapOp(StatelessOp):
+    _sink_cls = _FlatMapSink
 
 
-class _DistinctSink(IntermediateSink[T]):
-    def __init__(self, downstream: Sink[Any], op: _DistinctOp) -> None:
-        super().__init__(downstream)
-        self._op = op
-        self._seen: set = set()
-
-    async def begin(self, state_map: StateMap) -> None:
-        self._seen = state_map[self._op] if self._op in state_map else set()
-        await super().begin(state_map)
-
+class _DistinctSink(StatefulSink[T]):
     async def accept(self, element: Any) -> None:
-        if element in self._seen:
+        if element in self._state:
             return
-        self._seen.add(element)
+        self._state.add(element)
         await self.downstream.accept(element)
 
 
-class _DistinctOp(Op):
+class _DistinctOp(StatefulOp):
+    _sink_cls = _DistinctSink
+
     def make_shared_state(self) -> set:
         return set()
 
-    def link(self, downstream: Sink[Any]) -> Sink[Any]:
-        return _DistinctSink(downstream, self)
 
-
-class _LimitSink(IntermediateSink[T]):
-    def __init__(self, downstream: Sink[Any], op: _LimitOp, max_size: int) -> None:
-        super().__init__(downstream)
-        self._op = op
+class _LimitSink(StatefulSink[T]):
+    def __init__(self, downstream: Sink[Any], op: Op, max_size: int) -> None:
+        super().__init__(downstream, op)
         self._max_size = max_size
-        self._count: list[int] = [0]
         self._cancelled = False
 
-    async def begin(self, state_map: StateMap) -> None:
-        self._count = state_map[self._op] if self._op in state_map else [0]
-        await super().begin(state_map)
-
     async def accept(self, element: Any) -> None:
-        if self._count[0] >= self._max_size:
+        if self._state.value >= self._max_size:
             self._cancelled = True
             return
         # reserve the slot before pushing downstream: a genuinely async
         # downstream can cede control, so checking and reserving must be
         # atomic (no await between them) to stay correct across racing
-        # branches sharing self._count
-        self._count[0] += 1
-        if self._count[0] >= self._max_size:
+        # branches sharing self._state
+        self._state.value += 1
+        if self._state.value >= self._max_size:
             self._cancelled = True
         await self.downstream.accept(element)
 
@@ -235,44 +197,30 @@ class _LimitSink(IntermediateSink[T]):
         return self._cancelled or super().cancellation_requested()
 
 
-class _LimitOp(Op):
-    def __init__(self, max_size: int) -> None:
-        self._max_size = max_size
+class _LimitOp(StatefulOp):
+    _sink_cls = _LimitSink
 
-    def make_shared_state(self) -> list[int]:
-        return [0]
-
-    def link(self, downstream: Sink[Any]) -> Sink[Any]:
-        return _LimitSink(downstream, self, self._max_size)
+    def make_shared_state(self) -> Counter:
+        return Counter()
 
 
-class _SkipSink(IntermediateSink[T]):
-    def __init__(self, downstream: Sink[Any], op: _SkipOp, n: int) -> None:
-        super().__init__(downstream)
-        self._op = op
+class _SkipSink(StatefulSink[T]):
+    def __init__(self, downstream: Sink[Any], op: Op, n: int) -> None:
+        super().__init__(downstream, op)
         self._n = n
-        self._skipped: list[int] = [0]
-
-    async def begin(self, state_map: StateMap) -> None:
-        self._skipped = state_map[self._op] if self._op in state_map else [0]
-        await super().begin(state_map)
 
     async def accept(self, element: Any) -> None:
-        if self._skipped[0] < self._n:
-            self._skipped[0] += 1
+        if self._state.value < self._n:
+            self._state.value += 1
             return
         await self.downstream.accept(element)
 
 
-class _SkipOp(Op):
-    def __init__(self, n: int) -> None:
-        self._n = n
+class _SkipOp(StatefulOp):
+    _sink_cls = _SkipSink
 
-    def make_shared_state(self) -> list[int]:
-        return [0]
-
-    def link(self, downstream: Sink[Any]) -> Sink[Any]:
-        return _SkipSink(downstream, self, self._n)
+    def make_shared_state(self) -> Counter:
+        return Counter()
 
 
 class Stream(BaseStream[T]):
