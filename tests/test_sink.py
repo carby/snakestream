@@ -460,3 +460,59 @@ async def test_generator_bridge_over_empty_source() -> None:
     await bridge.begin({})
     await bridge.end()
     assert bridge.drain() == []
+
+
+# --- Short-circuiting terminal sink -----------------------------------------
+
+
+class _FirstOnlyTerminalSink(TerminalSink):
+    """A terminal whose answer is settled by the first element: it reports
+    cancellation from that point on."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._cancelled = False
+
+    def _create_container(self) -> None:
+        return None
+
+    async def accept(self, element) -> None:
+        if self._cancelled:
+            return
+        self._container = element
+        self._cancelled = True
+
+    def cancellation_requested(self) -> bool:
+        return self._cancelled
+
+
+@pytest.mark.asyncio
+async def test_terminal_cancellation_is_visible_at_the_head_of_a_chain() -> None:
+    terminal = _FirstOnlyTerminalSink()
+    head = _PassThroughOp().link(_PassThroughOp().link(terminal))
+
+    assert head.cancellation_requested() is False
+    await head.begin({})
+    await head.accept(1)
+
+    assert head.cancellation_requested() is True
+
+
+@pytest.mark.asyncio
+async def test_terminal_cancellation_stops_the_driving_loop_and_still_finishes() -> None:
+    terminal = _FirstOnlyTerminalSink()
+    log: list = []
+    counting = _CountingOp(log)
+    head = counting.link(_PassThroughOp().link(terminal))
+    pulled = []
+
+    def source():
+        for i in [1, 2, 3]:
+            pulled.append(i)
+            yield i
+
+    await _drive(head, source())
+
+    assert pulled == [1]
+    assert ("end", counting) in log
+    assert terminal.result() == 1

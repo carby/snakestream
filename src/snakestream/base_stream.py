@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any, Generic
 from collections.abc import AsyncGenerator, AsyncIterable
 
 from snakestream.exception import IllegalStateException
-from snakestream.sink import GeneratorBridgeSink, Op, Sink
+from snakestream.sink import GeneratorBridgeSink, Op, Sink, TerminalSink
 from snakestream.type import T, CloseHandler, StateMap
 
 if TYPE_CHECKING:
@@ -91,6 +91,30 @@ class BaseStream(Generic[T]):
             await head.end()
             for out in bridge.drain():
                 yield out
+
+    async def _drive_to(self, terminal: TerminalSink[Any]) -> Any:
+        """Drive the chain into a terminal sink and return its result.
+
+        The dispatching form: ParallelStream overrides it. A terminal that
+        needs encounter order regardless of the stream's mode calls
+        _drive_to_sequential() directly instead."""
+        return await self._drive_to_sequential(terminal)
+
+    async def _drive_to_sequential(self, terminal: TerminalSink[Any]) -> Any:
+        """Push source -> head -> terminal in a single ordered pass, with
+        nothing buffered on the way: the last intermediate sink pushes straight
+        into the terminal. Never overridden, so it stays ordered on a
+        ParallelStream too."""
+        self._check_not_consumed()
+        head = self._sequential(self._chain, terminal)
+        async with _maybe_aclosing(self._stream) as src:
+            await head.begin({})
+            async for item in src:
+                await head.accept(item)
+                if head.cancellation_requested():
+                    break
+            await head.end()
+        return terminal.result()
 
     def _compose(self) -> AsyncGenerator[T, None]:
         return self._drive(self._chain[:], self._stream)
