@@ -37,12 +37,12 @@ def test_every_shipped_op_is_an_op(op_cls) -> None:
 
 def test_a_minimal_op_reports_no_shared_state() -> None:
     # given an op that implements only link()
-    class _StatelessOp(Op):
+    class _LinkOnlyOp(Op):
         def link(self, downstream: Sink) -> Sink:
             return downstream
 
     # then
-    assert _StatelessOp().make_shared_state() is None
+    assert _LinkOnlyOp().make_shared_state() is None
 
 
 def test_an_op_without_link_cannot_be_instantiated() -> None:
@@ -63,8 +63,10 @@ def test_stateful_op_makes_a_fresh_empty_container_each_call(op) -> None:
     # then
     assert first is not None
     assert first is not second
-    assert first == second
-    assert first in ([0], set())
+    # "empty" is per container type: an empty set for distinct, a zeroed
+    # counter for limit/skip
+    for container in (first, second):
+        assert container == set() if isinstance(container, set) else container.value == 0
 
 
 @pytest.mark.asyncio

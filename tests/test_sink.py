@@ -1,6 +1,15 @@
 import pytest
 
-from snakestream.sink import GeneratorBridgeSink, IntermediateSink, Op, TerminalSink
+from snakestream.sink import (
+    Counter,
+    GeneratorBridgeSink,
+    IntermediateSink,
+    Op,
+    StatefulOp,
+    StatefulSink,
+    StatelessOp,
+    TerminalSink,
+)
 
 
 class _RecordingTerminalSink(TerminalSink):
@@ -80,15 +89,15 @@ class _BufferingSink(IntermediateSink):
         await super().end()
 
 
-class _StatefulOp(Op):
+class _TallyingOp(Op):
     def make_shared_state(self) -> list:
         return [0]
 
     def link(self, downstream):
-        return _StatefulSink(downstream, self)
+        return _TallyingSink(downstream, self)
 
 
-class _StatefulSink(IntermediateSink):
+class _TallyingSink(IntermediateSink):
     def __init__(self, downstream, op) -> None:
         super().__init__(downstream)
         self._op = op
@@ -216,7 +225,7 @@ async def test_a_sink_may_push_elements_from_end_rather_than_accept() -> None:
 
 @pytest.mark.asyncio
 async def test_stateful_sink_uses_state_supplied_in_the_map() -> None:
-    op = _StatefulOp()
+    op = _TallyingOp()
     sink = op.link(_RecordingTerminalSink())
     shared = [10]
     state_map = {op: shared}
@@ -228,7 +237,7 @@ async def test_stateful_sink_uses_state_supplied_in_the_map() -> None:
 
 @pytest.mark.asyncio
 async def test_stateful_sink_falls_back_to_fresh_local_state() -> None:
-    op = _StatefulOp()
+    op = _TallyingOp()
     sink = op.link(_RecordingTerminalSink())
 
     # no entry for op in the state map
@@ -239,7 +248,7 @@ async def test_stateful_sink_falls_back_to_fresh_local_state() -> None:
 
 @pytest.mark.asyncio
 async def test_two_chains_from_one_op_share_one_state_instance_via_shared_map() -> None:
-    op = _StatefulOp()
+    op = _TallyingOp()
     state_map = {op: op.make_shared_state()}
     sink_a = op.link(_RecordingTerminalSink())
     sink_b = op.link(_RecordingTerminalSink())
@@ -248,6 +257,122 @@ async def test_two_chains_from_one_op_share_one_state_instance_via_shared_map() 
     await _drive(sink_b, [1, 1], state_map)
 
     assert state_map[op] == [3]
+
+
+# --- The StatefulOp/StatefulSink bases --------------------------------------
+
+
+class _CountingStatefulSink(StatefulSink):
+    async def accept(self, element) -> None:
+        self._state.value += 1
+        await self.downstream.accept(element)
+
+
+class _CountingStatefulOp(StatefulOp):
+    _sink_cls = _CountingStatefulSink
+
+    def make_shared_state(self) -> Counter:
+        return Counter()
+
+
+@pytest.mark.asyncio
+async def test_fallback_state_comes_from_the_ops_own_factory() -> None:
+    op = _CountingStatefulOp()
+    sink = op.link(_RecordingTerminalSink())
+
+    # no entry for op in the state map
+    await _drive(sink, [1, 2], {})
+
+    fresh = op.make_shared_state()
+    assert type(sink._state) is type(fresh)
+    assert sink._state.value == 2
+
+    # ...and the fallback is this sink's own, not shared with any other
+    other = op.link(_RecordingTerminalSink())
+    await _drive(other, [1], {})
+    assert other._state is not sink._state
+    assert sink._state.value == 2
+
+
+@pytest.mark.asyncio
+async def test_stateful_base_sink_uses_the_state_supplied_in_the_map() -> None:
+    op = _CountingStatefulOp()
+    sink = op.link(_RecordingTerminalSink())
+    shared = Counter(10)
+
+    await _drive(sink, [1, 2], {op: shared})
+
+    assert sink._state is shared
+    assert shared.value == 12
+
+
+@pytest.mark.asyncio
+async def test_two_stateful_base_sinks_from_one_op_share_one_counter() -> None:
+    op = _CountingStatefulOp()
+    state_map = {op: op.make_shared_state()}
+    sink_a = op.link(_RecordingTerminalSink())
+    sink_b = op.link(_RecordingTerminalSink())
+
+    await _drive(sink_a, [1], state_map)
+    await _drive(sink_b, [1, 1], state_map)
+
+    assert state_map[op].value == 3
+
+
+def test_counter_starts_at_zero_and_instances_are_independent() -> None:
+    first = Counter()
+    second = Counter()
+
+    assert first.value == 0
+    assert second.value == 0
+
+    first.value += 1
+
+    assert first.value == 1
+    assert second.value == 0
+    assert Counter(7).value == 7
+
+
+def test_stateless_op_hands_its_args_to_its_sink() -> None:
+    class _ArgsSink(IntermediateSink):
+        def __init__(self, downstream, *args) -> None:
+            super().__init__(downstream)
+            self.args = args
+
+        async def accept(self, element) -> None:
+            await self.downstream.accept(element)
+
+    class _ArgsOp(StatelessOp):
+        _sink_cls = _ArgsSink
+
+    terminal = _RecordingTerminalSink()
+    sink = _ArgsOp("a", 2).link(terminal)
+
+    assert sink.args == ("a", 2)
+    assert sink.downstream is terminal
+    assert _ArgsOp("a", 2).make_shared_state() is None
+
+
+def test_stateful_op_hands_itself_then_its_args_to_its_sink() -> None:
+    class _ArgsSink(StatefulSink):
+        def __init__(self, downstream, op, *args) -> None:
+            super().__init__(downstream, op)
+            self.args = args
+
+        async def accept(self, element) -> None:
+            await self.downstream.accept(element)
+
+    class _ArgsOp(StatefulOp):
+        _sink_cls = _ArgsSink
+
+        def make_shared_state(self) -> Counter:
+            return Counter()
+
+    op = _ArgsOp("a", 2)
+    sink = op.link(_RecordingTerminalSink())
+
+    assert sink._op is op
+    assert sink.args == ("a", 2)
 
 
 # --- Cancellation -------------------------------------------------------

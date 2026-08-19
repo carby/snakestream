@@ -19,9 +19,10 @@ but left the codebase half-converted: the intermediate ops moved to the push
 protocol, the terminals and collectors did not, and the op/sink pair convention
 it introduced has no type backing it. These are the cleanup.
 
-The first of them — introducing an `Op` ABC and typing the chain against it —
-has landed; see **Done** below. The items remaining here are the ones it
-unblocks and the ones that never depended on it.
+The first two of them — introducing an `Op` ABC and typing the chain against
+it, then collapsing the eight op classes onto shared bases — have landed; see
+**Done** below. The items remaining here are the ones they unblock and the ones
+that never depended on them.
 
 A seventh item — replacing the hand-copied async-dispatch pattern with a
 `CallSite` object — was proposed, measured, and rejected on the evidence; see
@@ -30,8 +31,7 @@ deliberately-accepted cost rather than an open item.
 
 | Item | Why now |
 |---|---|
-| **Collapse the seven near-identical `*Op` classes** in `stream.py` (`_FilterOp`, `_MapOp`, `_PeekOp`, `_SortedOp`, `_FlatMapOp`, `_LimitOp`, `_SkipOp`) — each is the same three lines of "hold the ctor args, hand them to the sink" — onto a shared base that stores `*args` and forwards them to a `_sink_cls`. In the same pass, give the three stateful sinks a `StatefulSink` base: `self._x = state_map[self._op] if self._op in state_map else <default>` appears verbatim at `stream.py:191`, `218`, and `257` and is just `state_map.get(self._op, default)`. Also replace `_LimitSink._count: list[int]` and `_SkipSink._skipped: list[int]` — one-element lists used as mutable boxes — with a small named counter type. | Unblocked: the `Op` ABC it depends on has landed (see **Done**). The stateful three still need to pass `self` as their state key so they stay explicit, but the other four collapse to a class attribute each. The one-element-list boxes matter beyond taste: `_LimitSink.accept`'s reserve-before-await race comment (`stream.py:225-231`) is the subtlest code in the file and `self._count[0] >= self._max_size` is the wrong notation to read it in. |
-| **Split `stream.py`'s op/sink definitions into `ops.py`.** Lines 46-276 are the eight op/sink pairs; lines 278-537 are the public `Stream` API. | 537 lines of two unrelated concerns, and the file someone opens looking for the public surface makes them scroll past the whole execution layer first. Cheap once the item above has shrunk the op half. Sequenced after it so the move is a move and not a move-plus-rewrite. |
+| **Split `stream.py`'s op/sink definitions into `ops.py`.** Lines 45-223 are the eight op/sink pairs; lines 226-485 are the public `Stream` API. | 485 lines of two unrelated concerns, and the file someone opens looking for the public surface makes them scroll past the whole execution layer first. **Now ready:** the op-collapse item above has landed (see **Done**), so the op half is down to eight two-to-four-line declarations and this is a pure move — cut the two blocks, add the imports, change nothing else. |
 | **Convert the terminal operations to real `TerminalSink`s** — `reduce`, `count`, `for_each`, `_match`, `_min_max`, `find_first` — and add a `BaseStream._drive_to(terminal)` that pushes source → head → terminal and returns `terminal.result()`. Keep `_drive()`/`GeneratorBridgeSink` only for what genuinely needs a generator: `iterator()`, the `sequential()`/`parallel()` handoff, `_concat`, and collectors. | This is the half-conversion the redesign explicitly scoped out (design decision (a): "push stays internal only"), and it's the one with real consequences now that the rest has settled. Today every terminal pulls from `_compose()`, which drives the push chain into `GeneratorBridgeSink`, which buffers each element into a list so the driving loop can yield it so the terminal can push it into an accumulator — push → buffer → pull → push per element. Two costs: (i) `TerminalSink`'s `_create_container`/`_finish`/`result()` apparatus has exactly one subclass, the bridge, which overrides most of it, so the "terminal seat" the redesign shipped is currently scaffolding for terminals that were never written; (ii) short-circuiting terminals can't participate in `cancellation_requested()` — `any_match` just abandons the generator and can't tell an upstream `_LimitSink` or a `flat_map` inner loop to stop, which is the same class of bug `limit()` was fixed for. Should also recover part of the ~24.5% the redesign measured but gave back to the bridge's buffer-and-yield step. Larger than the items above and moves real semantics, so it wants its own change; listed last in **Now** rather than moved to **Next** because the terminal seat it fills already exists and the Collector redesign in **Next** plugs into the same protocol. |
 | **Small cleanups**, batchable into one change: `for_each_ordered` (`stream.py:433`) is `for_each` (`:418`) verbatim except for `self._drive(self._chain[:], self._stream)` vs `self._compose()` — same duplication between `ParallelStream.find_first` and `Stream.find_first`; both want one private helper taking the source generator. `_sequential` (`base_stream.py:67`) does no sequential execution — it links a chain into a sink — and doesn't touch `self`, so it should be renamed and made module-level. `_derive` builds `self._chain + [op]` and `_compose` copies again with `self._chain[:]`, but `_drive` never mutates it, so the `[:]` can go. `GeneratorBridgeSink.drain()` allocates a fresh list per element in the drive loop's hot path (`base_stream.py:87`). `cancellation_requested()` is only checked *after* `accept` (`base_stream.py:89`), so a satisfied `limit()` still pulls one extra element from the source. `to_array` (`:448`) calls `_check_not_consumed` and then `collect`, which checks again. `Stream.__init__` and `ParallelStream.__init__` are pure `super().__init__` pass-throughs. `find_any` (`:458`) falls off the end implicitly where `find_first` has an explicit `return None`. | Individually trivial, collectively the reason the post-redesign read felt messy. The `cancellation_requested()` ordering and the `_sequential` rename are the two with actual substance — the rest are one-liners. Sequenced last so it can sweep up whatever the items above leave behind rather than colliding with them. |
 
@@ -62,6 +62,59 @@ core semantic.
 | **Java 9 `Stream` additions** — `takeWhile(predicate)`, `dropWhile(predicate)`, `Stream.ofNullable(t)`, and the 3-arg `iterate(seed, hasNext, next)` overload (distinct from the already-implemented 2-arg `iterate(seed, next)`). | README states the project's intent explicitly: "once we reach some sort of feature parity with Java 8 then maybe we move on to implement the improvements in Java 9." The **Now**/**Next** buckets are still closing out Java 8 parity gaps (`unordered()`, the `Collectors` framework, etc.), so pulling Java 9 work forward would jump the stated sequencing rather than reflecting lower value — revisit once Java 8 parity is substantially done. |
 
 ## Done
+
+- **Collapsed the eight op classes onto shared bases.** `sink.py` gained
+  `StatelessOp` and `StatefulOp` — both storing the arguments the op was
+  constructed with and forwarding them to a class-level `_sink_cls`, the
+  stateful one also passing `self` so its sink can key the state map — plus a
+  `StatefulSink` base and a `Counter` value type. All eight ops are now
+  declarations: five are two lines (`class _MapOp(StatelessOp): _sink_cls =
+  _MapSink`), three add a one-line `make_shared_state()`. `stream.py` went from
+  537 to 485 lines and `_DistinctSink`/`_LimitSink`/`_SkipSink` lost their
+  hand-written `begin()` overrides.
+
+  The state-map lookup written out at three sites became one `state_map.get()`
+  in `StatefulSink.begin()`, and its fallback now comes from the op's own
+  `make_shared_state()` rather than a literal retyped in the sink — so an op's
+  state shape is stated exactly once and shared and local state cannot drift.
+  That guarantee was added to the `sink-protocol` spec as a new scenario under
+  **Shared state is delivered through begin**, the change's only spec delta.
+  `_LimitSink._count: list[int]` and `_SkipSink._skipped: list[int]` became a
+  `Counter` with a `value` attribute, so the reserve-before-await race block
+  now reads `self._state.value >= self._max_size`.
+
+  Naming follows Java's `StatelessOp`/`StatefulOp`, with the class docstrings
+  pinning that the axis here is *shared* state — state crossing
+  `ParallelStream`'s branches — not local buffering, which is why the
+  whole-stream-buffering `_SortedOp` is a `StatelessOp`.
+
+  Behavior-neutral and no public API change; every name touched is private or
+  unexported, so README needed no edit. `parallel_stream.py` needed no edit
+  either — it already called `make_shared_state()` unconditionally and keyed
+  only non-`None` results. 421 tests pass at 99% coverage (six new: the
+  factory-sourced fallback, `Counter` independence, shared-counter increment
+  across two sinks from one op, and argument forwarding through both bases).
+  Two existing tests were touched: `test_op_protocol.py`'s fresh-container
+  assertion asserted emptiness as `first in ([0], set())`, which named the old
+  list representation, and two test-local doubles (`_StatelessOp`,
+  `_StatefulOp`/`_StatefulSink`) were renamed to `_LinkOnlyOp` and
+  `_TallyingOp`/`_TallyingSink` since their names now collide with the real
+  protocol classes. The doubles still subclass `Op`/`IntermediateSink`
+  directly, deliberately: their job is to pin the protocol, not the
+  convenience bases.
+
+  **Benchmark (2026-08-19, same harness: Python 3.14.5, 20,000 elements, best
+  of 5, interleaved before/after rounds to control for machine drift):** 8×
+  `.map()` 1935–2026 ns/element before, 2001–2071 after; `.skip(1).limit(n)`
+  1081–1120 before, 1037–1145 after. Run-to-run spread within either condition
+  (±5–8% on this WSL2 box) exceeds the gap between them, and the 8× `.map()`
+  path's per-element code is byte-identical across the change — everything the
+  change touches per element is the `Counter` attribute load replacing a list
+  index, and everything else (`link()`, `begin()`) runs once per composition.
+  No measurable regression.
+
+  **Unblocks** the `ops.py` split still in **Now**, which is now a pure move.
+  See `openspec/changes/collapse-op-classes`.
 
 - **Introduced an `Op` ABC** (`sink.py`) and typed the chain against it,
   completing the op/sink protocol the Sink-chain redesign left half-specified.
