@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from inspect import isawaitable
-from typing import Any, Generic, cast, overload
+from typing import Any, Generic, NamedTuple, Protocol, TypeVar, cast, overload
 from collections.abc import AsyncGenerator, Awaitable, Callable
 
 from snakestream.base_stream import _maybe_aclosing
@@ -246,6 +246,70 @@ def averaging_long(mapper: NumberMapper) -> Collector[Any, _AvgBox, float]:
 
 def averaging_double(mapper: NumberMapper) -> Collector[Any, _AvgBox, float]:
     return _averaging(mapper)
+
+
+class SummaryStatistics(NamedTuple):
+    count: int
+    sum: int | float
+    min: int | float | None
+    max: int | float | None
+    average: float
+
+
+class _SummaryBox:
+    __slots__ = ("count", "total", "least", "greatest", "is_async", "checked")
+
+    def __init__(self, seed: int | float) -> None:
+        self.count = 0
+        self.total = seed
+        self.least: int | float | None = None
+        self.greatest: int | float | None = None
+        self.is_async = False
+        self.checked = False
+
+
+def _summarizing(
+    mapper: NumberMapper, seed: int | float, coerce: Callable[[Any], Any] | None
+) -> Collector[Any, _SummaryBox, SummaryStatistics]:
+    def _supply() -> _SummaryBox:
+        box = _SummaryBox(seed)
+        box.is_async = is_async_callable(mapper)
+        return box
+
+    async def _accumulate(container: _SummaryBox, element: Any) -> None:
+        r = mapper(element)
+        if container.is_async:
+            r = await cast("Awaitable[int | float]", r)
+        elif not container.checked:
+            container.checked = True
+            if isawaitable(r):
+                container.is_async = True
+                r = await r
+        value = cast(Any, r) if coerce is None else coerce(cast(Any, r))
+        container.count += 1
+        container.total += value
+        if container.least is None or value < container.least:
+            container.least = value
+        if container.greatest is None or value > container.greatest:
+            container.greatest = value
+
+    def _finish(container: _SummaryBox) -> SummaryStatistics:
+        average = container.total / container.count if container.count else 0.0
+        return SummaryStatistics(container.count, container.total, container.least, container.greatest, average)
+
+    return Collector(_supply, _accumulate, finisher=_finish)
+
+
+def summarizing_int(mapper: NumberMapper) -> Collector[Any, _SummaryBox, SummaryStatistics]:
+    return _summarizing(mapper, 0, None)
+
+
+def summarizing_long(mapper: NumberMapper) -> Collector[Any, _SummaryBox, SummaryStatistics]:
+    return _summarizing(mapper, 0, None)
+
+
+def summarizing_double(mapper: NumberMapper) -> Collector[Any, _SummaryBox, SummaryStatistics]:
+    return _summarizing(mapper, 0.0, float)
 
 
 class _ExtremumBox:
@@ -512,3 +576,92 @@ def partitioning_by(
         return _finish_groups(downstream, container.groups)
 
     return Collector(_supply, _accumulate, finisher=_finish)
+
+
+class _MappingBox:
+    __slots__ = ("container", "mapper_is_async", "mapper_checked", "acc_is_async", "acc_checked")
+
+    def __init__(self, container: Any) -> None:
+        self.container = container
+        self.mapper_is_async = False
+        self.mapper_checked = False
+        self.acc_is_async = False
+        self.acc_checked = False
+
+
+def mapping(mapper: Mapper[T, R], downstream: Collector[R, Any, Any]) -> Collector[T, _MappingBox, Any]:
+    _check_downstream(downstream)
+
+    async def _supply() -> _MappingBox:
+        return _MappingBox(await _maybe_await(downstream.supplier))
+
+    async def _accumulate(container: _MappingBox, element: T) -> None:
+        value, container.mapper_is_async, container.mapper_checked = _classify_step(
+            mapper, container.mapper_is_async, container.mapper_checked, element
+        )
+        if container.mapper_is_async:
+            value = await value
+        r, container.acc_is_async, container.acc_checked = _classify_step(
+            downstream.accumulator, container.acc_is_async, container.acc_checked, container.container, value
+        )
+        if container.acc_is_async:
+            await r
+
+    def _finish(container: _MappingBox) -> Any:
+        finisher = downstream.finisher
+        return container.container if finisher is None else finisher(container.container)
+
+    return Collector(_supply, _accumulate, finisher=_finish)
+
+
+class _CollectAndThenBox:
+    __slots__ = ("container", "acc_is_async", "acc_checked")
+
+    def __init__(self, container: Any) -> None:
+        self.container = container
+        self.acc_is_async = False
+        self.acc_checked = False
+
+
+async def _finish_collecting_and_then(
+    downstream: Collector[Any, Any, Any], finisher: Finisher[Any, Any], container: Any
+) -> Any:
+    downstream_finisher = downstream.finisher
+    result = await _maybe_await(downstream_finisher, container) if downstream_finisher is not None else container
+    return await _maybe_await(finisher, result)
+
+
+def collecting_and_then(downstream: Collector[T, Any, R], finisher: Finisher[R, Any]) -> Collector[T, _CollectAndThenBox, Any]:
+    _check_downstream(downstream)
+
+    async def _supply() -> _CollectAndThenBox:
+        return _CollectAndThenBox(await _maybe_await(downstream.supplier))
+
+    async def _accumulate(container: _CollectAndThenBox, element: T) -> None:
+        r, container.acc_is_async, container.acc_checked = _classify_step(
+            downstream.accumulator, container.acc_is_async, container.acc_checked, container.container, element
+        )
+        if container.acc_is_async:
+            await r
+
+    def _finish(container: _CollectAndThenBox) -> Any:
+        return _finish_collecting_and_then(downstream, finisher, container.container)
+
+    return Collector(_supply, _accumulate, finisher=_finish)
+
+
+class _SupportsAdd(Protocol):
+    def add(self, item: Any) -> Any: ...
+
+
+_C = TypeVar("_C", bound=_SupportsAdd)
+
+
+def to_collection(collection_supplier: Supplier[_C]) -> Collector[Any, _C, _C]:
+    async def _supply() -> _C:
+        return await _maybe_await(collection_supplier)
+
+    def _accumulate(container: _C, element: Any) -> None:
+        container.add(element)
+
+    return Collector(_supply, _accumulate)
