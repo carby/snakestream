@@ -37,6 +37,34 @@ def is_async_callable(fn: Callable) -> bool:
 # plain `def __call__` that returns a coroutine classifies as sync but must
 # still be awaited on its first (and, by the homogeneity contract, every)
 # result.
+#
+# Sinks express the same shape against attributes instead of locals, and get
+# those attributes from the AsyncDispatch mixin below.
+
+
+class AsyncDispatch:
+    """The canonical shape's three pieces of state, for call sites that are
+    sinks: the classified callable, whether it is async, and whether the
+    one-time isawaitable() safety net has already run.
+
+    Mixed in and called from __init__ as a plain method rather than supplying
+    an __init__ of its own, so it stays out of the MRO: the eight sinks using
+    it sit on two different bases (IntermediateSink, TerminalSink) with
+    different constructor signatures, and several take further arguments.
+
+    The state is per-sink, and a sink is built once per composition - so
+    classification never leaks across compositions or across a ParallelStream's
+    branches, which is the same requirement the comment above places on the
+    generator form's locals."""
+
+    _fn: Callable
+    _is_async: bool
+    _checked: bool
+
+    def _init_dispatch(self, fn: Callable) -> None:
+        self._fn = fn
+        self._is_async = is_async_callable(fn)
+        self._checked = False
 
 
 def _classify_step(fn: Callable, is_async: bool, checked: bool, *args: Any) -> tuple[Any, bool, bool]:

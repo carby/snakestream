@@ -4,7 +4,7 @@ from inspect import isawaitable
 from typing import Any, cast
 from collections.abc import Awaitable
 
-from snakestream.callable_dispatch import is_async_callable
+from snakestream.callable_dispatch import AsyncDispatch
 from snakestream.sink import Counter, TerminalSink
 from snakestream.sort import check_comparator_result_type
 from snakestream.type import (
@@ -34,18 +34,16 @@ class _CountSink(TerminalSink[T]):
         return container.value
 
 
-class _ForEachSink(TerminalSink[T]):
+class _ForEachSink(AsyncDispatch, TerminalSink[T]):
     def __init__(self, consumer: Consumer) -> None:
         super().__init__()
-        self._consumer = consumer
-        self._is_async = is_async_callable(consumer)
-        self._checked = False
+        self._init_dispatch(consumer)
 
     def _create_container(self) -> None:
         return None
 
     async def accept(self, element: Any) -> None:
-        r = self._consumer(element)
+        r = self._fn(element)
         if self._is_async:
             await cast("Awaitable[None]", r)
         elif not self._checked:
@@ -58,7 +56,7 @@ class _ForEachSink(TerminalSink[T]):
         return None
 
 
-class _ReduceSink(TerminalSink[T]):
+class _ReduceSink(AsyncDispatch, TerminalSink[T]):
     """Folds every element into an accumulated value. An identity of _UNSET
     means the no-identity overload: the first element seeds the fold instead,
     and an empty source finishes as None."""
@@ -66,9 +64,7 @@ class _ReduceSink(TerminalSink[T]):
     def __init__(self, identity: Any, accumulator: Accumulator) -> None:
         super().__init__()
         self._identity = identity
-        self._accumulator = accumulator
-        self._is_async = is_async_callable(accumulator)
-        self._checked = False
+        self._init_dispatch(accumulator)
 
     def _create_container(self) -> Any:
         return self._identity
@@ -77,7 +73,7 @@ class _ReduceSink(TerminalSink[T]):
         if self._container is _UNSET:
             self._container = element
             return
-        r = self._accumulator(self._container, element)
+        r = self._fn(self._container, element)
         if self._is_async:
             r = await cast("Awaitable[Any]", r)
         elif not self._checked:
@@ -91,13 +87,11 @@ class _ReduceSink(TerminalSink[T]):
         return None if container is _UNSET else container
 
 
-class _MinMaxSink(TerminalSink[T]):
+class _MinMaxSink(AsyncDispatch, TerminalSink[T]):
     def __init__(self, comparator: Comparator, asc: bool) -> None:
         super().__init__()
-        self._comparator = comparator
         self._asc = asc
-        self._is_async = is_async_callable(comparator)
-        self._checked = False
+        self._init_dispatch(comparator)
 
     def _create_container(self) -> Any:
         return _UNSET
@@ -109,7 +103,7 @@ class _MinMaxSink(TerminalSink[T]):
 
         # comparator(element, found): negative if element orders before found,
         # positive if after. found (the earlier element) is kept on a tie.
-        sign = self._comparator(element, self._container)
+        sign = self._fn(element, self._container)
         if self._is_async:
             sign = await cast("Awaitable[int]", sign)
         elif not self._checked:
@@ -131,7 +125,7 @@ class _MinMaxSink(TerminalSink[T]):
         return None if container is _UNSET else container
 
 
-class _MutableReductionSink(TerminalSink[T]):
+class _MutableReductionSink(AsyncDispatch, TerminalSink[T]):
     """collect(supplier, accumulator, combiner)'s terminal. The supplier is
     called once per composition by the caller, so this sink is handed the
     already-built container rather than building it itself."""
@@ -139,15 +133,13 @@ class _MutableReductionSink(TerminalSink[T]):
     def __init__(self, container: Any, accumulator: BiConsumer) -> None:
         super().__init__()
         self._supplied = container
-        self._accumulator = accumulator
-        self._is_async = is_async_callable(accumulator)
-        self._checked = False
+        self._init_dispatch(accumulator)
 
     def _create_container(self) -> Any:
         return self._supplied
 
     async def accept(self, element: Any) -> None:
-        r = self._accumulator(self._container, element)
+        r = self._fn(self._container, element)
         if self._is_async:
             await cast("Awaitable[None]", r)
         elif not self._checked:
@@ -185,18 +177,17 @@ class _FindSink(TerminalSink[T]):
         return None if container is _UNSET else container
 
 
-class _MatchSink(TerminalSink[T]):
+class _MatchSink(AsyncDispatch, TerminalSink[T]):
     """Backs all_match/any_match/none_match. short_circuit_on is the predicate
     result that settles the answer; default is the answer for a source that
     never produces it (including an empty one)."""
 
     def __init__(self, predicate: Predicate, short_circuit_on: bool, default: bool) -> None:
         super().__init__()
-        self._predicate = predicate
         self._short_circuit_on = short_circuit_on
         self._default = default
-        self._is_async = is_async_callable(predicate)
-        self._checked = False
+        self._init_dispatch(predicate)
+        # short-circuit state, not dispatch state: it belongs to this sink
         self._cancelled = False
 
     def _create_container(self) -> bool:
@@ -208,7 +199,7 @@ class _MatchSink(TerminalSink[T]):
         # cancellation was requested.
         if self._cancelled:
             return
-        r = self._predicate(element)
+        r = self._fn(element)
         if self._is_async:
             r = await cast("Awaitable[bool]", r)
         elif not self._checked:

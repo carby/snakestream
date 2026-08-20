@@ -6,38 +6,34 @@ the review-pass notes below. Completed items from that review remain in
 
 ## Now
 
-Actively being picked up. The **Small cleanups** batch that led this list has
-landed (2026-08-19) and moved to **Done**; the three items below are what
+Actively being picked up. The duplication-collapse batch that led this list
+has landed (2026-08-20) and moved to **Done**; the two items below are what
 remains, renumbered. **Next** is empty, and nothing was promoted into it —
 the parked **Later** bucket is blocked on decisions, not on sequencing.
 
 Ordered by dependency: item 1 blocks nothing and is blocked by nothing;
-item 3 is the only real dependency edge, and it points at item 2.
+item 2 is the only real dependency edge, and it points at item 1.
 
 The cleanup effort these grew out of started with a code-quality read of `src/`
 immediately after the Sink-chain redesign landed (2026-08-18). The redesign
 shipped its stated scope but left the codebase half-converted: the intermediate
 ops moved to the push protocol, the terminals and collectors did not, and the
-op/sink pair convention it introduced had no type backing it. Five of those
+op/sink pair convention it introduced had no type backing it. Six of those
 items — introducing an `Op` ABC and typing the chain against it, collapsing the
 eight op classes onto shared bases, splitting the op/sink definitions out into
-`ops.py`, converting the terminal operations to real `TerminalSink`s, and the
-small-cleanups batch — have landed; see **Done** below. A sixth — replacing the
+`ops.py`, converting the terminal operations to real `TerminalSink`s, the
+small-cleanups batch, and the duplication collapse across `collector.py` and
+the sinks — have landed; see **Done** below. A seventh — replacing the
 hand-copied async-dispatch pattern with a `CallSite` object — was proposed,
-measured, and rejected on the evidence, also in **Done**. The per-element half
-of that duplication is now a documented, deliberately-accepted cost; item 1
-picks up only the part of it the benchmark did not rule out.
+measured, and rejected on the evidence, also in **Done**.
 
-Item 1 came out of a second, wider simplification read of `src/` on 2026-08-19,
-looking for duplication rather than for redesign leftovers. Item 2 is the last
-piece of the half-conversion: the collectors are the one consumer group still
-written as monolithic generator-draining closures.
+Item 1 is the last piece of the half-conversion: the collectors are the one
+consumer group still written as monolithic generator-draining closures.
 
 | # | Item | Why now, and what it depends on |
 |---|---|---|
-| 1 | **Collapse the duplicated bodies in `collector.py` and the repeated dispatch-state boilerplate in the sinks.** Four parts. (a) `summing_int` and `summing_long` are **byte-identical** bodies; `averaging_int`, `averaging_long` and `averaging_double` are **all three byte-identical**; `summing_double` differs from the summing pair only by a `0.0` seed and a `float()` cast (verified by hashing the function bodies, 2026-08-19). Replace with one private `_summing(seed, coerce)` and one `_averaging()`, keeping the six public names as thin wrappers. (b) Eight sinks — `_FilterSink`/`_MapSink`/`_PeekSink` in `ops.py`, `_ForEachSink`/`_ReduceSink`/`_MinMaxSink`/`_MutableReductionSink`/`_MatchSink` in `terminals.py` — all open `__init__` with the same `self._fn = fn; self._is_async = is_async_callable(fn); self._checked = False` triple; hoist it to a small shared mixin. (c) `grouping_by` and `partitioning_by` (`collector.py:359-402`) are the same function: classify into a `dict` of lists with the same five-branch dispatch, then map `downstream` over the values, differing only in classifier-vs-`bool(predicate(...))` and in partitioning's pre-seeded `{True: [], False: []}`. Factor out one `_group_into(composition, key_fn, initial)`. (d) `StatelessOp` and `StatefulOp` (`sink.py:56-89`) duplicate their `__init__` and their `_sink_cls` declaration; only `link()` differs, by inserting `self` before the stored args. Make `StatefulOp` subclass `StatelessOp` and override `link()` alone — the two docstrings keep the distinction they draw. | **No dependencies — first.** All four parts are behavior-neutral and touch private names only, so no README or spec edit. Roughly 150 lines net removed; (a) alone is ~90. **(b) is specifically the part of the rejected `CallSite` change the benchmark did not rule out** — that was rejected for putting a *call* on the per-element `accept()` path (measured +32–75%), whereas this touches `__init__` only and leaves every `accept()` body inlined byte-for-byte, so the attribute lookups on the hot path are identical and the cost is zero. Do not let it drift into re-litigating the per-element shape. On (a), the comment at `collector.py:65-69` defends keeping the six *names* distinct (Java distinguishes by primitive; Python's numeric tower does not) and that argument stands unchanged — it does not defend keeping six *bodies*, which is what it is currently being read as. Sequenced ahead of item 2 because it shrinks the surface that item rewrites; (c) is the one part that partly overlaps item 2, since the `Collector` redesign changes `downstream`'s signature — the extracted helper survives that change, but if item 2 is started first, fold (c) into it rather than doing it twice. |
-| 2 | **Redesign `collector.py`'s collectors around a `Collector(supplier, accumulator, combiner, finisher)` shape**, matching Java's `Collector<T,A,R>` interface, instead of today's single monolithic `async def _collect(composition): async for n in composition: ...` closures. | **Unblocked as of 2026-08-19** — the terminal-sink conversion it was waiting on has landed, and `terminals.py` now has six real `TerminalSink`s using `_create_container`/`_finish`/`result()` as intended, which is the template a `Collector` gets adapted onto (`begin`≡`supplier`, `accept`≡`accumulator`, `end`/`result()`≡`finisher`). **The payoff is larger than Java parity: `collector.py` currently holds a second, independent implementation of `terminals.py`** — `_extremum` vs `_MinMaxSink` (with the tie-keeping comment copy-pasted verbatim between them), `counting()` vs `_CountSink`, `reducing()` vs `_ReduceSink`, `to_list` vs `GeneratorBridgeSink`, and two separate `_UNSET` sentinel objects (`collector.py:25`, `terminals.py:23`). This item is what deletes one of those two implementations; that, not the interface shape, is the case for doing it. Not blocked on real parallelism either: `collect(supplier, accumulator, combiner)` already shipped with `combiner` accepted-but-unused for Java signature parity ahead of any partitioned execution (see Done), and this can follow that precedent — build the shape now, have `ParallelStream.collect()` ignore `combiner` and fall back to serial accumulation, wire it up only once real per-branch execution exists. Real design cost, still open and to be scoped before starting: `grouping_by`/`partitioning_by`'s `downstream` parameter would need to become a `Collector` itself (so per-key containers, not just final results, can be combined later), a breaking signature change to two collectors that just shipped. Note also that `downstream` is typed inline today (`Callable[[AsyncGenerator[T, None]], Coroutine[Any, Any, Any]]`, `collector.py:361` and `:384`) — whatever it becomes belongs in `type.py`. |
-| 3 | **Add the four remaining Java 8 `Collectors`: `collectingAndThen`, `mapping`, `summarizingInt`/`summarizingLong`/`summarizingDouble`, and `toCollection(supplier)`** — `collector.py` has shipped every other Java 8 `Collectors` static (`joining`, `counting`, `summing*`, `averaging*`, `minBy`/`maxBy`/`reducing`, `toMap`/`toSet`, `groupingBy`/`partitioningBy`) but these four were never picked up as roadmap items, so they never entered the Now/Next/Later tracking the rest of the `Collectors` effort went through. | **Depends on item 2 — last.** Confirmed still missing from `collector.py` on 2026-08-19, and still absent from README's parity table, so adding them is also a README edit. Additive, no public API change to existing collectors, and no execution-model dependency. The dependency is a sequencing one, not a hard block: `mapping`/`collectingAndThen` are downstream-collector adapters, so building them against today's monolithic-closure shape and then again against the `Collector` shape is the same work twice — hence after item 2. `summarizingInt`/`Long`/`Double` need a decision on what the returned stats object looks like (Java returns a mutable `IntSummaryStatistics`/etc.; likely a small dataclass or `NamedTuple` here rather than porting a mutable-accumulator type); that decision is independent of item 2 and can be made now. Note the interaction with item 1(a): if the `summing`/`averaging` collapse has landed, `summarizing*` is a third wrapper over the same shared body rather than a fourth copy of it. Surfaced 2026-08-18 doing a Java-8-parity cross-reference. |
+| 1 | **Redesign `collector.py`'s collectors around a `Collector(supplier, accumulator, combiner, finisher)` shape**, matching Java's `Collector<T,A,R>` interface, instead of today's single monolithic `async def _collect(composition): async for n in composition: ...` closures. | **Unblocked as of 2026-08-19** — the terminal-sink conversion it was waiting on has landed, and `terminals.py` now has six real `TerminalSink`s using `_create_container`/`_finish`/`result()` as intended, which is the template a `Collector` gets adapted onto (`begin`≡`supplier`, `accept`≡`accumulator`, `end`/`result()`≡`finisher`). **The payoff is larger than Java parity: `collector.py` currently holds a second, independent implementation of `terminals.py`** — `_extremum` vs `_MinMaxSink` (with the tie-keeping comment copy-pasted verbatim between them), `counting()` vs `_CountSink`, `reducing()` vs `_ReduceSink`, `to_list` vs `GeneratorBridgeSink`, and two separate `_UNSET` sentinel objects (`collector.py:25`, `terminals.py:23`). This item is what deletes one of those two implementations; that, not the interface shape, is the case for doing it. Not blocked on real parallelism either: `collect(supplier, accumulator, combiner)` already shipped with `combiner` accepted-but-unused for Java signature parity ahead of any partitioned execution (see Done), and this can follow that precedent — build the shape now, have `ParallelStream.collect()` ignore `combiner` and fall back to serial accumulation, wire it up only once real per-branch execution exists. Real design cost, still open and to be scoped before starting: `grouping_by`/`partitioning_by`'s `downstream` parameter would need to become a `Collector` itself (so per-key containers, not just final results, can be combined later), a breaking signature change to two collectors that just shipped. Note also that `downstream` is typed inline today (`Callable[[AsyncGenerator[T, None]], Coroutine[Any, Any, Any]]`, `collector.py:348` and `:359`) — whatever it becomes belongs in `type.py`. |
+| 2 | **Add the four remaining Java 8 `Collectors`: `collectingAndThen`, `mapping`, `summarizingInt`/`summarizingLong`/`summarizingDouble`, and `toCollection(supplier)`** — `collector.py` has shipped every other Java 8 `Collectors` static (`joining`, `counting`, `summing*`, `averaging*`, `minBy`/`maxBy`/`reducing`, `toMap`/`toSet`, `groupingBy`/`partitioningBy`) but these four were never picked up as roadmap items, so they never entered the Now/Next/Later tracking the rest of the `Collectors` effort went through. | **Depends on item 1 — last.** Confirmed still missing from `collector.py` on 2026-08-19, and still absent from README's parity table, so adding them is also a README edit. Additive, no public API change to existing collectors, and no execution-model dependency. The dependency is a sequencing one, not a hard block: `mapping`/`collectingAndThen` are downstream-collector adapters, so building them against today's monolithic-closure shape and then again against the `Collector` shape is the same work twice — hence after item 1. `summarizingInt`/`Long`/`Double` need a decision on what the returned stats object looks like (Java returns a mutable `IntSummaryStatistics`/etc.; likely a small dataclass or `NamedTuple` here rather than porting a mutable-accumulator type); that decision is independent of item 1 and can be made now. The `summing`/`averaging` collapse has now landed, so `summarizing*` is a third wrapper over the shared `_summing`/`_averaging` bodies rather than a fourth copy of them. Surfaced 2026-08-18 doing a Java-8-parity cross-reference. |
 
 `Stream.reduce(identity, accumulator, combiner)` (3-arg, with a combiner for
 parallel merging) has moved to **Later** below — see the resolved
@@ -62,6 +58,81 @@ core semantic.
 | **Java 9 `Stream` additions** — `takeWhile(predicate)`, `dropWhile(predicate)`, `Stream.ofNullable(t)`, and the 3-arg `iterate(seed, hasNext, next)` overload (distinct from the already-implemented 2-arg `iterate(seed, next)`). | README states the project's intent explicitly: "once we reach some sort of feature parity with Java 8 then maybe we move on to implement the improvements in Java 9." The **Now**/**Next** buckets are still closing out Java 8 parity gaps (`unordered()`, the `Collectors` framework, etc.), so pulling Java 9 work forward would jump the stated sequencing rather than reflecting lower value — revisit once Java 8 parity is substantially done. |
 
 ## Done
+
+- **Collapsed the duplicated bodies in `collector.py` and the repeated
+  dispatch-state boilerplate in the sinks**, the four-part item that came out
+  of the 2026-08-19 simplification read. All four parts landed, all
+  behaviour-neutral, no public API change and no README edit. 457 tests pass
+  unchanged at 98% coverage; `tests/` was not touched at all.
+
+  **(a) The six summing/averaging bodies became two private factories.**
+  `_summing(mapper, seed, coerce)` and `_averaging(mapper)`; the six public
+  names survive as one-line wrappers, each keeping its own return annotation,
+  which is where the Java-primitive distinction is actually expressed. The
+  `collector.py` comment defending them was reworded: it defends six *names*,
+  and had been read as defending six *bodies*. `coerce` is `None` rather than
+  an identity callable on the int/long path, so no call is added per element
+  and a mapper returning `Decimal`/`Fraction` still sums in its own type.
+
+  **The design's hoisting decision was reversed mid-implementation, and this
+  is the interesting part.** design.md required the `coerce is None` test to be
+  hoisted out of the `async for`, which means writing the loop twice. Measured
+  (interleaved, 41 reps, 200k elements) that was right on its own terms: the
+  hoisted form matches the pre-change code and the single-loop form costs a
+  reproducible ~2% on `summing_int`/`summing_long`. But `ruff` then fails with
+  `C901 _summing is too complex (11 > 10)` — the duplicated loop trips the
+  project's own mccabe gate, which the design had not accounted for.
+  Suppressing that gate on a function whose complexity comes *entirely from
+  duplication*, inside a change whose purpose is removing duplication, was the
+  wrong trade. Shipped as one loop with a per-element `coerce is None` test:
+  a branch, not a call, and ~2% against the +32-75% that got
+  `add-callsite-dispatch` rejected.
+
+  **(b) Eight sinks lost their hand-copied dispatch triple** to an
+  `AsyncDispatch` mixin in `callable_dispatch.py` — the module already named
+  for the concept, and already holding the canonical-shape comment the mixin
+  now makes checkable. `_FilterSink`/`_MapSink`/`_PeekSink` and
+  `_ForEachSink`/`_ReduceSink`/`_MinMaxSink`/`_MutableReductionSink`/
+  `_MatchSink` mix it in and call `_init_dispatch(fn)` from `__init__`. It is
+  a plain method, not an `__init__`, so it stays out of the MRO: those eight
+  sit on two different bases with different constructor signatures. The stored
+  callable unified on `self._fn`, replacing five different names
+  (`_predicate`, `_mapper`, `_consumer`, `_accumulator`, `_comparator`);
+  constructor parameters keep their descriptive names and annotations.
+  `_SortedSink` keeps its own `_comparator` — it never had the triple.
+  `_MatchSink` keeps its own `_cancelled`, which is short-circuit state, not
+  dispatch state. **Verified mechanically** that all eight `accept()` bodies
+  are identical to their pre-change form modulo that one rename, by AST-
+  extracting each and diffing against `git show HEAD:` with the rename applied
+  — so nothing was added to the per-element path, which is the whole reason
+  this part was allowed where `CallSite` was not.
+
+  **(c) `grouping_by`/`partitioning_by` now share `_group_into()`.** The
+  design said `partitioning_by` would pass a `key_fn` wrapping its predicate
+  in `bool(...)`. **That is unimplementable and the suite catches it:**
+  dispatch classifies `key_fn` and awaits its *result*, so a sync `bool()`
+  wrapper sees an unawaited coroutine for an async predicate — always truthy —
+  and sorts every element into the `True` bucket
+  (`tests/test_partitioning_by.py:37`). Shipped instead with a separate
+  optional `coerce_key` applied to the awaited key. Not hoisted, unlike (a):
+  this loop body already does a `setdefault` and an `append`, and hoisting
+  would duplicate the only code the part extracts. The `downstream`
+  comprehension deliberately stays at both call sites — it is the line the
+  `Collector` redesign rewrites.
+
+  **(d) `StatefulOp` now subclasses `StatelessOp`**, overriding `link()` alone.
+  Gated on a grep first: the only `isinstance` touching these names
+  (`tests/test_op_protocol.py:84`) tests concrete subclasses, not the two
+  bases, so the part was safe to do. Both docstrings kept, plus a note that
+  the subclassing is mechanical convenience and that the docstrings, not the
+  hierarchy, carry the shared-state distinction.
+
+  **Came in well under estimate: -69 code lines** (excluding comments and
+  docstrings), or -79 coverage-measured statements, against the ~150
+  estimated. The estimate counted the raw span of the deleted bodies including
+  their blank and comment lines, and this change adds explanatory comments the
+  old copies did not carry. See
+  `openspec/changes/collapse-collector-sink-duplication`.
 
 - **Landed the small-cleanups batch**, the ten-entry residue left by the
   Sink-chain redesign and its four follow-up changes. Nine entries were

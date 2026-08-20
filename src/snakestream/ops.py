@@ -5,7 +5,7 @@ from inspect import isawaitable
 from typing import Any, cast
 from collections.abc import Awaitable
 
-from snakestream.callable_dispatch import is_async_callable
+from snakestream.callable_dispatch import AsyncDispatch
 from snakestream.sink import Counter, IntermediateSink, Op, Sink, StatefulOp, StatefulSink, StatelessOp
 from snakestream.sort import merge_sort
 from snakestream.type import (
@@ -19,15 +19,13 @@ from snakestream.type import (
 )
 
 
-class _FilterSink(IntermediateSink[T]):
+class _FilterSink(AsyncDispatch, IntermediateSink[T]):
     def __init__(self, downstream: Sink[Any], predicate: Predicate) -> None:
         super().__init__(downstream)
-        self._predicate = predicate
-        self._is_async = is_async_callable(predicate)
-        self._checked = False
+        self._init_dispatch(predicate)
 
     async def accept(self, element: Any) -> None:
-        keep = self._predicate(element)
+        keep = self._fn(element)
         if self._is_async:
             keep = await cast("Awaitable[bool]", keep)
         elif not self._checked:
@@ -43,15 +41,13 @@ class _FilterOp(StatelessOp):
     _sink_cls = _FilterSink
 
 
-class _MapSink(IntermediateSink[T]):
+class _MapSink(AsyncDispatch, IntermediateSink[T]):
     def __init__(self, downstream: Sink[Any], mapper: Mapper) -> None:
         super().__init__(downstream)
-        self._mapper = mapper
-        self._is_async = is_async_callable(mapper)
-        self._checked = False
+        self._init_dispatch(mapper)
 
     async def accept(self, element: Any) -> None:
-        r = self._mapper(element)
+        r = self._fn(element)
         if self._is_async:
             r = await cast("Awaitable[Any]", r)
         elif not self._checked:
@@ -66,15 +62,13 @@ class _MapOp(StatelessOp):
     _sink_cls = _MapSink
 
 
-class _PeekSink(IntermediateSink[T]):
+class _PeekSink(AsyncDispatch, IntermediateSink[T]):
     def __init__(self, downstream: Sink[Any], consumer: Consumer) -> None:
         super().__init__(downstream)
-        self._consumer = consumer
-        self._is_async = is_async_callable(consumer)
-        self._checked = False
+        self._init_dispatch(consumer)
 
     async def accept(self, element: Any) -> None:
-        r = self._consumer(element)
+        r = self._fn(element)
         if self._is_async:
             await cast("Awaitable[None]", r)
         elif not self._checked:
