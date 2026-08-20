@@ -29,8 +29,9 @@ class _AsyncIteratorNoAclose:
 
 @pytest.mark.asyncio
 async def test_to_list_simple() -> None:
+    # to_list is a Collector, not a bare callable: only usable via collect()
     # when
-    actual = await to_list(async_generator())
+    actual = await Stream.of(async_generator()).collect(to_list)
     # then
     assert [1, 2, 3, 4, 5] == actual
 

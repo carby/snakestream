@@ -6,6 +6,7 @@ if TYPE_CHECKING:
 
 T = TypeVar("T")
 R = TypeVar("R")
+A = TypeVar("A")
 
 # Sink protocol: the state passed through begin(), keyed by the originating
 # operation object so a sink can look up its own shared state.
@@ -26,3 +27,7 @@ BinaryOperator = Callable[[T, T], T | Awaitable[T]]
 Supplier = Callable[[], R | Awaitable[R]]
 BiConsumer = Callable[[R, T], None | Awaitable[None]]
 NumberMapper = Callable[[T], int | float | Awaitable[int | float]]
+
+# Collector protocol
+Finisher = Callable[[A], R | Awaitable[R]]
+Combiner = Callable[[A, A], A | Awaitable[A]]

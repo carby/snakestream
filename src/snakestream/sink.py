@@ -4,18 +4,34 @@ from abc import ABC, abstractmethod
 from typing import Any, ClassVar, Generic
 from collections.abc import Callable
 
+from snakestream.callable_dispatch import _maybe_await
 from snakestream.type import StateMap, T
 
+# Sentinel for "no value yet": distinguishes an unseeded reduction/accumulation
+# from one seeded with a legitimately falsy identity. Lives here rather than in
+# terminals.py or collector.py because both need it and neither may import the
+# other.
+_UNSET = object()
 
-class Counter:
+
+class Box:
+    """A mutable single-value box. Lets a fixed accumulator function rebind a
+    scalar accumulation by mutating this in place, since it cannot rebind a
+    local of its caller's."""
+
+    __slots__ = ("value",)
+
+    def __init__(self, value: Any = None) -> None:
+        self.value = value
+
+
+class Counter(Box):
     """A mutable integer box. An op's shared count travels through the state
     map as one of these, so every sink built from that op increments the same
     instance."""
 
-    __slots__ = ("value",)
-
     def __init__(self, value: int = 0) -> None:
-        self.value = value
+        super().__init__(value)
 
 
 class Sink(ABC, Generic[T]):
@@ -149,13 +165,13 @@ class TerminalSink(Sink[T]):
     def _create_container(self) -> Any: ...
 
     async def begin(self, state_map: StateMap) -> None:
-        self._container = self._create_container()
+        self._container = await _maybe_await(self._create_container)
 
     def _finish(self, container: Any) -> Any:
         return container
 
     async def end(self) -> None:
-        self._result = self._finish(self._container)
+        self._result = await _maybe_await(self._finish, self._container)
 
     def result(self) -> Any:
         return self._result

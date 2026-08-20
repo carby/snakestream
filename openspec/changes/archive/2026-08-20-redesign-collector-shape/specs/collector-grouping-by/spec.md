@@ -1,32 +1,4 @@
-## Purpose
-
-Grouping collector for use with `Stream.collect()`, mirroring Java's
-`Collectors.groupingBy(...)` overloads.
-
-## Requirements
-
-### Requirement: `grouping_by(classifier)` collector factory (no downstream)
-`collector.py` SHALL provide a `grouping_by(classifier)` form — called with
-no `downstream` — returning a collector that buckets each pulled element by
-`classifier(element)` (sync or async) and returns `dict[K, list[T]]`,
-matching Java's `Collectors.groupingBy(Function classifier)` (which defaults
-its downstream to `toList()`).
-
-#### Scenario: buckets elements by classifier into lists
-- **WHEN** `Stream.of([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2))` is called
-- **THEN** the result is `{1: [1, 3, 5], 0: [2, 4]}`
-
-#### Scenario: empty stream yields an empty dict
-- **WHEN** `Stream.of([]).collect(grouping_by(lambda x: x))` is called
-- **THEN** the result is `{}`
-
-#### Scenario: only keys actually produced appear in the result
-- **WHEN** `Stream.of([1, 1, 1]).collect(grouping_by(lambda x: x))` is called
-- **THEN** the result is `{1: [1, 1, 1]}`, with no other keys present
-
-#### Scenario: async classifier is awaited
-- **WHEN** `grouping_by(classifier)` is given an async `classifier`
-- **THEN** the result is computed correctly, with `classifier` awaited via the same dispatch used elsewhere in the library
+## MODIFIED Requirements
 
 ### Requirement: `grouping_by(classifier, downstream)` composes a downstream collector
 `collector.py` SHALL provide the 2-arg `grouping_by(classifier, downstream)`

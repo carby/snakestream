@@ -5,7 +5,7 @@ from typing import Any, cast
 from collections.abc import Awaitable
 
 from snakestream.callable_dispatch import AsyncDispatch
-from snakestream.sink import Counter, TerminalSink
+from snakestream.sink import Counter, TerminalSink, _UNSET
 from snakestream.sort import check_comparator_result_type
 from snakestream.type import (
     T,
@@ -15,12 +15,6 @@ from snakestream.type import (
     Consumer,
     Predicate,
 )
-
-
-# Sentinel for "no value yet": distinguishes an unseeded reduction from one
-# seeded with a legitimately falsy identity. Lives here rather than in
-# stream.py because the sinks that need it may not import stream.py.
-_UNSET = object()
 
 
 class _CountSink(TerminalSink[T]):
