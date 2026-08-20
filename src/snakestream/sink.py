@@ -71,19 +71,19 @@ class StatelessOp(Op):
         return self._sink_cls(downstream, *self._args)
 
 
-class StatefulOp(Op):
+class StatefulOp(StatelessOp):
     """An Op whose sinks share state across the chains built from it (see
     ParallelStream). Like StatelessOp, but link() passes the op itself as the
     sink's second argument, so the sink can key the state map by it.
 
     A subclass sets _sink_cls and overrides make_shared_state() to declare what
     that state is — the only place that shape is stated, since StatefulSink
-    also falls back to that factory when the map holds no entry."""
+    also falls back to that factory when the map holds no entry.
 
-    _sink_cls: ClassVar[Callable[..., Sink[Any]]]
-
-    def __init__(self, *args: Any) -> None:
-        self._args = args
+    Subclassing StatelessOp is a mechanical convenience — the two share an
+    __init__ and a _sink_cls declaration, and only link() differs. It does not
+    mean a stateful op is a kind of stateless one; the docstrings, not the
+    hierarchy, carry the shared-state distinction between them."""
 
     def link(self, downstream: Sink[Any]) -> Sink[Any]:
         return self._sink_cls(downstream, self, *self._args)
