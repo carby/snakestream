@@ -65,6 +65,21 @@ def _wrap_sink(intermediaries: list[Op], terminal: Sink[Any]) -> Sink[Any]:
     return sink
 
 
+async def _copy_into(head: Sink[Any], src: AsyncGenerator, state_map: StateMap) -> None:
+    """Push every element of a source into a wrapped sink, honouring
+    cancellation. Java's AbstractPipeline.copyInto() does exactly this."""
+    await head.begin(state_map)
+    # a chain can already be cancelled before it has seen anything
+    # (limit(0)); pulling even one element would run every upstream
+    # op on a value nobody wants
+    if not head.cancellation_requested():
+        async for item in src:
+            await head.accept(item)
+            if head.cancellation_requested():
+                break
+    await head.end()
+
+
 class BaseStream(Generic[T]):
     def __init__(self, source: Any, close_handlers: list[CloseHandler] | None = None) -> None:
         self._stream: AsyncGenerator[T, None] = _accept(source) or _normalize(source)
@@ -97,9 +112,8 @@ class BaseStream(Generic[T]):
         head = _wrap_sink(chain, bridge)
         async with _maybe_aclosing(source) as src:
             await head.begin(state_map)
-            # a chain can already be cancelled before it has seen anything
-            # (limit(0)); pulling even one element would run every upstream
-            # op on a value nobody wants
+            # same pre-first-pull guard as _copy_into(), which carries the
+            # reasoning; this loop cannot share it because it has to yield
             if not head.cancellation_requested():
                 async for item in src:
                     await head.accept(item)
@@ -131,16 +145,16 @@ class BaseStream(Generic[T]):
         self._check_not_consumed()
         head = _wrap_sink(self._chain, terminal)
         async with _maybe_aclosing(self._stream) as src:
-            await head.begin({})
-            if not head.cancellation_requested():
-                async for item in src:
-                    await head.accept(item)
-                    if head.cancellation_requested():
-                        break
-            await head.end()
+            await _copy_into(head, src, {})
         return terminal.result()
 
     def _compose(self) -> AsyncGenerator[T, None]:
+        """Build the chain into a lazily-evaluated generator.
+
+        The dispatching form, and the seam where execution mode is decided:
+        ParallelStream overrides it to fan the same chain out into a race.
+        _drive() cannot be that seam - _parallel() calls it once per racing
+        branch, so overriding it would make each branch fan out again."""
         return self._drive(self._chain, self._stream)
 
     def _handoff(self, cls: type[BaseStream[Any]]) -> Any:
