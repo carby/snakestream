@@ -6,26 +6,110 @@
 from __future__ import annotations
 
 from inspect import isawaitable
-from typing import Any, cast, overload
-from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine
+from typing import Any, Generic, cast, overload
+from collections.abc import AsyncGenerator, Awaitable, Callable
 
 from snakestream.base_stream import _maybe_aclosing
-from snakestream.callable_dispatch import _classify_step, is_async_callable
+from snakestream.callable_dispatch import AsyncDispatch, _classify_step, _maybe_await, is_async_callable
+from snakestream.exception import StreamBuildException
+from snakestream.sink import Counter, TerminalSink, _UNSET
 from snakestream.sort import check_comparator_result_type
 from snakestream.type import (
+    A,
     R,
     T,
+    BiConsumer,
     BinaryOperator,
+    Combiner,
     Comparator,
+    Finisher,
     Mapper,
     NumberMapper,
     Predicate,
+    Supplier,
 )
 
-_UNSET = object()
+
+class Collector(Generic[T, A, R]):
+    """Java-style `Collector<T,A,R>`: `supplier()` creates a fresh
+    accumulation container, `accumulator(container, element)` mutates it per
+    element - its return value is ignored - and `finisher(container)`
+    converts the finished container to the result (the container itself, if
+    `finisher` is omitted). `combiner` is accepted for signature parity with
+    Java and never invoked: a collection always folds over one composed
+    stream, sequential or parallel, with no independently accumulated
+    partitions to merge - the same posture `Stream.collect(supplier,
+    accumulator, combiner)` and `reduce()`'s `combiner` already have.
+
+    Every part may be sync or async. A `Collector` holds only these four
+    callables, no per-collection state of its own, so one instance is safe to
+    reuse across streams and across concurrent collections."""
+
+    __slots__ = ("supplier", "accumulator", "combiner", "finisher")
+
+    def __init__(
+        self,
+        supplier: Supplier[A],
+        accumulator: BiConsumer[A, T],
+        combiner: Combiner[A] | None = None,
+        finisher: Finisher[A, R] | None = None,
+    ) -> None:
+        self.supplier = supplier
+        self.accumulator = accumulator
+        self.combiner = combiner
+        self.finisher = finisher
 
 
-async def to_generator(composition: AsyncGenerator) -> AsyncGenerator[Any, None]:
+class _CollectorSink(AsyncDispatch, TerminalSink[T]):
+    """Adapts any Collector to the sink protocol: supplier -> container
+    creation, accumulator -> accept(), finisher -> _finish(). The one
+    AsyncDispatch triple here classifies the accumulator itself; a collector
+    whose accumulator internally dispatches further user callables (a mapper,
+    a comparator, ...) carries that classification state on its own
+    supplier-made container instead, since this sink - like the Collector -
+    is shared across collections."""
+
+    def __init__(self, collector: Collector[Any, Any, Any]) -> None:
+        super().__init__()
+        self._collector = collector
+        self._init_dispatch(collector.accumulator)
+
+    def _create_container(self) -> Any:
+        return self._collector.supplier()
+
+    async def accept(self, element: Any) -> None:
+        r = self._fn(self._container, element)
+        if self._is_async:
+            await cast("Awaitable[None]", r)
+        elif not self._checked:
+            self._checked = True
+            if isawaitable(r):
+                self._is_async = True
+                await r
+
+    def _finish(self, container: Any) -> Any:
+        finisher = self._collector.finisher
+        return container if finisher is None else finisher(container)
+
+
+class StreamingCollector:
+    """The one collect() argument that is not a Collector: wraps a
+    `(composition) -> AsyncGenerator` callable for a lazy, streaming result.
+    Composed through the generator bridge rather than driven to a terminal
+    sink, since a supplier/accumulator/finisher triple can only produce a
+    value once the source is exhausted, and this one must not wait for
+    that."""
+
+    __slots__ = ("_fn",)
+
+    def __init__(self, fn: Callable[[AsyncGenerator[Any, None]], AsyncGenerator[Any, None]]) -> None:
+        self._fn = fn
+
+    def __call__(self, composition: AsyncGenerator[Any, None]) -> AsyncGenerator[Any, None]:
+        return self._fn(composition)
+
+
+async def _stream(composition: AsyncGenerator) -> AsyncGenerator[Any, None]:
     # _maybe_aclosing, not aclosing: to_generator() also accepts a plain
     # AsyncIterable with no aclose() (a custom __anext__-only iterator)
     async with _maybe_aclosing(composition) as src:
@@ -33,33 +117,33 @@ async def to_generator(composition: AsyncGenerator) -> AsyncGenerator[Any, None]
             yield n
 
 
-async def to_list(composition: AsyncGenerator) -> list[Any]:
-    ret = []
-    async for n in composition:
-        ret.append(n)
-    return ret
+to_generator = StreamingCollector(_stream)
+
+# A bare Collector instance, not a factory: a Collector holds no
+# per-collection state, so one instance is safe to reuse across every
+# collect(to_list) call and across to_array()'s implementation.
+to_list: Collector[Any, list[Any], list[Any]] = Collector(list, list.append)
 
 
-def joining(
-    delimiter: str = "", prefix: str = "", suffix: str = ""
-) -> Callable[[AsyncGenerator[str, None]], Coroutine[Any, Any, str]]:
-    async def _join(composition: AsyncGenerator[str, None]) -> str:
-        parts = []
-        async for n in composition:
-            parts.append(n)
+def to_set() -> Collector[T, set[T], set[T]]:
+    return Collector(set, set.add)
+
+
+def joining(delimiter: str = "", prefix: str = "", suffix: str = "") -> Collector[str, list[str], str]:
+    def _finish(parts: list[str]) -> str:
         return prefix + delimiter.join(parts) + suffix
 
-    return _join
+    return Collector(list, list.append, finisher=_finish)
 
 
-def counting() -> Callable[[AsyncGenerator[Any, None]], Coroutine[Any, Any, int]]:
-    async def _count(composition: AsyncGenerator[Any, None]) -> int:
-        count = 0
-        async for _ in composition:
-            count += 1
-        return count
+def counting() -> Collector[Any, Counter, int]:
+    def _accumulate(container: Counter, element: Any) -> None:
+        container.value += 1
 
-    return _count
+    def _finish(container: Counter) -> int:
+        return container.value
+
+    return Collector(Counter, _accumulate, finisher=_finish)
 
 
 # summing_int/summing_long and averaging_int/averaging_long/averaging_double
@@ -70,153 +154,174 @@ def counting() -> Callable[[AsyncGenerator[Any, None]], Coroutine[Any, Any, int]
 # seed and coercion actually differ.
 
 
-def _summing(
-    mapper: NumberMapper, seed: int | float, coerce: Callable[[Any], Any] | None
-) -> Callable[[AsyncGenerator[Any, None]], Coroutine[Any, Any, Any]]:
+class _SumBox:
+    __slots__ = ("total", "is_async", "checked")
+
+    def __init__(self, seed: int | float) -> None:
+        self.total = seed
+        self.is_async = False
+        self.checked = False
+
+
+def _summing(mapper: NumberMapper, seed: int | float, coerce: Callable[[Any], Any] | None) -> Collector[Any, _SumBox, Any]:
     # coerce is None means "add the mapped value as-is", not "coerce with an
     # identity function": the int/long path must preserve whatever numeric type
     # the mapper returns (a Decimal, a Fraction), and an identity call there
     # would sit on the per-element path.
-    async def _sum(composition: AsyncGenerator[Any, None]) -> Any:
-        total = seed
-        is_async = is_async_callable(mapper)
-        checked = False
-        async for n in composition:
-            r = mapper(n)
-            if is_async:
-                r = await cast("Awaitable[int | float]", r)
-            elif not checked:
-                checked = True
-                if isawaitable(r):
-                    is_async = True
-                    r = await r
-            total += cast(Any, r) if coerce is None else coerce(cast(Any, r))
-        return total
+    def _supply() -> _SumBox:
+        box = _SumBox(seed)
+        box.is_async = is_async_callable(mapper)
+        return box
 
-    return _sum
+    async def _accumulate(container: _SumBox, element: Any) -> None:
+        r = mapper(element)
+        if container.is_async:
+            r = await cast("Awaitable[int | float]", r)
+        elif not container.checked:
+            container.checked = True
+            if isawaitable(r):
+                container.is_async = True
+                r = await r
+        container.total += cast(Any, r) if coerce is None else coerce(cast(Any, r))
 
+    def _finish(container: _SumBox) -> Any:
+        return container.total
 
-def _averaging(mapper: NumberMapper) -> Callable[[AsyncGenerator[Any, None]], Coroutine[Any, Any, float]]:
-    async def _average(composition: AsyncGenerator[Any, None]) -> float:
-        total = 0.0
-        count = 0
-        is_async = is_async_callable(mapper)
-        checked = False
-        async for n in composition:
-            r = mapper(n)
-            if is_async:
-                r = await cast("Awaitable[int | float]", r)
-            elif not checked:
-                checked = True
-                if isawaitable(r):
-                    is_async = True
-                    r = await r
-            total += cast(Any, r)
-            count += 1
-        return total / count if count else 0.0
-
-    return _average
+    return Collector(_supply, _accumulate, finisher=_finish)
 
 
-def summing_int(
-    mapper: NumberMapper,
-) -> Callable[[AsyncGenerator[Any, None]], Coroutine[Any, Any, int]]:
+class _AvgBox:
+    __slots__ = ("total", "count", "is_async", "checked")
+
+    def __init__(self) -> None:
+        self.total = 0.0
+        self.count = 0
+        self.is_async = False
+        self.checked = False
+
+
+def _averaging(mapper: NumberMapper) -> Collector[Any, _AvgBox, float]:
+    def _supply() -> _AvgBox:
+        box = _AvgBox()
+        box.is_async = is_async_callable(mapper)
+        return box
+
+    async def _accumulate(container: _AvgBox, element: Any) -> None:
+        r = mapper(element)
+        if container.is_async:
+            r = await cast("Awaitable[int | float]", r)
+        elif not container.checked:
+            container.checked = True
+            if isawaitable(r):
+                container.is_async = True
+                r = await r
+        container.total += cast(Any, r)
+        container.count += 1
+
+    def _finish(container: _AvgBox) -> float:
+        return container.total / container.count if container.count else 0.0
+
+    return Collector(_supply, _accumulate, finisher=_finish)
+
+
+def summing_int(mapper: NumberMapper) -> Collector[Any, _SumBox, int]:
     return _summing(mapper, 0, None)
 
 
-def summing_long(
-    mapper: NumberMapper,
-) -> Callable[[AsyncGenerator[Any, None]], Coroutine[Any, Any, int]]:
+def summing_long(mapper: NumberMapper) -> Collector[Any, _SumBox, int]:
     return _summing(mapper, 0, None)
 
 
-def summing_double(
-    mapper: NumberMapper,
-) -> Callable[[AsyncGenerator[Any, None]], Coroutine[Any, Any, float]]:
+def summing_double(mapper: NumberMapper) -> Collector[Any, _SumBox, float]:
     return _summing(mapper, 0.0, float)
 
 
-def averaging_int(
-    mapper: NumberMapper,
-) -> Callable[[AsyncGenerator[Any, None]], Coroutine[Any, Any, float]]:
+def averaging_int(mapper: NumberMapper) -> Collector[Any, _AvgBox, float]:
     return _averaging(mapper)
 
 
-def averaging_long(
-    mapper: NumberMapper,
-) -> Callable[[AsyncGenerator[Any, None]], Coroutine[Any, Any, float]]:
+def averaging_long(mapper: NumberMapper) -> Collector[Any, _AvgBox, float]:
     return _averaging(mapper)
 
 
-def averaging_double(
-    mapper: NumberMapper,
-) -> Callable[[AsyncGenerator[Any, None]], Coroutine[Any, Any, float]]:
+def averaging_double(mapper: NumberMapper) -> Collector[Any, _AvgBox, float]:
     return _averaging(mapper)
 
 
-async def _extremum(composition: AsyncGenerator[T, None], comparator: Comparator[T], asc: bool) -> T | None:
-    is_async = is_async_callable(comparator)
-    checked = False
+class _ExtremumBox:
+    __slots__ = ("found", "is_async", "checked")
 
-    async def compare(a: T, b: T) -> int:
-        nonlocal is_async, checked
-        sign = comparator(a, b)
-        if is_async:
+    def __init__(self) -> None:
+        self.found: Any = _UNSET
+        self.is_async = False
+        self.checked = False
+
+
+def _extremum(comparator: Comparator[T], asc: bool) -> Collector[T, _ExtremumBox, T | None]:
+    def _supply() -> _ExtremumBox:
+        box = _ExtremumBox()
+        box.is_async = is_async_callable(comparator)
+        return box
+
+    async def _accumulate(container: _ExtremumBox, element: T) -> None:
+        if container.found is _UNSET:
+            container.found = element
+            return
+
+        # comparator(element, found): negative if element orders before found,
+        # positive if after. found (the earlier element) is kept on a tie.
+        sign = comparator(element, container.found)
+        if container.is_async:
             sign = await cast("Awaitable[int]", sign)
-        elif not checked:
-            checked = True
+        elif not container.checked:
+            container.checked = True
             if isawaitable(sign):
-                is_async = True
+                container.is_async = True
                 sign = await sign
         sign = cast(int, sign)
         check_comparator_result_type(sign)
-        return sign
 
-    found = cast(T, _UNSET)
-    async for n in composition:
-        if found is _UNSET:
-            found = n
-            continue
-
-        # comparator(n, found): negative if n orders before found, positive
-        # if after. found (the earlier element) is kept on a tie.
-        sign = await compare(n, found)
         is_new_extreme = sign < 0 if asc else sign > 0
         if is_new_extreme:
-            found = n
-    return None if found is _UNSET else found
+            container.found = element
+
+    def _finish(container: _ExtremumBox) -> T | None:
+        return None if container.found is _UNSET else container.found
+
+    return Collector(_supply, _accumulate, finisher=_finish)
 
 
-def min_by(comparator: Comparator[T]) -> Callable[[AsyncGenerator[T, None]], Coroutine[Any, Any, T | None]]:
-    async def _min(composition: AsyncGenerator[T, None]) -> T | None:
-        return await _extremum(composition, comparator, asc=True)
-
-    return _min
+def min_by(comparator: Comparator[T]) -> Collector[T, _ExtremumBox, T | None]:
+    return _extremum(comparator, asc=True)
 
 
-def max_by(comparator: Comparator[T]) -> Callable[[AsyncGenerator[T, None]], Coroutine[Any, Any, T | None]]:
-    async def _max(composition: AsyncGenerator[T, None]) -> T | None:
-        return await _extremum(composition, comparator, asc=False)
+def max_by(comparator: Comparator[T]) -> Collector[T, _ExtremumBox, T | None]:
+    return _extremum(comparator, asc=False)
 
-    return _max
+
+class _ReduceBox:
+    __slots__ = ("acc", "mapper_is_async", "mapper_checked", "op_is_async", "op_checked")
+
+    def __init__(self, identity: Any) -> None:
+        self.acc = identity
+        self.mapper_is_async = False
+        self.mapper_checked = False
+        self.op_is_async = False
+        self.op_checked = False
 
 
 @overload
-def reducing(
-    binary_operator: BinaryOperator[T],
-) -> Callable[[AsyncGenerator[T, None]], Coroutine[Any, Any, T | None]]: ...  # pragma: no cover
+def reducing(binary_operator: BinaryOperator[T]) -> Collector[T, _ReduceBox, T | None]: ...  # pragma: no cover
 
 
 @overload
-def reducing(
-    identity: T, binary_operator: BinaryOperator[T]
-) -> Callable[[AsyncGenerator[T, None]], Coroutine[Any, Any, T]]: ...  # pragma: no cover
+def reducing(identity: T, binary_operator: BinaryOperator[T]) -> Collector[T, _ReduceBox, T]: ...  # pragma: no cover
 
 
 @overload
 def reducing(
     identity: R, mapper: Mapper[T, R], binary_operator: BinaryOperator[R]
-) -> Callable[[AsyncGenerator[T, None]], Coroutine[Any, Any, R]]: ...  # pragma: no cover
+) -> Collector[T, _ReduceBox, R]: ...  # pragma: no cover
 
 
 def reducing(identity: Any = _UNSET, mapper: Any = _UNSET, binary_operator: Any = _UNSET) -> Any:
@@ -229,139 +334,181 @@ def reducing(identity: Any = _UNSET, mapper: Any = _UNSET, binary_operator: Any 
         # positional arg is the fold operator, with no element mapper.
         mapper, binary_operator = None, mapper
 
-    async def _reduce(composition: AsyncGenerator[Any, None]) -> Any:
-        acc = identity
-        has_mapper = mapper is not None
-        mapper_is_async = is_async_callable(mapper) if has_mapper else False
-        mapper_checked = False
-        op_is_async = is_async_callable(binary_operator)
-        op_checked = False
-        async for n in composition:
-            if has_mapper:
-                value, mapper_is_async, mapper_checked = _classify_step(mapper, mapper_is_async, mapper_checked, n)
-                if mapper_is_async:
-                    value = await value
-            else:
-                value = n
-            if acc is _UNSET:
-                acc = value
-                continue
-            r, op_is_async, op_checked = _classify_step(binary_operator, op_is_async, op_checked, acc, value)
-            if op_is_async:
-                r = await r
-            acc = r
-        return None if acc is _UNSET else acc
+    def _supply() -> _ReduceBox:
+        return _ReduceBox(identity)
 
-    return _reduce
+    async def _accumulate(container: _ReduceBox, element: Any) -> None:
+        if mapper is not None:
+            value, container.mapper_is_async, container.mapper_checked = _classify_step(
+                mapper, container.mapper_is_async, container.mapper_checked, element
+            )
+            if container.mapper_is_async:
+                value = await value
+        else:
+            value = element
+        if container.acc is _UNSET:
+            container.acc = value
+            return
+        r, container.op_is_async, container.op_checked = _classify_step(
+            binary_operator, container.op_is_async, container.op_checked, container.acc, value
+        )
+        if container.op_is_async:
+            r = await r
+        container.acc = r
+
+    def _finish(container: _ReduceBox) -> Any:
+        return None if container.acc is _UNSET else container.acc
+
+    return Collector(_supply, _accumulate, finisher=_finish)
+
+
+class _ToMapBox:
+    __slots__ = (
+        "result",
+        "key_is_async",
+        "key_checked",
+        "value_is_async",
+        "value_checked",
+        "merge_is_async",
+        "merge_checked",
+    )
+
+    def __init__(self) -> None:
+        self.result: dict[Any, Any] = {}
+        self.key_is_async = False
+        self.key_checked = False
+        self.value_is_async = False
+        self.value_checked = False
+        self.merge_is_async = False
+        self.merge_checked = False
 
 
 def to_map(
     key_mapper: Mapper[T, R],
     value_mapper: Mapper[T, Any],
     merge_function: BinaryOperator[Any] | None = None,
-) -> Callable[[AsyncGenerator[T, None]], Coroutine[Any, Any, dict[R, Any]]]:
-    async def _to_map(composition: AsyncGenerator[T, None]) -> dict[R, Any]:
-        result: dict[R, Any] = {}
-        key_is_async = is_async_callable(key_mapper)
-        key_checked = False
-        value_is_async = is_async_callable(value_mapper)
-        value_checked = False
-        merge_is_async = is_async_callable(merge_function) if merge_function is not None else False
-        merge_checked = False
-        async for n in composition:
-            key, key_is_async, key_checked = _classify_step(key_mapper, key_is_async, key_checked, n)
-            if key_is_async:
-                key = await key
-            value, value_is_async, value_checked = _classify_step(value_mapper, value_is_async, value_checked, n)
-            if value_is_async:
-                value = await value
-            if key in result:
-                if merge_function is None:
-                    raise ValueError(f"Duplicate key: {key!r}")
-                merged, merge_is_async, merge_checked = _classify_step(
-                    merge_function, merge_is_async, merge_checked, result[key], value
-                )
-                value = await merged if merge_is_async else merged
-            result[key] = value
-        return result
+) -> Collector[T, _ToMapBox, dict[R, Any]]:
+    def _supply() -> _ToMapBox:
+        return _ToMapBox()
 
-    return _to_map
+    async def _accumulate(container: _ToMapBox, element: T) -> None:
+        key, container.key_is_async, container.key_checked = _classify_step(
+            key_mapper, container.key_is_async, container.key_checked, element
+        )
+        if container.key_is_async:
+            key = await key
+        value, container.value_is_async, container.value_checked = _classify_step(
+            value_mapper, container.value_is_async, container.value_checked, element
+        )
+        if container.value_is_async:
+            value = await value
+        if key in container.result:
+            if merge_function is None:
+                raise ValueError(f"Duplicate key: {key!r}")
+            merged, container.merge_is_async, container.merge_checked = _classify_step(
+                merge_function, container.merge_is_async, container.merge_checked, container.result[key], value
+            )
+            value = await merged if container.merge_is_async else merged
+        container.result[key] = value
 
+    def _finish(container: _ToMapBox) -> dict[R, Any]:
+        return container.result
 
-def to_set() -> Callable[[AsyncGenerator[T, None]], Coroutine[Any, Any, set[T]]]:
-    async def _to_set(composition: AsyncGenerator[T, None]) -> set[T]:
-        result: set[T] = set()
-        async for n in composition:
-            result.add(n)
-        return result
-
-    return _to_set
+    return Collector(_supply, _accumulate, finisher=_finish)
 
 
-async def _generator_of(items: list[T]) -> AsyncGenerator[T, None]:
-    for item in items:
-        yield item
+class _GroupBox:
+    __slots__ = ("groups", "key_is_async", "key_checked", "acc_is_async", "acc_checked")
+
+    def __init__(self, initial: dict[Any, Any]) -> None:
+        self.groups = initial
+        self.key_is_async = False
+        self.key_checked = False
+        self.acc_is_async = False
+        self.acc_checked = False
 
 
-def _group_into(
-    composition: AsyncGenerator[T, None],
-    key_fn: Callable[[T], Any],
-    initial: dict[Any, list[T]],
+async def _group_into(
+    container: _GroupBox,
+    key_fn: Callable[[Any], Any],
+    downstream: Collector[Any, Any, Any],
+    element: Any,
     coerce_key: Callable[[Any], Any] | None = None,
-) -> Coroutine[Any, Any, dict[Any, list[T]]]:
-    # The shared half of grouping_by/partitioning_by: classify every element
-    # into buckets of lists. The two differ only in the key_fn they pass, in
-    # whether the buckets are pre-seeded, and in coerce_key, so only those are
-    # parameterised.
+) -> None:
+    # The shared step behind grouping_by/partitioning_by: classify the
+    # element's key, materialise that key's downstream container on first
+    # sight, and accumulate the element into it. The two differ only in the
+    # key_fn they pass, in whether groups is pre-seeded, and in coerce_key.
     #
-    # coerce_key runs on the *awaited* key, which is why partitioning_by\'s
+    # coerce_key runs on the *awaited* key, which is why partitioning_by's
     # bool() cannot simply wrap its predicate: dispatch classifies and awaits
-    # key_fn\'s result, so a sync bool()-wrapper would see an unawaited
+    # key_fn's result, so a sync bool()-wrapper would see an unawaited
     # coroutine for an async predicate and call every element True.
-    #
-    # Mapping `downstream` over the buckets deliberately stays at the two call
-    # sites rather than moving in here: the Collector redesign changes
-    # downstream's signature, and that comprehension is the line it changes.
-    async def _run() -> dict[Any, list[T]]:
-        groups = initial
-        is_async = is_async_callable(key_fn)
-        checked = False
-        async for n in composition:
-            key = key_fn(n)
-            if is_async:
-                key = await cast("Awaitable[Any]", key)
-            elif not checked:
-                checked = True
-                if isawaitable(key):
-                    is_async = True
-                    key = await key
-            if coerce_key is not None:
-                key = coerce_key(key)
-            groups.setdefault(key, []).append(n)
-        return groups
+    key, container.key_is_async, container.key_checked = _classify_step(
+        key_fn, container.key_is_async, container.key_checked, element
+    )
+    if container.key_is_async:
+        key = await key
+    if coerce_key is not None:
+        key = coerce_key(key)
+    if key not in container.groups:
+        container.groups[key] = await _maybe_await(downstream.supplier)
+    r, container.acc_is_async, container.acc_checked = _classify_step(
+        downstream.accumulator, container.acc_is_async, container.acc_checked, container.groups[key], element
+    )
+    if container.acc_is_async:
+        await r
 
-    return _run()
+
+async def _finish_groups(downstream: Collector[Any, Any, Any], groups: dict[Any, Any]) -> dict[Any, Any]:
+    finisher = downstream.finisher
+    result = {}
+    for key, sub in groups.items():
+        result[key] = await _maybe_await(finisher, sub) if finisher is not None else sub
+    return result
+
+
+def _check_downstream(downstream: Collector[Any, Any, Any]) -> None:
+    if not isinstance(downstream, Collector):
+        raise StreamBuildException("downstream must be a Collector")
 
 
 def grouping_by(
     classifier: Mapper[T, R],
-    downstream: Callable[[AsyncGenerator[T, None]], Coroutine[Any, Any, Any]] = to_list,
-) -> Callable[[AsyncGenerator[T, None]], Coroutine[Any, Any, dict[R, Any]]]:
-    async def _grouping_by(composition: AsyncGenerator[T, None]) -> dict[R, Any]:
-        groups = await _group_into(composition, classifier, {})
-        return {key: await downstream(_generator_of(items)) for key, items in groups.items()}
+    downstream: Collector[T, Any, Any] = to_list,
+) -> Collector[T, _GroupBox, dict[R, Any]]:
+    _check_downstream(downstream)
 
-    return _grouping_by
+    def _supply() -> _GroupBox:
+        return _GroupBox({})
+
+    async def _accumulate(container: _GroupBox, element: T) -> None:
+        await _group_into(container, classifier, downstream, element)
+
+    def _finish(container: _GroupBox) -> Any:
+        return _finish_groups(downstream, container.groups)
+
+    return Collector(_supply, _accumulate, finisher=_finish)
 
 
 def partitioning_by(
     predicate: Predicate[T],
-    downstream: Callable[[AsyncGenerator[T, None]], Coroutine[Any, Any, Any]] = to_list,
-) -> Callable[[AsyncGenerator[T, None]], Coroutine[Any, Any, dict[bool, Any]]]:
-    async def _partitioning_by(composition: AsyncGenerator[T, None]) -> dict[bool, Any]:
+    downstream: Collector[T, Any, Any] = to_list,
+) -> Collector[T, _GroupBox, dict[bool, Any]]:
+    _check_downstream(downstream)
+
+    async def _supply() -> _GroupBox:
+        groups: dict[Any, Any] = {}
+        for key in (True, False):
+            groups[key] = await _maybe_await(downstream.supplier)
+        return _GroupBox(groups)
+
+    async def _accumulate(container: _GroupBox, element: T) -> None:
         # bool() as coerce_key, not as a wrapper round the predicate: a truthy
         # non-bool predicate result must land in the True bucket, as today.
-        partitions = await _group_into(composition, predicate, {True: [], False: []}, bool)
-        return {key: await downstream(_generator_of(items)) for key, items in partitions.items()}
+        await _group_into(container, predicate, downstream, element, bool)
 
-    return _partitioning_by
+    def _finish(container: _GroupBox) -> Any:
+        return _finish_groups(downstream, container.groups)
+
+    return Collector(_supply, _accumulate, finisher=_finish)

@@ -1,9 +1,4 @@
-## Purpose
-
-Comparator-based extremum collectors for use with `Stream.collect()`,
-mirroring Java's `Collectors.min_by(Comparator)`/`max_by(Comparator)` statics.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: `min_by(comparator)`/`max_by(comparator)` collector factories
 `collector.py` SHALL provide `min_by(comparator)` and `max_by(comparator)`

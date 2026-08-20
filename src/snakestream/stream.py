@@ -6,7 +6,7 @@ from collections.abc import AsyncGenerator, Callable, Coroutine, Generator
 
 from snakestream.base_stream import BaseStream
 from snakestream.callable_dispatch import _maybe_await
-from snakestream.collector import to_list
+from snakestream.collector import Collector, StreamingCollector, _CollectorSink, to_list
 from snakestream.exception import StreamBuildException
 from snakestream.ops import (
     _DistinctOp,
@@ -18,8 +18,8 @@ from snakestream.ops import (
     _SkipOp,
     _SortedOp,
 )
+from snakestream.sink import _UNSET
 from snakestream.terminals import (
-    _UNSET,
     _CountSink,
     _FindSink,
     _ForEachSink,
@@ -122,7 +122,10 @@ class Stream(BaseStream[T]):
 
     # Terminals
     @overload
-    def collect(self, collector: Callable[[AsyncGenerator[T, None]], R]) -> R: ...
+    def collect(self, collector: Collector[T, Any, R]) -> Coroutine[Any, Any, R]: ...
+
+    @overload
+    def collect(self, collector: StreamingCollector) -> AsyncGenerator[Any, None]: ...
 
     @overload
     def collect(
@@ -133,7 +136,14 @@ class Stream(BaseStream[T]):
         self._check_not_consumed()
         if len(args) == 1:
             (collector,) = args
-            return collector(self._compose())
+            if isinstance(collector, Collector):
+                return self._drive_to(_CollectorSink(collector))
+            if isinstance(collector, StreamingCollector):
+                return collector(self._compose())
+            raise StreamBuildException(
+                "collect() requires a Collector (see snakestream.collector.Collector), "
+                "or to_generator for a lazy, streaming result"
+            )
         # 3-arg mutable reduction: supplier/accumulator, sync or async, are
         # dispatched via _maybe_await like every other user-supplied
         # callable. combiner is accepted for signature parity with Java's

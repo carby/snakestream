@@ -1,10 +1,4 @@
-## Purpose
-
-String-concatenation collector for use with `Stream.collect()`, mirroring
-Java's `Collectors.joining()` / `joining(delimiter)` /
-`joining(delimiter, prefix, suffix)` overloads.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: `joining()` collector factory
 `collector.py` SHALL provide a `joining(delimiter: str = "", prefix: str = "", suffix: str = "")` function that returns a `Collector` accumulating the stream's `str` elements and finishing them into a single `str` — usable with `Stream.collect(collector)`. It SHALL support Java's three `Collectors.joining` overloads via default arguments: no-arg (empty delimiter/prefix/suffix), delimiter-only, and delimiter+prefix+suffix.
@@ -24,21 +18,3 @@ Java's `Collectors.joining()` / `joining(delimiter)` /
 #### Scenario: Single-element stream has no delimiter applied
 - **WHEN** `Stream.of(["a"]).collect(joining(", "))` is called
 - **THEN** the result is `"a"`
-
-### Requirement: Empty-stream behavior matches Java
-An empty stream SHALL produce `prefix + suffix`, with the delimiter never used.
-
-#### Scenario: Empty stream, no prefix/suffix
-- **WHEN** `Stream.of([]).collect(joining(", "))` is called
-- **THEN** the result is `""`
-
-#### Scenario: Empty stream with prefix and suffix
-- **WHEN** `Stream.of([]).collect(joining(", ", "[", "]"))` is called
-- **THEN** the result is `"[]"`
-
-### Requirement: Non-`str` elements raise `TypeError`
-`joining()`'s collector SHALL raise `TypeError` if any pulled element is not a `str`, matching Java's `Collectors.joining()` being defined only on `Stream<CharSequence>`. No implicit stringification (e.g. via `str()`) SHALL occur.
-
-#### Scenario: Non-string element raises
-- **WHEN** `Stream.of(["a", 1, "c"]).collect(joining())` is called
-- **THEN** a `TypeError` is raised

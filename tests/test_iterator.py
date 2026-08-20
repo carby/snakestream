@@ -77,3 +77,12 @@ async def test_iterator_does_not_consume_or_mutate_chain() -> None:
     assert second == []
     assert chain_len_after_iterator == chain_len_before
     assert len(stream._chain) == chain_len_before
+
+
+@pytest.mark.asyncio
+async def test_iterator_drains_a_buffering_sink_via_the_bridge() -> None:
+    # sorted() buffers its whole input and flushes at end(); iterator() is a
+    # bridge consumer, unlike collect(to_list) which now drives a terminal
+    # sink directly and no longer touches the bridge's end-of-source flush.
+    it = Stream.of([3, 1, 2]).sorted().iterator()
+    assert [x async for x in it] == [1, 2, 3]
