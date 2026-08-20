@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 from collections.abc import AsyncGenerator
-from snakestream.base_stream import _maybe_aclosing
+from snakestream.base_stream import _copy_into, _maybe_aclosing
 from snakestream.sink import Op, TerminalSink
 from snakestream.stream import PROCESSES, Stream
 from snakestream.terminals import _FindSink
@@ -26,6 +26,8 @@ async def _guarded(source: AsyncGenerator, lock: asyncio.Lock) -> AsyncGenerator
 
 class ParallelStream(Stream[T]):
     def _compose(self) -> AsyncGenerator:
+        """The override BaseStream._compose() documents: the same chain, driven
+        by the race rather than by a single _drive()."""
         return self._parallel(self._chain, self._stream)
 
     async def _parallel(
@@ -72,14 +74,8 @@ class ParallelStream(Stream[T]):
         missed optimization, not a correctness gap: _parallel()'s finally
         block cancels and gathers the pending tasks on the way out."""
         self._check_not_consumed()
-        await terminal.begin({})
-        if not terminal.cancellation_requested():
-            async with _maybe_aclosing(self._compose()) as src:
-                async for n in src:
-                    await terminal.accept(n)
-                    if terminal.cancellation_requested():
-                        break
-        await terminal.end()
+        async with _maybe_aclosing(self._compose()) as src:
+            await _copy_into(terminal, src, {})
         return terminal.result()
 
     async def find_first(self) -> T | None:
