@@ -15,8 +15,20 @@ if TYPE_CHECKING:
 async def _normalize(source: Any) -> AsyncGenerator:
     if isinstance(source, (dict, str, bytes)):
         yield source
-    elif hasattr(source, "__iter__") or hasattr(source, "__next__"):
+    elif hasattr(source, "__iter__"):
         for i in source:
+            yield i
+    elif hasattr(source, "__next__"):
+        # A bare sync iterator, implementing only __next__. It can't be driven
+        # with `for`, and StopIteration must not escape: PEP 479 turns one
+        # raised inside an async generator into RuntimeError. Only the next()
+        # call is guarded, so a StopIteration thrown in at the yield still
+        # propagates to the caller rather than silently ending the stream.
+        while True:
+            try:
+                i = next(source)
+            except StopIteration:
+                return
             yield i
     else:
         yield source
