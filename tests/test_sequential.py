@@ -1,5 +1,8 @@
 import sys
 
+import asyncio
+import time
+
 import pytest
 from snakestream.base_stream import _wrap_sink
 from snakestream.collector import to_list
@@ -40,7 +43,28 @@ def test_sequential_long_chain_does_not_recurse_at_build_time() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sequential_switch_to_parallel(int_2_letter) -> None:
+async def test_sequential_applies_to_ops_declared_before_it(int_2_letter) -> None:
+    # given: the same slow mapper, this time with .parallel() declared BEFORE
+    # it and .sequential() after
+    async def slow(x):
+        await asyncio.sleep(0.1)
+        return x
+
+    # when
+    started = time.time()
+    it = await Stream.of(list(range(8))).parallel().map(slow).sequential().collect(to_list())
+    elapsed = time.time() - started
+
+    # then: the last switch wins for the whole pipeline, so the map ran
+    # sequentially (8 * 0.1) despite the earlier .parallel(). There is no such
+    # thing as a mid-chain mode switch — the executor in force at the terminal
+    # governs every queued op.
+    assert sorted(it) == list(range(8))
+    assert elapsed > 0.7
+
+
+@pytest.mark.asyncio
+async def test_sequential_declared_late_still_produces_every_element(int_2_letter) -> None:
     # when
     it = (
         await Stream.of([1, 2, 3, 4, 1, 2, 3, 4])

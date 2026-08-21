@@ -1,19 +1,4 @@
-## Purpose
-
-Defines the contract for treating `Stream`/`ParallelStream` instances as immutable, single-use references once they have been extended: intermediate operations and mode switches (`sequential()`/`parallel()`) return a new instance carrying the extended chain rather than mutating and returning the receiver, and the superseded receiver is invalidated so it can no longer be used to build or terminally consume a pipeline. Lifecycle operations (`on_close()`/`close()`) are exempt from this invalidation, and repeat terminal consumption of a reference that was never extended remains governed by the existing `pipeline-composition` chain-recomposition contract.
-
-## Requirements
-
-### Requirement: Intermediate ops return a new instance
-`Stream`'s intermediate operations (`map`, `filter`, `flat_map`, `sorted`, `distinct`, `peek`, `limit`, `skip`) SHALL return a new `Stream`/`ParallelStream` instance carrying the extended chain, rather than mutating and returning the receiver.
-
-#### Scenario: map() returns a distinct object
-- **WHEN** `s2 = s.map(f)` is called on a `Stream` instance `s`
-- **THEN** `s2 is not s`
-
-#### Scenario: Chaining still works without holding intermediate references
-- **WHEN** a fluent chain like `Stream.of([1, 2, 3]).map(f).filter(g).collect(to_list())` is awaited, with no intermediate result bound to a variable
-- **THEN** it produces the same result as before this change
+## MODIFIED Requirements
 
 ### Requirement: Mode switches return a new instance and invalidate the old reference
 `sequential()` and `parallel()` SHALL return a new instance and SHALL mark the receiver as consumed so it can no longer be used to build or terminally consume a pipeline.
@@ -53,14 +38,3 @@ A `Stream` instance that has never been used to build a further instance (no int
 #### Scenario: Second terminal call on a never-extended reference does not raise
 - **WHEN** `first = await s.collect(to_list())` is awaited on a `Stream` instance `s` that has never had an intermediate operation called on it, and `second = await s.collect(to_list())` is subsequently awaited on the same `s`
 - **THEN** neither call raises `IllegalStateException`, and `second` reflects the already-exhausted source per the existing `pipeline-composition` contract (e.g. `[]` for a plain list source)
-
-### Requirement: Lifecycle operations are exempt from invalidation
-`on_close()` and `close()` SHALL NOT be gated by, and SHALL NOT set, the consumed/invalidation state introduced by this capability. They remain usable on any reference, extended or not, before or after the pipeline has been consumed.
-
-#### Scenario: close() succeeds on a reference already used to build a further instance
-- **WHEN** `s.on_close(handler)` has been called on `s`, then `s.map(f)` has been called on `s` (superseding `s`), then `s.close()` is called on the original `s`
-- **THEN** `s.close()` does not raise, and `handler` is called
-
-#### Scenario: on_close() registered on a derived instance still fires via the original reference
-- **WHEN** `s.on_close(handler1)` is called on `s`, then `s2 = s.parallel()`, then `s2.on_close(handler2)` is called, then a terminal operation is awaited on `s2`, then `s.close()` is called on the original `s`
-- **THEN** both `handler1` and `handler2` are called, matching today's shared-`_close_handlers`-list behavior

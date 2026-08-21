@@ -27,18 +27,38 @@ CI (`.github/workflows/check.yml`) runs the ruff checks, `uv run pytest`, `ty`, 
 
 ## Architecture
 
-### The chain-of-closures model
+### The chain-of-ops model
 
-`BaseStream` (`base_stream.py`) holds two things: `self._stream`, the normalized `AsyncGenerator` source, and `self._chain`, a list of unapplied intermediate-operation closures. Calling an intermediate operation like `.map()` or `.filter()` on `Stream` does **not** execute anything — it appends an `async def fn(iterable) -> AsyncGenerator` closure to `self._chain` and returns `self` (mutation, not a new object). Nothing runs until a terminal operation calls `self._compose()`, which recursively feeds each closure the previous one's output (`_sequential`), building a single lazily-evaluated async generator pipeline from source through every queued step.
+`BaseStream` (`base_stream.py`) holds four things that matter: `self._stream`, the normalized `AsyncGenerator` source; `self._chain`, a list of unapplied `Op` objects; `self._executor`, the value that decides *how* the pipeline runs; and `self._consumed`, which invalidates a reference once it has been extended.
+
+Calling an intermediate operation like `.map()` or `.filter()` does **not** execute anything — it appends an `Op` to the chain and returns a **new** stream via `_derive()`, marking the receiver consumed (see the `pipeline-immutability` spec; reusing an extended reference raises `IllegalStateException`). An `Op` carries the arguments the user passed and builds the `Sink` that does the per-element work, once per sink chain it is linked into.
+
+Nothing runs until a terminal operation drives the chain. Two module-level helpers in `execution.py`, both named after their Java counterparts, do the actual work: `_wrap_sink(chain, terminal)` links the ops onto a terminal sink innermost-last and returns the head (Java's `AbstractPipeline.wrapSink()`), and `_copy_into(head, src, state_map)` pushes every source element into that head, honouring cancellation (Java's `copyInto()`).
 
 This means:
-- Intermediate ops (`filter`, `map`, `flat_map`, `sorted`, `distinct`, `peek`, `limit`) live in `stream.py` and only ever queue closures.
-- Terminal ops (`collect`, `reduce`, `for_each`, `find_any`, `max`/`min`, `all_match`/`any_match`/`none_match`, `count`) are `async def` methods that drive `self._compose()` to actually pull values through the chain.
-- Both sync and async user-supplied callables (predicates, mappers, comparators, consumers) are accepted everywhere; each operation checks `iscoroutinefunction(...)` and awaits or calls accordingly.
+- Intermediate ops (`filter`, `map`, `flat_map`, `sorted`, `distinct`, `peek`, `limit`, `skip`) live in `stream.py`, only ever queue an `Op`, and always return a new instance.
+- Terminal ops (`collect`, `reduce`, `for_each`, `find_any`, `max`/`min`, `all_match`/`any_match`/`none_match`, `count`) are `async def` methods that call `self._evaluate(terminal_sink)` to push values through the chain.
+- Both sync and async user-supplied callables are accepted everywhere. Awaitability is classified once per callable per composition rather than per element — see `callable_dispatch.py` and the `callable-dispatch` spec.
 
 ### Sequential vs. parallel execution
 
-`ParallelStream` (`parallel_stream.py`) subclasses `Stream` and overrides `_compose()` to fan the *same* chain of closures out across `PROCESSES` (default 4) independent async iterators pulling from the same underlying source, racing their `__anext__()` calls with `asyncio.wait(..., FIRST_COMPLETED)` and re-issuing a new `__anext__()` task per iterator as results land. This means parallel mode does not preserve ordering. `.sequential()` / `.parallel()` on `BaseStream` compose the current chain into a fresh generator and hand it to a new `Stream`/`ParallelStream`, resetting the chain — so switching modes mid-pipeline is supported and cheap.
+Execution mode is a **value, not a type**. There is no `ParallelStream` class. `execution.py` holds two executors and the primitives they are built from:
+
+```
+stream_through(chain, src)          -> AsyncGenerator   one worker, elements out lazily
+race_through(chain, src, workers)   -> AsyncGenerator   N branches racing one shared source
+feed_through(chain, src, terminal)  -> value            fused push, nothing buffered
+drain(elements, terminal)           -> value            any generator into a terminal
+
+SEQUENTIAL.elements = stream_through      SEQUENTIAL.value = feed_through  (override)
+RACING.elements     = race_through        RACING.value     = inherited generic
+```
+
+`Executor.value()`'s generic default is `drain(self.elements(...), terminal)`, which `Racing` uses unchanged — each racing branch owns its own sink chain, so there is no single chain to fuse a terminal onto. `Sequential.value()` overrides it with the fused push purely on measurement: composing and then draining costs +125% per element on `count()`. That override is the one asymmetry in the protocol; its docstring carries the figures.
+
+A stream consults its executor in exactly two places: `_compose()` (`self._executor.elements(...)`) and `_evaluate()` (`self._executor.value(...)`). A terminal that needs encounter order regardless of the stream's mode names `SEQUENTIAL` explicitly at its own call site — `for_each_ordered()` always, `find_first()` when `is_ordered()`. That is why `find_first` has one implementation rather than a per-mode pair.
+
+`.parallel()` / `.sequential()` go through `_derive_executor()`: a new stream over the **same source and same chain**, differing only in its executor, with the receiver consumed. They deliberately do **not** compose — that is what makes them position-independent, matching Java, where `parallel()` sets a flag on the source stage. The last mode switch before a terminal governs the whole pipeline. Racing does not preserve ordering.
 
 ### Collectors
 

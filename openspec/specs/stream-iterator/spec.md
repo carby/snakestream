@@ -20,11 +20,11 @@ Defines the contract for `BaseStream.iterator()`, an escape-hatch terminal-ish o
 - **THEN** no error occurs, and only the elements actually pulled are computed through the chain
 
 ### Requirement: iterator() works identically for sequential and parallel streams
-`BaseStream.iterator()` SHALL work on both `Stream` (sequential composition, linking the chain onto one sink via `_wrap_sink()`) and `ParallelStream` (parallel composition via `_parallel()`) without requiring a subclass-specific override, relying on each subclass's existing `_compose()` implementation.
+`BaseStream.iterator()` SHALL work under either executor — sequential composition, linking the chain onto one sink via `_wrap_sink()`, or racing composition — without requiring any mode-specific override, relying on the executor's element-producing operation.
 
 #### Scenario: iterator() on a ParallelStream
-- **WHEN** `.iterator()` is called on a `ParallelStream` with a queued chain of intermediate operations
-- **THEN** the returned `AsyncGenerator`, when iterated, yields the elements the parallel composition would produce (racing branches, unordered), following `ParallelStream`'s existing execution semantics
+- **WHEN** `.iterator()` is called on a parallel stream with a queued chain of intermediate operations
+- **THEN** the returned `AsyncGenerator`, when iterated, yields the elements the racing composition would produce (racing branches, unordered), following the racing executor's existing execution semantics
 
 ### Requirement: iterator() does not consume or mutate the chain
 Calling `BaseStream.iterator()` SHALL follow the same non-destructive composition contract as other terminal operations: it SHALL NOT mutate or drain `self._chain`, so the stream instance remains valid for a subsequent call to `iterator()` or another terminal operation.

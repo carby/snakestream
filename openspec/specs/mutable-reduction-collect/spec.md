@@ -24,12 +24,12 @@ Defines the contract for `Stream.collect(supplier, accumulator, combiner)`, the 
 - **THEN** behavior is identical to before this change — `collector(self._compose())` is invoked directly
 
 ### Requirement: `combiner` is accepted but not invoked
-The third argument, `combiner`, SHALL be accepted for signature parity with Java's `Stream.collect(Supplier, BiConsumer, BiConsumer)` but SHALL NOT be called by this implementation, on `Stream` or `ParallelStream`. Both fold over a single composed `AsyncGenerator` with no independently-accumulated partitions to merge, matching the existing `reduce(identity, accumulator)` behavior under `.parallel()`.
+The third argument, `combiner`, SHALL be accepted for signature parity with Java's `Stream.collect(Supplier, BiConsumer, BiConsumer)` but SHALL NOT be called by this implementation, under either executor. Both fold over a single composed `AsyncGenerator` with no independently-accumulated partitions to merge, matching the existing `reduce(identity, accumulator)` behavior under `.parallel()`.
 
 #### Scenario: `combiner` is never called, sequential
 - **WHEN** `Stream.of([1, 2, 3]).collect(list, list.append, combiner)` is called with a `combiner` that records its own invocations
 - **THEN** the result is `[1, 2, 3]` and `combiner` was never called
 
 #### Scenario: `combiner` is never called, parallel
-- **WHEN** the same 3-arg `collect()` call is made on a `ParallelStream` instance
+- **WHEN** the same 3-arg `collect()` call is made on a parallel stream
 - **THEN** the returned container holds all source elements (order not guaranteed) and `combiner` was never called

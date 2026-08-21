@@ -44,7 +44,7 @@ The determination SHALL be made by classifying the callable — recognizing both
 - **THEN** the second composition performs its own classification independently, and the first composition's classification does not persist into it
 
 #### Scenario: Each parallel branch classifies independently
-- **WHEN** a `ParallelStream` composition fans the chain out across racing branches, each composing its own generator
+- **WHEN** a racing composition fans the chain out across racing branches, each composing its own generator
 - **THEN** each branch classifies the callable independently, and every branch reaches the same determination because classification depends only on the callable
 
 ### Requirement: Classification state is per callable
