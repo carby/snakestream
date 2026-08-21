@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, Generic, cast
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterable
 
 from snakestream.exception import IllegalStateException
-from snakestream.sink import GeneratorBridgeSink, Op, Sink, TerminalSink
-from snakestream.type import T, CloseHandler, StateMap
+from snakestream.execution import RACING, SEQUENTIAL, Executor, _wrap_sink as _wrap_sink
+from snakestream.sink import Op, TerminalSink
+from snakestream.type import T, CloseHandler
 
 if TYPE_CHECKING:
     from snakestream.stream import Stream  # pragma: no cover
-    from snakestream.parallel_stream import ParallelStream  # pragma: no cover
 
 
 async def _normalize(source: Any) -> AsyncGenerator:
@@ -41,45 +40,6 @@ def _accept(source: Any) -> AsyncGenerator | None:
     return None
 
 
-@asynccontextmanager
-async def _maybe_aclosing(thing: AsyncGenerator) -> AsyncIterator[AsyncGenerator]:
-    """Like contextlib.aclosing(), but a no-op on exit if the wrapped object
-    has no aclose() — some accepted sources (e.g. a bare async iterator
-    implementing only __anext__) don't. The finally is load-bearing: the
-    source must be closed on the way out of a body that raised or broke
-    early (limit, find_any, any_match), not just one that ran to
-    exhaustion."""
-    try:
-        yield thing
-    finally:
-        if hasattr(thing, "aclose"):
-            await thing.aclose()
-
-
-def _wrap_sink(intermediaries: list[Op], terminal: Sink[Any]) -> Sink[Any]:
-    """Link a chain of ops onto a terminal sink, innermost last, and return the
-    head. Java's AbstractPipeline.wrapSink() does exactly this."""
-    sink = terminal
-    for op in reversed(intermediaries):
-        sink = op.link(sink)
-    return sink
-
-
-async def _copy_into(head: Sink[Any], src: AsyncGenerator, state_map: StateMap) -> None:
-    """Push every element of a source into a wrapped sink, honouring
-    cancellation. Java's AbstractPipeline.copyInto() does exactly this."""
-    await head.begin(state_map)
-    # a chain can already be cancelled before it has seen anything
-    # (limit(0)); pulling even one element would run every upstream
-    # op on a value nobody wants
-    if not head.cancellation_requested():
-        async for item in src:
-            await head.accept(item)
-            if head.cancellation_requested():
-                break
-    await head.end()
-
-
 class BaseStream(Generic[T]):
     def __init__(self, source: Any, close_handlers: list[CloseHandler] | None = None) -> None:
         self._stream: AsyncGenerator[T, None] = _accept(source) or _normalize(source)
@@ -87,6 +47,7 @@ class BaseStream(Generic[T]):
         self._close_handlers: list[CloseHandler] = [] if close_handlers is None else close_handlers
         self._ordered: bool = True
         self._consumed: bool = False
+        self._executor: Executor = SEQUENTIAL
 
     def _check_not_consumed(self) -> None:
         if self._consumed:
@@ -97,88 +58,46 @@ class BaseStream(Generic[T]):
         new_stream = type(self)(self._stream, self._close_handlers)
         new_stream._chain = self._chain + [op]
         new_stream._ordered = self._ordered
+        new_stream._executor = self._executor
         self._consumed = True
         return new_stream
 
-    async def _drive(
-        self,
-        chain: list[Op],
-        source: AsyncGenerator,
-        state_map: StateMap | None = None,
-    ) -> AsyncGenerator[T, None]:
-        if state_map is None:
-            state_map = {}
-        bridge: GeneratorBridgeSink = GeneratorBridgeSink()
-        head = _wrap_sink(chain, bridge)
-        async with _maybe_aclosing(source) as src:
-            await head.begin(state_map)
-            # same pre-first-pull guard as _copy_into(), which carries the
-            # reasoning; this loop cannot share it because it has to yield
-            if not head.cancellation_requested():
-                async for item in src:
-                    await head.accept(item)
-                    if bridge.buffer:
-                        for out in bridge.buffer:
-                            yield out
-                        bridge.buffer.clear()
-                    if head.cancellation_requested():
-                        break
-            await head.end()
-            if bridge.buffer:
-                for out in bridge.buffer:
-                    yield out
-                bridge.buffer.clear()
-
-    async def _drive_to(self, terminal: TerminalSink[Any]) -> Any:
-        """Drive the chain into a terminal sink and return its result.
-
-        The dispatching form: ParallelStream overrides it. A terminal that
-        needs encounter order regardless of the stream's mode calls
-        _drive_to_sequential() directly instead."""
-        return await self._drive_to_sequential(terminal)
-
-    async def _drive_to_sequential(self, terminal: TerminalSink[Any]) -> Any:
-        """Push source -> head -> terminal in a single ordered pass, with
-        nothing buffered on the way: the last intermediate sink pushes straight
-        into the terminal. Never overridden, so it stays ordered on a
-        ParallelStream too."""
-        self._check_not_consumed()
-        head = _wrap_sink(self._chain, terminal)
-        async with _maybe_aclosing(self._stream) as src:
-            await _copy_into(head, src, {})
-        return terminal.result()
-
     def _compose(self) -> AsyncGenerator[T, None]:
-        """Build the chain into a lazily-evaluated generator.
+        """The chain as a generator, under this stream's executor."""
+        return self._executor.elements(self._chain, self._stream)
 
-        The dispatching form, and the seam where execution mode is decided:
-        ParallelStream overrides it to fan the same chain out into a race.
-        _drive() cannot be that seam - _parallel() calls it once per racing
-        branch, so overriding it would make each branch fan out again."""
-        return self._drive(self._chain, self._stream)
-
-    def _handoff(self, cls: type[BaseStream[Any]]) -> Any:
-        """Compose the current chain into a fresh generator and hand it to a
-        new stream of the given class, consuming this one. The mode switches
-        differ only by that class, so they share this body; each keeps its own
-        local import, since hoisting both here would import parallel_stream on
-        a sequential() call."""
+    async def _evaluate(self, terminal: TerminalSink[Any]) -> Any:
+        """The chain driven into a terminal sink, under this stream's executor.
+        The one place a stream's execution mode is consulted; a terminal that
+        needs encounter order regardless of mode names SEQUENTIAL itself."""
         self._check_not_consumed()
-        new_source = self._compose()
-        new_stream = cls(new_source, self._close_handlers)
+        return await self._executor.value(self._chain, self._stream, terminal)
+
+    def _derive_executor(self, executor: Executor) -> Any:
+        """A mode switch: a new stream over the SAME source and the SAME queued
+        chain, differing only in its executor, consuming this one.
+
+        It must not compose. Composing here is what made `.parallel()`
+        position-dependent — ops queued before the switch were frozen under the
+        old mode — where Java's `parallel()` sets a flag on the source stage and
+        so governs the whole pipeline wherever it appears.
+
+        It must not assign onto self and return self either, however tempting:
+        pipeline-immutability requires the receiver be invalidated, and an
+        in-place flip would leave it usable."""
+        self._check_not_consumed()
+        new_stream = type(self)(self._stream, self._close_handlers)
+        new_stream._chain = self._chain
         new_stream._ordered = self._ordered
+        new_stream._executor = executor
         self._consumed = True
         return new_stream
 
     def sequential(self) -> Stream[T]:
-        from .stream import Stream
+        return cast("Stream[T]", self._derive_executor(SEQUENTIAL))
 
-        return cast("Stream[T]", self._handoff(Stream))
-
-    def parallel(self) -> ParallelStream[T]:
-        from .parallel_stream import ParallelStream
-
-        return cast("ParallelStream[T]", self._handoff(ParallelStream))
+    def parallel(self) -> Stream[T]:
+        return cast("Stream[T]", self._derive_executor(RACING))
 
     def iterator(self) -> AsyncGenerator[T, None]:
         self._check_not_consumed()
@@ -206,4 +125,4 @@ class BaseStream(Generic[T]):
             raise exceptions[0]
 
     def is_parallel(self) -> bool:
-        return False
+        return self._executor.is_parallel

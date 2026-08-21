@@ -152,16 +152,32 @@ async def test_parallel_downstream_processing_stays_concurrent_with_real_await_s
 
 
 @pytest.mark.asyncio
-async def test_sequential_switch_to_sequential(int_2_letter) -> None:
+async def test_parallel_applies_to_ops_declared_before_it(int_2_letter) -> None:
+    # given: a mapper slow enough that racing is visible in wall clock. The
+    # .map() is declared BEFORE .parallel(), which used to freeze it under the
+    # sequential mode in force at that point.
+    async def slow(x):
+        await asyncio.sleep(0.1)
+        return x
+
     # when
-    it = (
-        await Stream.of([1, 2, 3, 4, 1, 2, 3, 4])
-        .sequential()
-        .map(lambda x: int_2_letter[x])
-        .parallel()
-        .distinct()
-        .collect(to_list())
-    )
+    started = time.time()
+    it = await Stream.of(list(range(8))).map(slow).parallel().collect(to_list())
+    elapsed = time.time() - started
+
+    # then: the executor in force at the terminal governs the whole pipeline,
+    # so the map raced across all four branches (8/4 * 0.1) rather than running
+    # sequentially (8 * 0.1). Matches Java, where parallel() sets a flag on the
+    # source stage and is not positional.
+    assert sorted(it) == list(range(8))
+    assert elapsed < 0.35
+
+
+@pytest.mark.asyncio
+async def test_parallel_declared_late_still_produces_every_element(int_2_letter) -> None:
+    # when: a stateful op declared before the switch now runs under the race,
+    # so distinct() has to stay globally correct across branches
+    it = await Stream.of([1, 2, 3, 4, 1, 2, 3, 4]).map(lambda x: int_2_letter[x]).distinct().parallel().collect(to_list())
     # then
     assert 4 == len(it)
     assert "a" in it

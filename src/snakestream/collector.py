@@ -9,7 +9,7 @@ from inspect import isawaitable
 from typing import Any, Generic, NamedTuple, Protocol, TypeVar, cast, overload
 from collections.abc import AsyncGenerator, Awaitable, Callable
 
-from snakestream.base_stream import _maybe_aclosing
+from snakestream.execution import _maybe_aclosing
 from snakestream.callable_dispatch import AsyncDispatch, _classify_step, _maybe_await, is_async_callable
 from snakestream.exception import StreamBuildException
 from snakestream.sink import Counter, TerminalSink, _UNSET

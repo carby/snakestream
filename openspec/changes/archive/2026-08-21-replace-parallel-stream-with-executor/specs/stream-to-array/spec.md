@@ -1,8 +1,4 @@
-## Purpose
-
-Defines the contract for `Stream.to_array()`, a terminal operation aliasing `collect(to_list())`.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: `Stream.to_array()` terminal operation
 `Stream.to_array()` SHALL be a terminal operation, callable with no arguments, that drives the stream's chain under its executor and returns a `list` containing every element pulled from the composed chain, in the same order `collect(to_list())` would return them. It SHALL be equivalent in behavior to `self.collect(to_list())` and SHALL be available under either executor with no mode-specific override, following the existing precedent of terminal ops like `iterator()`. It is named `to_array` (snake_case), matching every other Java-name adaptation already in the class (`for_each`, `find_any`, `flat_map`), rather than the literal Java casing `toArray`.
@@ -22,10 +18,3 @@ Defines the contract for `Stream.to_array()`, a terminal operation aliasing `col
 #### Scenario: Works on `ParallelStream`
 - **WHEN** `to_array()` is called on a parallel stream
 - **THEN** the result is a `list` containing all source elements (order not guaranteed, matching the racing executor's existing unordered semantics)
-
-### Requirement: No `toArray(generator)` overload
-`Stream.to_array()` SHALL NOT accept a factory/generator argument. Java's `toArray(IntFunction<A[]> generator)` overload exists to produce a correctly-typed array in a language without runtime generic-array construction; Python's `list` has no equivalent typed-container problem, so this overload SHALL be treated as intentionally skipped rather than implemented.
-
-#### Scenario: Calling with an argument raises
-- **WHEN** `to_array()` is called with any positional or keyword argument
-- **THEN** a `TypeError` is raised (Python's standard no-such-parameter behavior, not custom validation)

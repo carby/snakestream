@@ -26,14 +26,110 @@ core semantic.
 
 | Item | Why later |
 |---|---|
-| **Replace the `Stream` -> `ParallelStream` subclass with execution mode as a value (an executor/strategy object)** — today execution mode is encoded as a *type*, and `_derive()`'s `type(self)` (`base_stream.py:97`) is what carries it through a chain. Four drive implementations exist across two axes (generator-out vs terminal-sink-out, sequential vs racing), but they are not a symmetric 2x2: three are primitive and the fourth, `ParallelStream._drive_to()`, is *derived* — it is literally `_compose()` piped into `_copy_into()`, and cannot be anything else, because each racing branch owns its own sink chain so there is no single chain to fuse a terminal onto. `_drive_to_sequential()` **can** fuse ("nothing buffered on the way") and that fusion is the only reason it needs a separate name. The consequence is an inverted hierarchy: `BaseStream`'s default `_drive_to()` is the narrow *sequential-only fused* implementation and `ParallelStream` overrides it with the *general* one. Under an executor value that flips the right way round — a generic `Executor.drive_to()` default of `compose()` + `_copy_into()` that `Racing` simply inherits, and a `Sequential.drive_to()` that overrides it as a documented fast path. The evidence that the class tree is vestigial here is direct: `_drive()` references `self` **not at all** (already a free function in method clothing) and `_parallel()` references `self` **only** to reach `self._drive` — i.e. only to reach the other strategy. The hierarchy is serving as a two-entry lookup table between two functions that do not need objects. What goes away: `ParallelStream` entirely (`_compose` -> `Racing.compose`, `_parallel` -> its body, `is_parallel` -> a class attribute, `_drive_to` -> deleted as the inherited default, `find_first` -> unified into `Stream.find_first` via `self._executor.is_parallel`); both dispatch seams `_compose()` and `_drive_to()`; `_drive_to_sequential()` as a name, becoming an explicit `SEQUENTIAL.drive_to(...)` argument at its two call sites (`for_each_ordered`, `find_first`) instead of a never-override promise enforced by docstring; the `stream.py` <-> `parallel_stream.py` import cycle and the two function-local imports in `sequential()`/`parallel()` that work around it; `_handoff()`'s `cls` parameter and the docstring explaining that workaround; and `PROCESSES` living in `stream.py` rather than where racing does. It also **fixes a live bug**: `.parallel()` and `.sequential()` are the only ops in the library that discard subclass identity — `class MyStream(Stream)` survives `.map()` (via `type(self)`) but `.parallel()` returns a plain `ParallelStream` and `.sequential()` a plain `Stream`, dropping the subclass and its attributes, even though CLAUDE.md documents subclassing `Stream` to wrap an I/O-like resource as a supported use case. Verified by repro on 2026-08-20. | Explored 2026-08-20; **diagnosis is settled, but this changes a core structural decision and needs explicit buy-in before starting**, same bar as the real-parallelism item below. The work is well-bounded — `ParallelStream` is not exported (`__init__.py` exports only `Stream`), there are **zero** `isinstance` checks against it and no test imports it (every test mention is a comment or docstring), and the whole 505-test suite touches only two private names: `test_sequential.py` imports `_wrap_sink` (unaffected, stays module-level) and `test_compose.py` calls `stream._compose()` (survives as a thin delegation to the executor). So "full suite green with no test edited" works as the same behaviour tripwire the drive-loop collapse used. **The one real trap, to be written into any design before work starts:** `.parallel()`/`.sequential()` must keep going through `_handoff()`, which composes the chain into a generator and hands it to a *new* stream. Under an executor field it becomes tempting to write `self._executor = RACING; return self`, which silently changes semantics — ops queued *before* the switch would retroactively run raced, where today they are frozen under the old mode by the compose-and-handoff. The type checker will not catch that. **Counter-case, stated fairly:** only two executors exist and the third (real multiprocess) is parked indefinitely with no concrete demand, so the usual "we might add a third" justification does not apply; it touches every drive path immediately after the drive-loop collapse reworked them, which is churn on churn; and the resulting protocol is not as tidy as the sketch suggests, since `Sequential.drive_to()` remains a performance-motivated specialization inside it. The case for does **not** rest on the hypothetical third executor — it rests on four things true today: the inverted default/override, `_drive_to_sequential()` being naming discipline rather than an argument, the import cycle, and the subclass-identity bug. Net effect is removal, not substitution: roughly one class, two dispatch seams, one import cycle and one bug gone, against one field and one small protocol added. **Relationship to the item below:** this is an enabler, not a dependency — real multiprocess parallelism would become *adding a third executor* rather than a third subclass, and the executor becomes the natural place to own what has to cross a process boundary. It does not solve that item's pickling blocker. **Open threads not chased:** whether `BaseStream`/`Stream` should also collapse once `ParallelStream` is gone (probably orthogonal — that split is organizational); whether `unordered()` belongs to the stream or the executor, since `find_first` currently reads both flags to decide; and whether `Racing` holding `processes` as a field opens up `.parallel(n)` as public API (probably a deliberate no — Java has no such overload). |
-| **Implement real (multiprocess) parallelism for `.parallel()` / `ParallelStream` / `PROCESSES`** — today it's just `asyncio` tasks racing over a shared generator (I/O-bound only, GIL-bound, no multiprocessing). Decided to keep the `.parallel()`/`PROCESSES` naming as-is (see README) rather than rename to the more accurate `.concurrent()`/`CONCURRENCY`, specifically so that *if* real parallelism is ever implemented under the same names, it's not a second breaking rename. | No concrete use case for true CPU parallelism has come up yet, and the path there is blocked on a real problem, not just unscoped effort: a `ProcessPoolExecutor`-backed implementation needs to serialize the mapper/predicate/comparator/accumulator/combiner across the process boundary, and stdlib `pickle` can't handle lambdas or local closures (the idiomatic way to call every op in this library), can't pickle generators/async generators at all (so the source itself can never be shipped whole), and even picklable *sync* callables don't solve it since async user callables would need each worker to bootstrap its own event loop rather than just running a function. Revisit only once there's both a concrete need and an answer for lambdas/closures across the process boundary (`cloudpickle`/`dill`, or a restricted sync-only picklable-callable mode) and for running async user callables inside a worker process. **See the executor-value item above**: it is an enabler for this one (a third executor rather than a third subclass, and a natural owner for whatever has to cross the process boundary), though it does not solve the pickling blocker. Note also that it would retire the `ParallelStream` name this item's title still uses. |
+| **Implement real (multiprocess) parallelism for `.parallel()` / `ParallelStream` / `PROCESSES`** — today it's just `asyncio` tasks racing over a shared generator (I/O-bound only, GIL-bound, no multiprocessing). Decided to keep the `.parallel()`/`PROCESSES` naming as-is (see README) rather than rename to the more accurate `.concurrent()`/`CONCURRENCY`, specifically so that *if* real parallelism is ever implemented under the same names, it's not a second breaking rename. | No concrete use case for true CPU parallelism has come up yet, and the path there is blocked on a real problem, not just unscoped effort: a `ProcessPoolExecutor`-backed implementation needs to serialize the mapper/predicate/comparator/accumulator/combiner across the process boundary, and stdlib `pickle` can't handle lambdas or local closures (the idiomatic way to call every op in this library), can't pickle generators/async generators at all (so the source itself can never be shipped whole), and even picklable *sync* callables don't solve it since async user callables would need each worker to bootstrap its own event loop rather than just running a function. Revisit only once there's both a concrete need and an answer for lambdas/closures across the process boundary (`cloudpickle`/`dill`, or a restricted sync-only picklable-callable mode) and for running async user callables inside a worker process. **The executor-value redesign is done** (see **Done**), which is the enabler this entry used to point forward to: real parallelism is now *a third executor* implementing `elements()`/`value()`, not a third subclass, and `execution.py` is the natural owner for whatever has to cross the process boundary. It does not solve the pickling blocker. The `ParallelStream` name in this item's title is retired; the mode is now `Racing`. |
 | **`BaseStream.spliterator()`** — Java's parallel-decomposition iterator, used by `parallelStream()` to split a source into chunks shared threads can each work over. | Depends on the item above: Java's `Spliterator` assumes shared-memory thread decomposition, which only becomes meaningful once real (multiprocess) partitioned execution is decided — until then there's nothing for it to expose, and it may end up intentionally-skipped rather than implemented. Moved down from **Now**, where it was flagged as decision-blocked rather than ready to build. |
 | **Wire up `reduce(identity, accumulator, combiner)` and `collect(supplier, accumulator, combiner)`'s `combiner`** — both accept a `combiner` for Java signature parity but never invoke it, since `stream.py` always folds over one composed stream, sequential or parallel, with no independent partitions to merge. | Same blocker as the item above: a real combine step only makes sense once real partitioned (multiprocess) execution exists, which is now explicitly parked until there's both concrete demand and a solution for the pickling/async-worker problem. See `openspec/changes/add-collect-supplier-accumulator-combiner`. |
 | **Java 9 `Stream` additions** — `takeWhile(predicate)`, `dropWhile(predicate)`, `Stream.ofNullable(t)`, and the 3-arg `iterate(seed, hasNext, next)` overload (distinct from the already-implemented 2-arg `iterate(seed, next)`). | README states the project's intent explicitly: "once we reach some sort of feature parity with Java 8 then maybe we move on to implement the improvements in Java 9." The **Now**/**Next** buckets are still closing out Java 8 parity gaps (`unordered()`, the `Collectors` framework, etc.), so pulling Java 9 work forward would jump the stated sequencing rather than reflecting lower value — revisit once Java 8 parity is substantially done. |
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should instead be documented as intentional next to the `str`/`bytes` note. Surfaced 2026-08-20 in the same code-quality read that produced **Now** items 1-4. |
 
 ## Done
+
+- **Replaced the `Stream` -> `ParallelStream` subclass with execution mode as a
+  value, and made `.parallel()`/`.sequential()` position-independent.** These
+  landed together because they are mechanically the same edit: the
+  compose-and-handoff is what carried mode as a type *and* what made the
+  switches positional.
+
+  **The exploration changed the shape of the item before it was proposed.** It
+  had been framed as an internals cleanup — inverted default/override, two
+  dispatch seams, an import cycle. Tracing `.parallel().map(f).count()`
+  end-to-end surfaced two things the entry had not:
+
+  *One name carried two meanings.* `_drive_to_sequential()` was both the fused
+  fast path (performance) and "force encounter order, ignore the stream's mode"
+  (semantics, used by `for_each_ordered` and `ParallelStream.find_first`). They
+  shared an implementation by coincidence, so reading
+  `ParallelStream.find_first() -> _drive_to_sequential()` gave no way to tell
+  which was meant. They are now separate: the fast path is an implementation
+  detail of `Sequential`, and forcing order is `SEQUENTIAL.value(...)` written
+  at the call site.
+
+  *`.parallel()` was position-dependent and Java's is not.* Because `_handoff()`
+  composed the chain-so-far into a generator, ops declared before the switch
+  were frozen under the old mode. Measured, 8 elements through a 100 ms async
+  mapper: `.parallel().map(slow)` took 0.20s, `.map(slow).parallel()` took
+  0.81s — identical to fully sequential. Java's `AbstractPipeline.parallel()` is
+  `sourceStage.parallel = true; return this;`, a flag on the source stage, so
+  the whole pipeline is affected wherever the call appears. With 1:1 public API
+  parity as this project's first priority, that made it an API divergence rather
+  than an internals detail. After the change both forms take 0.20s. **Note this
+  inverts the trap the old roadmap entry warned about** — it cautioned that
+  flipping a flag instead of handing off would "silently change semantics",
+  which is true, but the semantics it changes *to* are Java's. What survived
+  from that warning is the immutability half: the switch must still return a new
+  instance and consume the receiver, so it is `_derive_executor()`, never
+  `self._executor = X; return self`.
+
+  **Racing was kept deliberately, not by omission.** Partition-plus-combine
+  (spliterator splits, per-partition pipelines, a `combiner` merge) was explored
+  and set aside: Java's own answer for a non-splittable source
+  (`Spliterators.IteratorSpliterator.trySplit()`, which drains a growing batch
+  into an array) trades latency-to-first-element for throughput, which is the
+  wrong trade for an async/IO-first library where racing yields an element the
+  instant any branch produces one. The rule adopted: **Java is the public-API
+  contract, not the implementation blueprint.** Partitioning, `spliterator()`
+  and combiner wiring stay in **Later**.
+
+  **The one asymmetry in the new protocol is there on measurement.**
+  `Executor.value()`'s generic default is `drain(elements(...), terminal)`,
+  which `Racing` inherits unchanged; `Sequential.value()` overrides it with the
+  fused push. The task list put a gate before the design was allowed to keep
+  that override, and it came back far larger than the +10-50% band the
+  flush-dedup measurements had set as the expectation (Python 3.14.5, 20,000
+  elements, no intermediate chain, best of 5, ns/element):
+
+  | Variant | Fused | Generic | Delta |
+  |---|---|---|---|
+  | `count()` | 303 / 296 / 320 | 669 / 664 / 745 | **+125%** |
+  | `reduce(acc)` sync | 353 / 351 / 348 | 745 / 739 / 775 | **+112%** |
+
+  More than twice the cost per element, because this removes the async-generator
+  round trip entirely rather than adding one object to a loop that already had
+  one. The override stays and carries these figures in its docstring.
+
+  **What went away:** `ParallelStream` and `parallel_stream.py`; `_drive`,
+  `_drive_to`, `_drive_to_sequential`, `_parallel` and `_handoff`; both dispatch
+  seams, replaced by `_compose()` and `_evaluate()`, one line each; the
+  `stream.py` <-> `parallel_stream.py` import cycle and its two function-local
+  import workarounds; `ParallelStream.find_first()`, unified into one
+  implementation selecting on the ordering flag; and one generator layer per
+  element on parallel pipelines, since a mode switch no longer composes
+  (`.parallel().map(f).count()` went from five async-generator frames to four).
+  **What arrived:** `execution.py` with four primitives, two executors and
+  `PROCESSES`. It also **fixed a live bug**: `.parallel()`/`.sequential()` were
+  the only ops in the library that discarded a `Stream` subclass and its
+  attributes, despite CLAUDE.md documenting subclassing as supported.
+
+  **The "green with no test edited" tripwire could not apply** — the behaviour
+  change is the point — so it was replaced with a diff check: only the test
+  sites identified *before* any source edit were allowed to differ. The
+  pre-analysis found 51 `.parallel()` sites across 17 files, zero with an op
+  before `.parallel()` on the same line, and four multi-line chains that change
+  what runs raced. All four assertions were predicted to survive, and did; the
+  two in `test_close.py` passed untouched. The two in `test_sequential.py` and
+  `test_parallel.py` were rewritten rather than patched, because they tested
+  mid-chain mode switching — a concept this change retires — and their names
+  were already inverted relative to what they did. They now assert the new rule
+  by timing, the same measurement that found the divergence. 535 tests green,
+  coverage 98.08%. One new capability (`stream-execution-model`) and 11 spec
+  deltas. See `openspec/changes/replace-parallel-stream-with-executor`.
+
+  **Left open deliberately:** whether `BaseStream` should collapse into `Stream`
+  now that `ParallelStream` is gone. Java has `BaseStream` because
+  `IntStream`/`LongStream`/`DoubleStream` share a parent; this library has no
+  primitive specializations and already collapsed that distinction, so the split
+  may be organizing nothing. It roughly doubles the diff and is independently
+  revertable, so it is a follow-up rather than part of this change.
 
 - **Took the small-cleanups batch: `to_list` as a factory, the race loop's
   per-element scans, `_maybe_aclosing`, and private box types in public

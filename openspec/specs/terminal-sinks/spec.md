@@ -77,17 +77,70 @@ terminal's `result()` SHALL be the result fixed before the stop.
 - **WHEN** a chain `.sorted().peek(fn).find_first()` is driven over an unsorted source
 - **THEN** the terminal returns the smallest element, and `fn` is called exactly once — the sort's flush stops rather than pushing its whole buffer past the settled terminal
 
-### Requirement: Operations that need a generator keep using the bridge
+### Requirement: An ordered drive is available regardless of stream mode
 
-`iterator()`, `collect(to_generator)`, `Stream.concat()`, and the
-`sequential()` / `parallel()` mode handoff SHALL obtain an `AsyncGenerator` by
-composing the chain through the generator bridge.
+A terminal SHALL be able to request a strictly ordered, single-flight push
+through the chain, bypassing any racing execution the stream's executor would
+otherwise use. It SHALL do so by naming the sequential executor explicitly.
+`for_each_ordered()` SHALL use it unconditionally, and `find_first()` SHALL use
+it whenever the stream is ordered.
+
+The ordered drive SHALL deliver elements to the terminal in source encounter
+order whichever executor the stream carries.
+
+#### Scenario: for_each_ordered() stays in source order on a parallel stream
+- **WHEN** `for_each_ordered(consumer)` is called on a parallel stream whose chain reorders arrival timing (for example a `map()` with a positional delay)
+- **THEN** `consumer` is invoked with the elements in source encounter order
+
+#### Scenario: An ordered parallel find_first() returns the true first element
+- **WHEN** `find_first()` is called on an ordered parallel stream whose chain reorders arrival timing
+- **THEN** it returns the first element in source encounter order, not the first to arrive
+
+#### Scenario: An unordered parallel find_first() still races
+- **WHEN** `find_first()` is called on a parallel stream that has been marked `unordered()`
+- **THEN** it behaves as `find_any()` does, returning the first element to arrive
+
+### Requirement: A parallel stream's terminal accumulates across all branches
+
+When a terminal sink is driven under the racing executor, it SHALL receive every
+element that the racing branches produce, exactly once each, and SHALL produce
+the same result the same terminal produces under the sequential executor for any
+order-independent operation.
+
+A short-circuiting terminal under the racing executor SHALL stop consuming the
+race once its result is fixed, and SHALL leave no in-flight branch task
+uncancelled or its exception unretrieved.
+
+Cancellation under the racing executor SHALL reach the loop consuming the race,
+but NOT the sinks inside an in-flight branch: each branch holds its own sink
+chain and the terminal is not a member of it. A branch's own `limit()` or
+`flat_map()` therefore SHALL NOT be expected to stop on a terminal's behalf.
+
+#### Scenario: A parallel terminal sees every element once
+- **WHEN** `count()` or `reduce()` is called on a parallel stream over a source with many elements
+- **THEN** the result reflects every source element exactly once, matching the sequential result
+
+#### Scenario: A parallel short-circuiting terminal tears down cleanly
+- **WHEN** `any_match(predicate)` is called on a parallel stream and an early element satisfies `predicate`
+- **THEN** it returns `True` and no unhandled exception or warning escapes from the abandoned racing branches
+
+### Requirement: Operations that need a generator use the executor's element-producing form
+
+`iterator()`, `collect(to_generator)` and `Stream.concat()` SHALL obtain an
+`AsyncGenerator` by composing the chain through the executor's
+element-producing operation, which is backed by the generator bridge.
 
 The single-`Collector` form of `collect()` — including `to_array()`'s
-`collect(to_list())` — SHALL NOT use the bridge: a `Collector` is driven through
-a terminal sink like every other terminal operation, so its elements are
-pushed straight into the accumulation container with nothing buffered on the
-way. `to_generator` remains bridge-backed, since it is lazy and streaming.
+`collect(to_list())` — SHALL NOT use the bridge when the stream's executor
+provides a fused drive: a `Collector` is driven through a terminal sink like
+every other terminal operation, so its elements are pushed straight into the
+accumulation container with nothing buffered on the way. `to_generator` remains
+bridge-backed, since it is lazy and streaming.
+
+`sequential()` and `parallel()` SHALL NOT compose the chain at all. A mode
+switch returns a new stream carrying the same source and the same queued chain
+under a different executor, so no generator is created and no chain is frozen at
+the point of the switch.
 
 Collectors SHALL be `Collector` values, not plain callables. The collector
 interface SHALL remain independent of how a stream executes: the same
@@ -109,52 +162,6 @@ interface SHALL remain independent of how a stream executes: the same
 - **WHEN** the same `Collector` is used on a sequential and on a parallel stream over the same source
 - **THEN** both produce the result that collector defines, subject only to the ordering guarantees the stream's mode already gives — the collector itself is written against supplier/accumulator/finisher and never against a drive mechanism
 
-#### Scenario: A mode switch composes to a generator
+#### Scenario: A mode switch does not compose
 - **WHEN** `sequential()` or `parallel()` is called mid-pipeline
-- **THEN** the new stream's source is a composed generator over the previous chain, and the resulting pipeline produces the same elements the unswitched chain would
-
-### Requirement: An ordered drive is available regardless of stream mode
-
-A terminal SHALL be able to request a strictly ordered, single-flight push
-through the chain, bypassing any racing execution the stream's mode would
-otherwise use. `for_each_ordered()` SHALL use it, and `ParallelStream`'s
-`find_first()` SHALL use it whenever the stream is ordered.
-
-The ordered drive SHALL deliver elements to the terminal in source encounter
-order for both `Stream` and `ParallelStream`.
-
-#### Scenario: for_each_ordered() stays in source order on a parallel stream
-- **WHEN** `for_each_ordered(consumer)` is called on a `ParallelStream` whose chain reorders arrival timing (for example a `map()` with a positional delay)
-- **THEN** `consumer` is invoked with the elements in source encounter order
-
-#### Scenario: An ordered parallel find_first() returns the true first element
-- **WHEN** `find_first()` is called on an ordered `ParallelStream` whose chain reorders arrival timing
-- **THEN** it returns the first element in source encounter order, not the first to arrive
-
-#### Scenario: An unordered parallel find_first() still races
-- **WHEN** `find_first()` is called on a `ParallelStream` that has been marked `unordered()`
-- **THEN** it behaves as `find_any()` does, returning the first element to arrive
-
-### Requirement: A parallel stream's terminal accumulates across all branches
-
-When a terminal sink is driven on a `ParallelStream`, it SHALL receive every
-element that the racing branches produce, exactly once each, and SHALL produce
-the same result the same terminal produces on the equivalent sequential
-stream for any order-independent operation.
-
-A short-circuiting terminal on a `ParallelStream` SHALL stop consuming the race
-once its result is fixed, and SHALL leave no in-flight branch task uncancelled
-or its exception unretrieved.
-
-Cancellation on a `ParallelStream` SHALL reach the loop consuming the race, but
-NOT the sinks inside an in-flight branch: each branch holds its own sink chain
-and the terminal is not a member of it. A branch's own `limit()` or `flat_map()`
-therefore SHALL NOT be expected to stop on a terminal's behalf.
-
-#### Scenario: A parallel terminal sees every element once
-- **WHEN** `count()` or `reduce()` is called on a `ParallelStream` over a source with many elements
-- **THEN** the result reflects every source element exactly once, matching the sequential result
-
-#### Scenario: A parallel short-circuiting terminal tears down cleanly
-- **WHEN** `any_match(predicate)` is called on a `ParallelStream` and an early element satisfies `predicate`
-- **THEN** it returns `True` and no unhandled exception or warning escapes from the abandoned racing branches
+- **THEN** the new stream carries the same source and the same queued chain as the receiver, with no generator composed at the point of the switch, and a terminal on the new stream applies every queued operation under the new executor

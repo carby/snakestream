@@ -1,31 +1,4 @@
-## Purpose
-
-Defines `find_first()`'s contract on `Stream` and `ParallelStream`,
-matching Java's `Stream.findFirst()` — including its dependence on the
-`is_ordered()` flag for choosing an ordered vs. racing pull strategy on a
-`ParallelStream`.
-
-## Requirements
-
-### Requirement: Stream.find_first() returns the first element in encounter order
-`Stream.find_first()` SHALL return the first element pulled through the
-composed chain, or `None` if the stream is empty, matching Java's
-`Stream.findFirst()`.
-
-#### Scenario: Non-empty stream returns its first element
-- **WHEN** `.find_first()` is called on a `Stream` built from a non-empty
-  source
-- **THEN** the first element in the source's encounter order is returned
-
-#### Scenario: Empty stream returns None
-- **WHEN** `.find_first()` is called on a `Stream` built from an empty
-  source
-- **THEN** `None` is returned
-
-#### Scenario: find_first() does not consume the rest of the stream
-- **WHEN** `.find_first()` is called on a stream with more than one element
-- **THEN** only the first element is pulled from upstream before the method
-  returns
+## ADDED Requirements
 
 ### Requirement: find_first() preserves encounter order on a parallel stream when ordered
 `Stream.find_first()` SHALL return the first element in the stream's encounter
@@ -66,3 +39,24 @@ ordering flag rather than on the stream's type or executor.
   for ordinary terminals
 - **THEN** `find_first()` still returns the first element in encounter order,
   because it drives under the sequential executor regardless
+
+## REMOVED Requirements
+
+### Requirement: ParallelStream.find_first() preserves encounter order when the stream is ordered
+**Reason**: `ParallelStream` no longer exists — execution mode is a value, not a
+type — so a requirement keyed to that class has nothing to attach to. Its
+guarantee is preserved verbatim by the added requirement above, which states it
+against an ordered parallel stream and additionally pins that there is only one
+`find_first()` implementation.
+**Migration**: None for callers. `find_first()`'s observable behaviour is
+unchanged: ordered streams still get the true first element, empty sources still
+return `None`.
+
+### Requirement: ParallelStream.find_first() may race when the stream is unordered
+**Reason**: Same — keyed to a class that no longer exists. Splitting the ordered
+and unordered cases across two requirements also mirrored the two
+implementations that existed only because mode was a type; with one
+implementation, one requirement covering both branches of the ordering flag is
+the accurate shape.
+**Migration**: None for callers. An unordered stream's `find_first()` still
+behaves as `find_any()`.

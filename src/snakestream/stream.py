@@ -8,6 +8,7 @@ from snakestream.base_stream import BaseStream
 from snakestream.callable_dispatch import _maybe_await
 from snakestream.collector import Collector, StreamingCollector, _CollectorSink, to_list
 from snakestream.exception import StreamBuildException
+from snakestream.execution import PROCESSES as PROCESSES, SEQUENTIAL
 from snakestream.ops import (
     _DistinctOp,
     _FilterOp,
@@ -45,9 +46,6 @@ from snakestream.type import (
 
 if TYPE_CHECKING:
     from snakestream.stream_builder import StreamBuilder
-
-
-PROCESSES: int = 4
 
 
 async def _concat(a: Stream, b: Stream) -> AsyncGenerator:
@@ -137,7 +135,7 @@ class Stream(BaseStream[T]):
         if len(args) == 1:
             (collector,) = args
             if isinstance(collector, Collector):
-                return self._drive_to(_CollectorSink(collector))
+                return self._evaluate(_CollectorSink(collector))
             if isinstance(collector, StreamingCollector):
                 return collector(self._compose())
             raise StreamBuildException(
@@ -159,7 +157,7 @@ class Stream(BaseStream[T]):
         # The supplier runs once per composition, so _maybe_await is the right
         # dispatch here; the per-element accumulator is specialized in the sink.
         container = await _maybe_await(supplier)
-        return cast(R, await self._drive_to(_MutableReductionSink(container, accumulator)))
+        return cast(R, await self._evaluate(_MutableReductionSink(container, accumulator)))
 
     @overload
     async def reduce(self, identity: T | R, accumulator: Accumulator[T, R]) -> T | R: ...
@@ -172,23 +170,29 @@ class Stream(BaseStream[T]):
             # Called as reduce(accumulator): the single positional arg is the
             # accumulator, and the identity is seeded from the stream itself.
             identity, accumulator = _UNSET, identity
-        return await self._drive_to(_ReduceSink(identity, accumulator))
+        return await self._evaluate(_ReduceSink(identity, accumulator))
 
     async def for_each(self, consumer: Consumer[T]) -> None:
-        return await self._drive_to(_ForEachSink(consumer))
+        return await self._evaluate(_ForEachSink(consumer))
 
     async def for_each_ordered(self, consumer: Consumer[T]) -> None:
-        return await self._drive_to_sequential(_ForEachSink(consumer))
+        self._check_not_consumed()
+        return await SEQUENTIAL.value(self._chain, self._stream, _ForEachSink(consumer))
 
     async def to_array(self) -> list[T]:
         # collect() runs _check_not_consumed() itself
         return await self.collect(to_list())
 
     async def find_first(self) -> T | None:
-        return await self._drive_to(_FindSink())
+        # ordered means encounter order regardless of executor, so this one
+        # names SEQUENTIAL itself instead of following self._executor
+        if not self.is_ordered():
+            return await self.find_any()
+        self._check_not_consumed()
+        return await SEQUENTIAL.value(self._chain, self._stream, _FindSink())
 
     async def find_any(self) -> T | None:
-        return await self._drive_to(_FindSink())
+        return await self._evaluate(_FindSink())
 
     async def max(self, comparator: Comparator[T]) -> T | None:
         return await self._min_max(comparator, asc=False)
@@ -197,10 +201,10 @@ class Stream(BaseStream[T]):
         return await self._min_max(comparator, asc=True)
 
     async def _min_max(self, comparator: Comparator[T], asc: bool) -> T | None:
-        return await self._drive_to(_MinMaxSink(comparator, asc))
+        return await self._evaluate(_MinMaxSink(comparator, asc))
 
     async def _match(self, predicate: Predicate[T], short_circuit_on: bool, default: bool) -> bool:
-        return await self._drive_to(_MatchSink(predicate, short_circuit_on, default))
+        return await self._evaluate(_MatchSink(predicate, short_circuit_on, default))
 
     async def all_match(self, predicate: Predicate[T]) -> bool:
         return await self._match(predicate, short_circuit_on=False, default=True)
@@ -212,4 +216,4 @@ class Stream(BaseStream[T]):
         return await self._match(predicate, short_circuit_on=True, default=False)
 
     async def count(self) -> int:
-        return await self._drive_to(_CountSink())
+        return await self._evaluate(_CountSink())
