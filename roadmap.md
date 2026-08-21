@@ -6,16 +6,15 @@ the review-pass notes below. Completed items from that review remain in
 
 ## Now
 
-The two remaining items are independent of each other and can be taken in
-either order. The dependency that used to order this list — the min/max/count/
-reduce collapse, which items below waited on because it would have rewritten
-the code they touch — is resolved as of 2026-08-21 (see **Done**): the collapse
-was measured and rejected, so nothing here is waiting on it any more.
+One item left, and nothing is holding it back. The dependency that used to
+order this list — the min/max/count/reduce collapse, which items here waited on
+because it would have rewritten the code they touch — was measured and rejected
+on 2026-08-21 (see **Done**), and the other item that shared this bucket, the
+`Stream.concat` `async` removal, is done as of the same day.
 
 | # | Item | Why now, and what it depends on |
 |---|---|---|
-| 1 | **Drop the pointless `async` on `Stream.concat`** — `stream.py:281-283` is an `async def concat(a, b)` whose body only constructs `Stream(_concat(a, b))`. It never awaits anything, yet every caller has to write `await Stream.concat(a, b)`. | Surfaced 2026-08-20. Mechanical, but it is a breaking signature change, so it needs a migration-log entry in README alongside the other pre-1.0 renames — the established convention here (`stream_of()` -> `Stream.of()`, the `Stream.of()` kwargs removal, the `str`/`bytes` spreading change). Independent of every other item; touches `stream.py`, the concat tests, and README. |
-| 2 | **Small-cleanups batch** — (a) `to_list` is a bare `Collector` instance while `to_set()` is a factory, so the public API reads `collect(to_list)` next to `collect(to_set())` for two equally stateless collectors; (b) `parallel_stream.py:468` builds a throwaway list every iteration in `any([n is not None for n in tasks])`, and line 473's `tasks.index(task)` is a linear scan per element where a `{task: idx}` dict would do; ~~(c) `_CountSink`'s `Counter` box~~ — **done 2026-08-21**, taken as the `count` fallback in the collapse item (see **Done**); (d) `_maybe_aclosing` is a 14-line class that is about 5 as an `@asynccontextmanager`; (e) private accumulator types leak into public signatures, e.g. `summing_int() -> Collector[Any, _SumBox, int]`. | **No longer blocked, as of 2026-08-21.** This batch was sequenced last because (c) sat inside a sink the collapse item might have deleted outright and (a)/(e) are in `collector.py`, which that item also touched. The collapse was measured and rejected (see **Done**), so the edits can no longer be made twice: (c) is already done as that item's `count` fallback, and (a)/(e) are free to take. (b) was sequenced behind the drive-loop collapse as "inside the loop item 1 rewrites", but that change (now in **Done**) left `_parallel()`'s race loop untouched, so (b) could be split out and taken at any time — the same reasoning as the earlier "batch the small cleanups left by the Sink redesign" item in **Done**. Each part is independently revertable; none changes behaviour except (a), which is a public-API shape change and needs the same migration-log treatment as item 1. |
+| 1 | **Small-cleanups batch** — (a) `to_list` is a bare `Collector` instance while `to_set()` is a factory, so the public API reads `collect(to_list)` next to `collect(to_set())` for two equally stateless collectors; (b) `parallel_stream.py:468` builds a throwaway list every iteration in `any([n is not None for n in tasks])`, and line 473's `tasks.index(task)` is a linear scan per element where a `{task: idx}` dict would do; ~~(c) `_CountSink`'s `Counter` box~~ — **done 2026-08-21**, taken as the `count` fallback in the collapse item (see **Done**); (d) `_maybe_aclosing` is a 14-line class that is about 5 as an `@asynccontextmanager`; (e) private accumulator types leak into public signatures, e.g. `summing_int() -> Collector[Any, _SumBox, int]`. | **No longer blocked, as of 2026-08-21.** This batch was sequenced last because (c) sat inside a sink the collapse item might have deleted outright and (a)/(e) are in `collector.py`, which that item also touched. The collapse was measured and rejected (see **Done**), so the edits can no longer be made twice: (c) is already done as that item's `count` fallback, and (a)/(e) are free to take. (b) was sequenced behind the drive-loop collapse as "inside the loop item 1 rewrites", but that change (now in **Done**) left `_parallel()`'s race loop untouched, so (b) could be split out and taken at any time — the same reasoning as the earlier "batch the small cleanups left by the Sink redesign" item in **Done**. Each part is independently revertable; none changes behaviour except (a), which is a public-API shape change and needs the same migration-log treatment as the `Stream.concat` change in **Done**. |
 
 `Stream.reduce(identity, accumulator, combiner)` (3-arg, with a combiner for
 parallel merging) has moved to **Later** below — see the resolved
@@ -41,6 +40,50 @@ core semantic.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should instead be documented as intentional next to the `str`/`bytes` note. Surfaced 2026-08-20 in the same code-quality read that produced **Now** items 1-4. |
 
 ## Done
+
+- **Dropped the pointless `async` on `Stream.concat`.** `concat` was an
+  `async def` whose body never awaited anything — it built `_concat(a, b)`, an
+  async generator (so *calling* it runs none of its body), and wrapped it in a
+  `Stream`. The `async` bought nothing and cost every caller an `await` that
+  could not suspend, plus the requirement to be inside a coroutine to call it
+  at all. It is now a plain `def`, matching the other four static factories
+  (`of`, `empty`, `builder`, `iterate`) and Java's static `Stream.concat`.
+
+  **The one real decision was clean break vs. compatibility shim.** A `Stream`
+  subclass with `__await__` returning itself would have kept both call forms
+  working through a deprecation window; rejected because it puts an
+  `__await__` on a `Stream` either permanently or until a *second* breaking
+  change removes it, making the type worse than the one being fixed. The
+  project's pre-1.0 convention is a hard break plus a migration-log line
+  (`stream_of()` -> `Stream.of()`, the `Stream.of()` kwargs removal, the
+  `str`/`bytes` change), and that is what this took. No custom error either:
+  an unmigrated call site raises `TypeError: object Stream can't be used in
+  'await' expression`, which names the exact expression at fault, and a bespoke
+  `StreamBuildException` would have needed the rejected `__await__` to raise
+  from.
+
+  Scope stayed at one line of `src/`: `_concat`, the generator bridge, and the
+  `_consumed` bookkeeping are all untouched, so `concat` still leaves both
+  input streams unconsumed. A variadic `concat(*streams)` was named a non-goal
+  rather than left open — Java's is two-arg. Seven tests added in
+  `tests/test_concat.py` on top of the two existing ones dropping their
+  `await`: returns a `Stream` rather than a coroutine, `await` on the result
+  raises `TypeError`, callable from plain sync code with no running loop,
+  empty input on either side, and both laziness properties checked through
+  `peek` (nothing pulled at construction; the second stream untouched while
+  the first is being consumed). Those last two codify behaviour that was
+  already true — worth pinning precisely because the removed `async` is what a
+  reader might mistake for the source of the laziness.
+
+  Also corrected by omission: README's API table row for `concat` already
+  listed the return type as `Stream` while sibling rows mark awaitables
+  explicitly (`collect` reads `R (awaited)`), so the row was wrong before this
+  change and is right now — no edit needed. New spec capability
+  `stream-concat`; nothing in `openspec/specs/` covered `concat`'s own
+  behaviour before, only `terminal-sinks`' note that it composes through the
+  generator bridge, which still holds verbatim. 512 tests green, coverage
+  98.20%. See
+  `openspec/changes/archive/2026-08-21-drop-async-on-concat`.
 
 - **Measured and rejected: collapsing `Stream.min`/`max`, `count` and `reduce`
   onto the `min_by`/`max_by`, `counting()` and `reducing()` collectors.**

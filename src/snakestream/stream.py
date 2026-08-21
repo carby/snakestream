@@ -69,7 +69,7 @@ class Stream(BaseStream[T]):
         return Stream([])
 
     @staticmethod
-    async def concat(a: Stream[T], b: Stream[T]) -> Stream[T]:
+    def concat(a: Stream[T], b: Stream[T]) -> Stream[T]:
         new_stream = _concat(a, b)
         return Stream(new_stream)
 
