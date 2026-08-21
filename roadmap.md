@@ -4,20 +4,34 @@ Now/Next/Later view of open code-quality and test-rigor items, generated from
 the review-pass notes below. Completed items from that review remain in
 **Done** for history.
 
+**Guiding principle (stated 2026-08-21):** keep a 1:1 match on the *public API
+surface*, and exploit Python's capabilities *underneath* for simplicity and
+performance. Java is the API contract, not the implementation blueprint. A
+divergence from Java's internals is not a defect; a divergence in observable API
+behaviour is — that framing is what found the position-dependent `.parallel()`
+bug. Where Java's structure exists only to solve a Java problem, drop it: one
+`_copy_into()` where Java needs `copyInto()` plus `copyIntoWithCancel()`,
+`_maybe_aclosing()` as an `@asynccontextmanager`, collectors as one `Collector`
+value rather than a class hierarchy, `summing_int`/`summing_long` sharing a body.
+
 ## Now
 
-Empty as of 2026-08-21. The last item in this bucket, the small-cleanups batch,
-is done (see **Done**), and **Later** is parked behind explicit decisions rather
-than sequencing, so nothing promotes up into here.
+Three items, all opened by the executor-value change on 2026-08-21 and none
+blocking each other. Items 1 and 3 are naming/typing cleanups with no behaviour
+change; item 2 is the one the guiding principle above points at directly.
 
-`Stream.reduce(identity, accumulator, combiner)` (3-arg, with a combiner for
-parallel merging) has moved to **Later** below — see the resolved
-`.parallel()` entry.
+| # | Item | Why now, and what it depends on |
+|---|---|---|
+| 1 | **Finish retiring the `ParallelStream` name from the specs and docstrings.** The class is gone from `src/`, but its name survives in three places the executor change did not reach. (a) **Two gaps in that change's own delta set**, found while archiving: `stream-foreach-ordered` was *declared* in the proposal's Modified Capabilities but **no delta was ever written**, so its requirement still reads "when called on a `ParallelStream` instance"; and `pipeline-composition` has two further requirements — *Parallel `skip()` remains globally correct across branches* and *Parallel branches serialize pulls from the shared upstream source* — that were missed because the scan that built the delta set was truncated. (b) **Ten `## Purpose` sections** across `pipeline-composition`, `stream-close-handling`, `terminal-sinks`, `stream-find-first`, `stream-foreach-ordered`, `generic-stream-typing`, `stream-ordering`, `mutable-reduction-collect`, `pipeline-immutability` and `stream-iterator`. A delta cannot touch an existing capability's Purpose — OpenSpec ignores it — so these need direct edits to `openspec/specs/`. (c) **Five docstrings** in `sink.py` (4) and `callable_dispatch.py` (1), plus four scenario *titles* (`Works on ParallelStream`, `iterator() on a ParallelStream`, `ParallelStream inherits the element type`, `ParallelStream yields ordered results via for_each_ordered`) that were kept deliberately because a `MODIFIED` block may not drop a scenario name the main spec still has. | **Not a behaviour gap.** Every one of these describes behaviour that is still correct and still tested — 535 tests green — using a class name that no longer exists. It is a readability debt, and the kind that misleads: a reader grepping for `ParallelStream` today finds specs and docstrings but no class. (a) is the part that needs a change with real deltas, since it touches requirement text; (b) and (c) are direct edits. Worth doing as one pass so the name disappears in a single commit rather than leaking across several. |
+| 2 | **Collapse `BaseStream` into `Stream`.** Java has `BaseStream` because `IntStream`/`LongStream`/`DoubleStream` need a shared parent. This library has no primitive specializations — it deliberately collapsed that distinction (`summing_int` and `summing_long` are the same body, and the README records why) — and as of 2026-08-21 there is no `ParallelStream` either. So the split may now be organizing nothing: one class holding source, chain, executor, ordering flag, close handlers and consumed flag, and a second holding the operations. | Deferred deliberately out of the executor-value change, which named it in its design as a follow-up rather than a task: it roughly doubles that change's diff and is independently revertable, so bundling it would have made the behaviour change harder to review and to roll back. It is exactly what the guiding principle points at — Java structure with no remaining Python reason to exist — but it should be confirmed rather than assumed: check whether anything (typing, the documented `class MyStream(Stream)` subclassing use case, `test_sequential.py`'s `_wrap_sink` import) actually depends on the two-level tree before flattening it. Same tripwire as usual applies here, since no behaviour changes: full suite green with no test edited. |
+| 3 | **`to_collection()`'s private `_C` TypeVar in a public signature.** `to_collection(collection_supplier: Supplier[_C]) -> Collector[Any, _C, _C]` is the one public collector signature still naming a private type. It was left alone deliberately when the other 18 factories widened their accumulator parameter to `Any` on 2026-08-21, because here `A` genuinely *is* the caller's own container type rather than an internal box — widening it to `Any` would throw away real information. | Small and independent. The question is not whether to widen it but whether `_C` (and its bound, the private `_SupportsAdd` protocol) should move to `type.py`, where the project's convention puts shared callable/composite types. A caller never writes `_C` — the checker infers it — so this is lower-value than items 1 and 2 and is listed last on purpose. |
 
 ## Next
 
-Empty as of 2026-08-20. **Later** is parked behind explicit decisions rather
-than sequencing, so there is nothing to promote up into this bucket.
+Empty as of 2026-08-21. The three **Now** items are independent of each other,
+so none of them is waiting on another to be promoted; **Later** is parked behind
+explicit decisions rather than sequencing, so there is nothing to pull up from
+there either.
 
 ## Later
 
@@ -123,6 +137,16 @@ core semantic.
   by timing, the same measurement that found the divergence. 535 tests green,
   coverage 98.08%. One new capability (`stream-execution-model`) and 11 spec
   deltas. See `openspec/changes/replace-parallel-stream-with-executor`.
+
+  **Two decisions resolved along the way, recorded so they are not re-opened.**
+  `Racing` holds `workers` as a field, which makes a public `.parallel(n)`
+  trivially available — **deliberately not exposed**, because Java has no such
+  overload and 1:1 surface parity is the first priority. Tune `PROCESSES`
+  instead. And `unordered()` **stays a stream flag rather than moving onto the
+  executor**: the executor answers *how* a pipeline runs, the flag answers
+  *whether the caller requires encounter order*. Folding the flag in would mean
+  `Racing` needed ordered and unordered variants, which is how `find_first()`
+  ends up with two implementations again — the exact thing this change removed.
 
   **Left open deliberately:** whether `BaseStream` should collapse into `Stream`
   now that `ParallelStream` is gone. Java has `BaseStream` because
