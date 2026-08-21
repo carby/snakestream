@@ -100,6 +100,6 @@ async def test_a_stateless_ops_sink_begins_on_an_empty_state_map() -> None:
 @pytest.mark.asyncio
 async def test_shared_state_still_reaches_the_sinks_of_a_parallel_chain() -> None:
     # given a chain whose correctness depends on the state map built above
-    it = await Stream.of([1, 1, 2, 2, 3, 3]).parallel().distinct().collect(to_list)
+    it = await Stream.of([1, 1, 2, 2, 3, 3]).parallel().distinct().collect(to_list())
     # then every duplicate was seen by whichever branch pulled it
     assert sorted(it) == [1, 2, 3]

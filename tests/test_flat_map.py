@@ -65,7 +65,7 @@ async def test_flat_map_closes_inner_generator_on_short_circuit() -> None:
         return Stream(tracked_inner(n))
 
     # when
-    result = await Stream.of([5]).flat_map(mapper).limit(1).collect(to_list)
+    result = await Stream.of([5]).flat_map(mapper).limit(1).collect(to_list())
 
     # then
     assert result == [0]
@@ -87,7 +87,7 @@ async def test_flat_map_still_closes_inner_generator_on_normal_exhaustion() -> N
         return Stream(tracked_inner(n))
 
     # when
-    result = await Stream.of([2, 3]).flat_map(mapper).collect(to_list)
+    result = await Stream.of([2, 3]).flat_map(mapper).collect(to_list())
 
     # then
     assert result == [0, 1, 0, 1, 2]

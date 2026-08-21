@@ -40,25 +40,31 @@ class ParallelStream(Stream[T]):
                 state_map[op] = state
         lock = asyncio.Lock()
         async_iterators = [self._drive(intermediaries, _guarded(iterable, lock), state_map) for n in range(processes)]
-        tasks: list[asyncio.Task[Any] | None] = [asyncio.ensure_future(n.__anext__()) for n in async_iterators]
+        # the in-flight __anext__() per branch, keyed by task so a completed one
+        # maps back to its branch in O(1); it doubles as the waitlist and as the
+        # "any branch still running" test, so nothing here is scanned or rebuilt
+        # per element. A branch that raised StopAsyncIteration is simply not
+        # re-armed, which is what drains this dict to empty.
+        in_flight: dict[asyncio.Task[Any], int] = {
+            asyncio.ensure_future(n.__anext__()): idx for idx, n in enumerate(async_iterators)
+        }
 
         try:
-            while any([n is not None for n in tasks]):
-                waitlist: list[asyncio.Task[Any]] = [t for t in tasks if t is not None]
-                done, _ = await asyncio.wait(waitlist, return_when=asyncio.FIRST_COMPLETED)
+            while in_flight:
+                done, _ = await asyncio.wait(in_flight, return_when=asyncio.FIRST_COMPLETED)
 
                 for task in done:
-                    task_idx = tasks.index(task)
+                    branch = in_flight.pop(task)
                     try:
                         result = task.result()
-                        tasks[task_idx] = asyncio.ensure_future(async_iterators[task_idx].__anext__())
-                        yield result
                     except StopAsyncIteration:
-                        tasks[task_idx] = None
+                        continue
+                    in_flight[asyncio.ensure_future(async_iterators[branch].__anext__())] = branch
+                    yield result
         finally:
             # if we're leaving early (e.g. a task raised), make sure no other
             # in-flight task is left uncancelled or its exception unretrieved
-            pending = [t for t in tasks if t is not None]
+            pending = list(in_flight)
             for t in pending:
                 t.cancel()
             await asyncio.gather(*pending, return_exceptions=True)

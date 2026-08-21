@@ -13,7 +13,7 @@ Defines the contract for `BaseStream.iterator()`, an escape-hatch terminal-ish o
 
 #### Scenario: Caller drives consumption via async for
 - **WHEN** a caller iterates the object returned by `.iterator()` with `async for`
-- **THEN** it yields the same elements, in the same order, that a terminal operation like `collect(to_list)` would have produced for an equivalent chain
+- **THEN** it yields the same elements, in the same order, that a terminal operation like `collect(to_list())` would have produced for an equivalent chain
 
 #### Scenario: Caller can partially consume the iterator
 - **WHEN** a caller pulls only some elements from the object returned by `.iterator()` (e.g. by calling `__anext__()` a few times) and then stops
@@ -30,5 +30,5 @@ Defines the contract for `BaseStream.iterator()`, an escape-hatch terminal-ish o
 Calling `BaseStream.iterator()` SHALL follow the same non-destructive composition contract as other terminal operations: it SHALL NOT mutate or drain `self._chain`, so the stream instance remains valid for a subsequent call to `iterator()` or another terminal operation.
 
 #### Scenario: A second terminal operation after iterator()
-- **WHEN** `.iterator()` is called on a `Stream` and the returned generator is fully consumed, and then a different terminal operation (e.g. `collect(to_list)`) is called on the same `Stream` instance
+- **WHEN** `.iterator()` is called on a `Stream` and the returned generator is fully consumed, and then a different terminal operation (e.g. `collect(to_list())`) is called on the same `Stream` instance
 - **THEN** the second call composes against the same chain of intermediate operations as the first, rather than against an empty chain

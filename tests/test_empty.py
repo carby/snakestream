@@ -10,4 +10,4 @@ async def test_empty_stream() -> None:
     expected = Stream.of([])
     actual = Stream.empty()
 
-    assert await expected.collect(to_list) == await actual.collect(to_list)
+    assert await expected.collect(to_list()) == await actual.collect(to_list())

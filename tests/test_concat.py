@@ -51,7 +51,7 @@ async def test_concat_returns_a_stream_without_await() -> None:
 
     # then
     assert isinstance(result, Stream)
-    assert await result.collect(to_list) == [1, 2, 3]
+    assert await result.collect(to_list()) == [1, 2, 3]
 
 
 @pytest.mark.asyncio
@@ -78,7 +78,7 @@ async def test_concat_with_an_empty_first_stream() -> None:
     result = Stream.concat(Stream.empty(), Stream.of([1, 2, 3]))
 
     # then
-    assert await result.collect(to_list) == [1, 2, 3]
+    assert await result.collect(to_list()) == [1, 2, 3]
 
 
 @pytest.mark.asyncio
@@ -87,7 +87,7 @@ async def test_concat_with_an_empty_second_stream() -> None:
     result = Stream.concat(Stream.of([1, 2, 3]), Stream.empty())
 
     # then
-    assert await result.collect(to_list) == [1, 2, 3]
+    assert await result.collect(to_list()) == [1, 2, 3]
 
 
 @pytest.mark.asyncio

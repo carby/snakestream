@@ -14,7 +14,7 @@ async def test_builder_simple() -> None:
 
     # when
     stream = builder.build()
-    it = await stream.collect(to_list)
+    it = await stream.collect(to_list())
 
     # then
     assert it == [1, 5, 8]
@@ -27,7 +27,7 @@ async def test_builder_empty() -> None:
 
     # when
     stream = builder.build()
-    it = await stream.collect(to_list)
+    it = await stream.collect(to_list())
 
     # then
     assert it == []

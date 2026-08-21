@@ -12,7 +12,7 @@ Defines the contract for treating `Stream`/`ParallelStream` instances as immutab
 - **THEN** `s2 is not s`
 
 #### Scenario: Chaining still works without holding intermediate references
-- **WHEN** a fluent chain like `Stream.of([1, 2, 3]).map(f).filter(g).collect(to_list)` is awaited, with no intermediate result bound to a variable
+- **WHEN** a fluent chain like `Stream.of([1, 2, 3]).map(f).filter(g).collect(to_list())` is awaited, with no intermediate result bound to a variable
 - **THEN** it produces the same result as before this change
 
 ### Requirement: Mode switches return a new instance and invalidate the old reference
@@ -30,7 +30,7 @@ Once a `Stream`/`ParallelStream` instance has been used to build a new instance 
 - **THEN** `s.filter(g)` raises `IllegalStateException`
 
 #### Scenario: Terminally consuming an already-extended reference raises
-- **WHEN** `s.map(f)` has already been called on `s`, and `s.collect(to_list)` is subsequently awaited on the same `s`
+- **WHEN** `s.map(f)` has already been called on `s`, and `s.collect(to_list())` is subsequently awaited on the same `s`
 - **THEN** it raises `IllegalStateException`
 
 #### Scenario: The new instance returned by the extending call is unaffected
@@ -41,7 +41,7 @@ Once a `Stream`/`ParallelStream` instance has been used to build a new instance 
 A `Stream`/`ParallelStream` instance that has never been used to build a further instance (no intermediate operation or mode switch called on it) SHALL remain callable for a terminal operation more than once, per the existing `pipeline-composition` chain-recomposition contract. This requirement is unaffected by this change and is restated here to make the boundary between "extended" (invalidated) and "merely terminally consumed" (not invalidated) explicit and testable.
 
 #### Scenario: Second terminal call on a never-extended reference does not raise
-- **WHEN** `first = await s.collect(to_list)` is awaited on a `Stream` instance `s` that has never had an intermediate operation called on it, and `second = await s.collect(to_list)` is subsequently awaited on the same `s`
+- **WHEN** `first = await s.collect(to_list())` is awaited on a `Stream` instance `s` that has never had an intermediate operation called on it, and `second = await s.collect(to_list())` is subsequently awaited on the same `s`
 - **THEN** neither call raises `IllegalStateException`, and `second` reflects the already-exhausted source per the existing `pipeline-composition` contract (e.g. `[]` for a plain list source)
 
 ### Requirement: Lifecycle operations are exempt from invalidation

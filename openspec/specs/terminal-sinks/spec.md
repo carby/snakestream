@@ -84,7 +84,7 @@ terminal's `result()` SHALL be the result fixed before the stop.
 composing the chain through the generator bridge.
 
 The single-`Collector` form of `collect()` — including `to_array()`'s
-`collect(to_list)` — SHALL NOT use the bridge: a `Collector` is driven through
+`collect(to_list())` — SHALL NOT use the bridge: a `Collector` is driven through
 a terminal sink like every other terminal operation, so its elements are
 pushed straight into the accumulation container with nothing buffered on the
 way. `to_generator` remains bridge-backed, since it is lazy and streaming.

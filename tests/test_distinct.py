@@ -10,7 +10,7 @@ from conftest import MyObject
 @pytest.mark.asyncio
 async def test_unique() -> None:
     # when
-    it = await Stream.of([1, 7, 3, 7, 5, 6, 0, 6, 6]).distinct().collect(to_list)
+    it = await Stream.of([1, 7, 3, 7, 5, 6, 0, 6, 6]).distinct().collect(to_list())
     # then
     assert it == [1, 7, 3, 5, 6, 0]
 
@@ -18,7 +18,7 @@ async def test_unique() -> None:
 @pytest.mark.asyncio
 async def test_unique_empty_list() -> None:
     # when
-    it = await Stream.of([]).distinct().collect(to_list)
+    it = await Stream.of([]).distinct().collect(to_list())
     # then
     assert it == []
 
@@ -26,7 +26,7 @@ async def test_unique_empty_list() -> None:
 @pytest.mark.asyncio
 async def test_unique_list_with_no_dupes() -> None:
     # when
-    it = await Stream.of([1, 2, 3, 4]).distinct().collect(to_list)
+    it = await Stream.of([1, 2, 3, 4]).distinct().collect(to_list())
     # then
     assert it == [1, 2, 3, 4]
 
@@ -41,7 +41,7 @@ async def test_unique_object_list() -> None:
         MyObject(2, "object2"),
         MyObject(3, "object3"),
     ]
-    it = await Stream.of(input_list).distinct().collect(to_list)
+    it = await Stream.of(input_list).distinct().collect(to_list())
     # then
     assert it == [MyObject(1, "object1"), MyObject(2, "object2"), MyObject(3, "object3")]
 
@@ -54,7 +54,7 @@ def _first_seen_order_dedup(values: list[int]) -> list[int]:
 @pytest.mark.asyncio
 async def test_distinct_matches_first_seen_order_dedup(values: list[int]) -> None:
     # when
-    actual = await Stream.of(values).distinct().collect(to_list)
+    actual = await Stream.of(values).distinct().collect(to_list())
 
     # then
     assert actual == _first_seen_order_dedup(values)
@@ -65,10 +65,10 @@ async def test_distinct_matches_first_seen_order_dedup(values: list[int]) -> Non
 async def test_distinct_state_not_shared_across_separate_streams() -> None:
     # given: a first stream consumes elements that would collide with a
     # second, independently-built distinct() stream if `seen` leaked
-    await Stream.of([1, 2, 3]).distinct().collect(to_list)
+    await Stream.of([1, 2, 3]).distinct().collect(to_list())
 
     # when
-    second = await Stream.of([1, 2, 3]).distinct().collect(to_list)
+    second = await Stream.of([1, 2, 3]).distinct().collect(to_list())
 
     # then
     assert second == [1, 2, 3]
@@ -78,10 +78,10 @@ async def test_distinct_state_not_shared_across_separate_streams() -> None:
 async def test_distinct_state_fresh_on_second_composition() -> None:
     # given
     stream = Stream.of([1, 2, 3]).distinct()
-    first = await stream.collect(to_list)
+    first = await stream.collect(to_list())
 
     # when
-    second = await stream.collect(to_list)
+    second = await stream.collect(to_list())
 
     # then
     assert first == [1, 2, 3]

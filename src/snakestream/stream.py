@@ -182,7 +182,7 @@ class Stream(BaseStream[T]):
 
     async def to_array(self) -> list[T]:
         # collect() runs _check_not_consumed() itself
-        return await self.collect(to_list)
+        return await self.collect(to_list())
 
     async def find_first(self) -> T | None:
         return await self._drive_to(_FindSink())

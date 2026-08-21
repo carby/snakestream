@@ -29,9 +29,9 @@ class _AsyncIteratorNoAclose:
 
 @pytest.mark.asyncio
 async def test_to_list_simple() -> None:
-    # to_list is a Collector, not a bare callable: only usable via collect()
+    # to_list() is a Collector, not a bare callable: only usable via collect()
     # when
-    actual = await Stream.of(async_generator()).collect(to_list)
+    actual = await Stream.of(async_generator()).collect(to_list())
     # then
     assert [1, 2, 3, 4, 5] == actual
 
@@ -99,7 +99,7 @@ async def test_to_generator_with_empty_list_input() -> None:
 @pytest.mark.asyncio
 async def test_to_list() -> None:
     # when
-    it = await Stream.of([1, 2, 3, 4]).collect(to_list)
+    it = await Stream.of([1, 2, 3, 4]).collect(to_list())
     # then
     assert it == [1, 2, 3, 4]
 
@@ -107,7 +107,7 @@ async def test_to_list() -> None:
 @pytest.mark.asyncio
 async def test_to_list_with_none_in_stream() -> None:
     # when
-    it = await Stream.of([1, None, 3, 4]).collect(to_list)
+    it = await Stream.of([1, None, 3, 4]).collect(to_list())
     # then
     assert it == [1, None, 3, 4]
 
@@ -115,7 +115,7 @@ async def test_to_list_with_none_in_stream() -> None:
 @pytest.mark.asyncio
 async def test_to_list_with_empty_list_input() -> None:
     # when
-    it = await Stream.of([]).collect(to_list)
+    it = await Stream.of([]).collect(to_list())
     # then
     assert it == []
 

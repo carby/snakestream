@@ -35,7 +35,7 @@ async def test_build_captures_elements_added_before_it() -> None:
     stream = builder.build()
 
     # then
-    assert await stream.collect(to_list) == [1, 2]
+    assert await stream.collect(to_list()) == [1, 2]
 
 
 @pytest.mark.asyncio
@@ -48,4 +48,4 @@ async def test_elements_added_after_build_do_not_leak_into_built_stream() -> Non
     builder.add(3)
 
     # then
-    assert await stream.collect(to_list) == [1, 2]
+    assert await stream.collect(to_list()) == [1, 2]

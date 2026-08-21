@@ -403,3 +403,30 @@ async def test_match_sink_keeps_its_answer_if_pushed_past_cancellation() -> None
     # then: the answer stands and the predicate never ran a second time
     assert sink.result() is True
     assert calls == [1]
+
+
+@pytest.mark.asyncio
+async def test_source_is_closed_when_the_drive_raises() -> None:
+    # given: a source that records its own cleanup, and a mapper that raises
+    # partway through it
+    cleaned_up = []
+
+    async def tracked_source():
+        try:
+            for i in range(1, 6):
+                yield i
+        finally:
+            cleaned_up.append("closed")
+
+    def boom(n: int) -> int:
+        if n == 3:
+            raise ValueError("boom")
+        return n
+
+    # when
+    with pytest.raises(ValueError, match="boom"):
+        await Stream.of(tracked_source()).map(boom).to_array()
+
+    # then: the source is closed on the exception path, not only on the
+    # exhausted and short-circuited ones
+    assert cleaned_up == ["closed"]

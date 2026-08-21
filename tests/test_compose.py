@@ -23,9 +23,9 @@ async def test_second_terminal_op_reuses_same_chain() -> None:
     chain_len_before = len(stream._chain)
 
     # when
-    first = await stream.collect(to_list)
+    first = await stream.collect(to_list())
     chain_len_after_first = len(stream._chain)
-    second = await stream.collect(to_list)
+    second = await stream.collect(to_list())
 
     # then
     assert first == [2, 4, 6]

@@ -29,7 +29,7 @@ async def test_to_array_equals_collect_to_list() -> None:
 
     # when
     from_to_array = await chain().to_array()
-    from_collect = await chain().collect(to_list)
+    from_collect = await chain().collect(to_list())
 
     # then
     assert from_to_array == from_collect == [4, 6, 8]

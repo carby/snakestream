@@ -613,7 +613,7 @@ async def test_real_driving_loop_honours_cancellation_reported_at_begin() -> Non
     stream._chain = [_CancelledFromBeginOp()]
 
     # when
-    result = await stream.collect(to_list)
+    result = await stream.collect(to_list())
 
     # then
     assert result == []
