@@ -81,13 +81,13 @@ async def test_maybe_await_async_callable_object() -> None:
 
 @pytest.mark.asyncio
 async def test_map_async_callable_object() -> None:
-    actual = await Stream.of([1, 2, 3]).map(AsyncCallableDouble()).collect(to_list)
+    actual = await Stream.of([1, 2, 3]).map(AsyncCallableDouble()).collect(to_list())
     assert actual == [2, 4, 6]
 
 
 @pytest.mark.asyncio
 async def test_filter_async_callable_object() -> None:
-    actual = await Stream.of([1, 2, 3, 4]).filter(AsyncCallablePredicate()).collect(to_list)
+    actual = await Stream.of([1, 2, 3, 4]).filter(AsyncCallablePredicate()).collect(to_list())
     assert actual == [2, 4]
 
 
@@ -103,7 +103,7 @@ class _RecordingAsyncCallableConsumer:
 @pytest.mark.asyncio
 async def test_peek_async_callable_object() -> None:
     consumer = _RecordingAsyncCallableConsumer()
-    actual = await Stream.of([1, 2, 3]).peek(consumer).collect(to_list)
+    actual = await Stream.of([1, 2, 3]).peek(consumer).collect(to_list())
     assert actual == [1, 2, 3]
     assert consumer.seen == [1, 2, 3]
 
@@ -123,7 +123,7 @@ async def test_for_each_async_callable_object() -> None:
 
 @pytest.mark.asyncio
 async def test_sorted_async_callable_object_comparator() -> None:
-    actual = await Stream.of([3, 1, 2]).sorted(comparator=AsyncCallableComparator()).collect(to_list)
+    actual = await Stream.of([3, 1, 2]).sorted(comparator=AsyncCallableComparator()).collect(to_list())
     assert actual == [1, 2, 3]
 
 
@@ -213,7 +213,7 @@ class _SyncCallReturningCoroutine:
 
 @pytest.mark.asyncio
 async def test_map_sync_call_returning_coroutine() -> None:
-    actual = await Stream.of([1, 2, 3]).map(_SyncCallReturningCoroutine()).collect(to_list)
+    actual = await Stream.of([1, 2, 3]).map(_SyncCallReturningCoroutine()).collect(to_list())
     assert actual == [2, 4, 6]
 
 
@@ -227,7 +227,7 @@ async def test_filter_sync_call_returning_coroutine() -> None:
             await asyncio.sleep(0.01)
             return x % 2 == 0
 
-    actual = await Stream.of([1, 2, 3, 4]).filter(_EvenPredicateReturningCoroutine()).collect(to_list)
+    actual = await Stream.of([1, 2, 3, 4]).filter(_EvenPredicateReturningCoroutine()).collect(to_list())
     assert actual == [2, 4]
 
 
@@ -239,7 +239,7 @@ async def test_summing_int_sync_call_returning_coroutine() -> None:
 
 @pytest.mark.asyncio
 async def test_map_partial_wrapping_async_callable_object() -> None:
-    actual = await Stream.of([1, 2, 3]).map(functools.partial(AsyncCallableDouble())).collect(to_list)
+    actual = await Stream.of([1, 2, 3]).map(functools.partial(AsyncCallableDouble())).collect(to_list())
     assert actual == [2, 4, 6]
 
 
@@ -253,8 +253,8 @@ async def test_map_classification_does_not_leak_across_compositions() -> None:
     # generator body) - a prior composition's classification must not
     # persist and corrupt a later, independent one.
     mapper = AsyncCallableDouble()
-    first = await Stream.of([1, 2, 3]).map(mapper).collect(to_list)
-    second = await Stream.of([4, 5, 6]).map(mapper).collect(to_list)
+    first = await Stream.of([1, 2, 3]).map(mapper).collect(to_list())
+    second = await Stream.of([4, 5, 6]).map(mapper).collect(to_list())
     assert first == [2, 4, 6]
     assert second == [8, 10, 12]
 
@@ -264,7 +264,7 @@ async def test_map_classification_does_not_leak_across_compositions() -> None:
 
 @pytest.mark.asyncio
 async def test_parallel_async_callable_object_mapper() -> None:
-    actual = await Stream.of([1, 2, 3, 4]).parallel().map(AsyncCallableDouble()).collect(to_list)
+    actual = await Stream.of([1, 2, 3, 4]).parallel().map(AsyncCallableDouble()).collect(to_list())
     assert sorted(actual) == [2, 4, 6, 8]
 
 
@@ -325,7 +325,7 @@ class _SyncCallReturningCoroutinePredicate:
 @pytest.mark.asyncio
 async def test_peek_sync_call_returning_coroutine() -> None:
     consumer = _SyncCallReturningCoroutineConsumer()
-    actual = await Stream.of([1, 2, 3]).peek(consumer).collect(to_list)
+    actual = await Stream.of([1, 2, 3]).peek(consumer).collect(to_list())
     assert actual == [1, 2, 3]
     assert consumer.seen == [1, 2, 3]
 
@@ -433,5 +433,5 @@ async def test_min_by_sync_call_returning_coroutine_comparator() -> None:
 
 @pytest.mark.asyncio
 async def test_sorted_sync_call_returning_coroutine_comparator() -> None:
-    actual = await Stream.of([3, 1, 2]).sorted(comparator=_SyncCallReturningCoroutineComparator()).collect(to_list)
+    actual = await Stream.of([3, 1, 2]).sorted(comparator=_SyncCallReturningCoroutineComparator()).collect(to_list())
     assert actual == [1, 2, 3]

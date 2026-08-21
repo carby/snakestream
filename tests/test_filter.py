@@ -28,7 +28,7 @@ async def test_filter_does_not_mutate_source() -> None:
     source = [1, 2, 3, 4, 5, 6]
 
     # when
-    it = await Stream.of(source).filter(lambda x: x > 3).filter(lambda x: x < 6).collect(to_list)
+    it = await Stream.of(source).filter(lambda x: x > 3).filter(lambda x: x < 6).collect(to_list())
 
     # then
     assert source != it
@@ -42,7 +42,7 @@ async def test_filter_matches_builtin_filter(values: list[int]) -> None:
     predicate = lambda x: x % 2 == 0  # noqa: E731
 
     # when
-    actual = await Stream.of(values).filter(predicate).collect(to_list)
+    actual = await Stream.of(values).filter(predicate).collect(to_list())
 
     # then
     assert actual == list(filter(predicate, values))
@@ -55,7 +55,7 @@ async def test_filter_async_predicate_matches_builtin_filter(values: list[int]) 
         return x % 2 == 0
 
     # when
-    actual = await Stream.of(values).filter(async_is_even).collect(to_list)
+    actual = await Stream.of(values).filter(async_is_even).collect(to_list())
 
     # then
     assert actual == list(filter(lambda x: x % 2 == 0, values))

@@ -36,7 +36,7 @@ def test_next_only_iterator_really_has_no_iter() -> None:
 @pytest.mark.asyncio
 async def test_next_only_source_spreads_into_elements() -> None:
     # when
-    it = await Stream.of(NextOnlyIterator([1, 2, 3])).collect(to_list)
+    it = await Stream.of(NextOnlyIterator([1, 2, 3])).collect(to_list())
 
     # then
     assert it == [1, 2, 3]
@@ -48,7 +48,7 @@ async def test_exhausted_next_only_source_yields_nothing() -> None:
     source = NextOnlyIterator([])
 
     # when
-    it = await Stream.of(source).collect(to_list)
+    it = await Stream.of(source).collect(to_list())
 
     # then
     assert it == []
@@ -60,8 +60,8 @@ async def test_next_only_source_composes_through_intermediate_ops() -> None:
     values = [1, 2, 3, 4, 5]
 
     # when
-    from_iterator = await Stream.of(NextOnlyIterator(values)).map(lambda x: x * 2).filter(lambda x: x > 4).collect(to_list)
-    from_list = await Stream.of(values).map(lambda x: x * 2).filter(lambda x: x > 4).collect(to_list)
+    from_iterator = await Stream.of(NextOnlyIterator(values)).map(lambda x: x * 2).filter(lambda x: x > 4).collect(to_list())
+    from_list = await Stream.of(values).map(lambda x: x * 2).filter(lambda x: x > 4).collect(to_list())
 
     # then
     assert from_iterator == from_list == [6, 8, 10]
@@ -73,7 +73,7 @@ async def test_next_only_source_is_consumed_lazily() -> None:
     source = NextOnlyIterator([1, 2, 3, 4, 5])
 
     # when
-    it = await Stream.of(source).limit(2).collect(to_list)
+    it = await Stream.of(source).limit(2).collect(to_list())
 
     # then the source was advanced only as far as limit(2) needed, not drained
     assert it == [1, 2]
@@ -87,7 +87,7 @@ async def test_plain_iterable_still_takes_the_iter_path() -> None:
     assert not hasattr([1, 2, 3], "__next__")
 
     # when
-    it = await Stream.of([1, 2, 3]).collect(to_list)
+    it = await Stream.of([1, 2, 3]).collect(to_list())
 
     # then
     assert it == [1, 2, 3]
@@ -99,7 +99,7 @@ async def test_scalar_with_neither_dunder_is_one_element() -> None:
     scalar = object()
 
     # when
-    it = await Stream.of(scalar).collect(to_list)
+    it = await Stream.of(scalar).collect(to_list())
 
     # then
     assert it == [scalar]

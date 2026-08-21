@@ -40,9 +40,18 @@ This means:
 
 `ParallelStream` (`parallel_stream.py`) subclasses `Stream` and overrides `_compose()` to fan the *same* chain of closures out across `PROCESSES` (default 4) independent async iterators pulling from the same underlying source, racing their `__anext__()` calls with `asyncio.wait(..., FIRST_COMPLETED)` and re-issuing a new `__anext__()` task per iterator as results land. This means parallel mode does not preserve ordering. `.sequential()` / `.parallel()` on `BaseStream` compose the current chain into a fresh generator and hand it to a new `Stream`/`ParallelStream`, resetting the chain — so switching modes mid-pipeline is supported and cheap.
 
-### Collectors are just async generator consumers
+### Collectors
 
-`collect(collector)` (a terminal op) simply calls `collector(self._compose())`. Collectors in `collector.py` (`to_list`, `to_generator`) are plain `async def` functions that take the composed `AsyncGenerator` and consume/transform it — there's no separate Collector class hierarchy like Java's.
+`collect(collector)` (a terminal op) takes a `Collector` — Java's
+`Collector<T,A,R>`: a `supplier`/`accumulator`/`combiner`/`finisher` quadruple,
+each part sync or async — and drives the composed chain into a `_CollectorSink`
+built from it. Every collector in `collector.py` (`to_list()`, `to_set()`,
+`counting()`, `grouping_by()`, ...) is a **factory** returning a `Collector`;
+there are no bare instances. The one exception is `to_generator`, a
+`StreamingCollector` wrapping a `(composition) -> AsyncGenerator` callable: it
+is composed through the generator bridge instead of driven into a sink, and
+`collect(to_generator)` returns an `AsyncGenerator` directly rather than
+something to await. Passing anything else raises `StreamBuildException`.
 
 ### Type aliases
 

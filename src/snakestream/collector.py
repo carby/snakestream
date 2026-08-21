@@ -119,10 +119,14 @@ async def _stream(composition: AsyncGenerator) -> AsyncGenerator[Any, None]:
 
 to_generator = StreamingCollector(_stream)
 
-# A bare Collector instance, not a factory: a Collector holds no
-# per-collection state, so one instance is safe to reuse across every
-# collect(to_list) call and across to_array()'s implementation.
-to_list: Collector[Any, list[Any], list[Any]] = Collector(list, list.append)
+
+# A factory, like every other collector here and like Java's
+# Collectors.toList(). A Collector holds no per-collection state, so the
+# instance one call returns is still safe to reuse across collections - the
+# factory shape is about one consistent rule for the public surface, not
+# about state.
+def to_list() -> Collector[T, list[T], list[T]]:
+    return Collector(list, list.append)
 
 
 def to_set() -> Collector[T, set[T], set[T]]:
@@ -136,7 +140,7 @@ def joining(delimiter: str = "", prefix: str = "", suffix: str = "") -> Collecto
     return Collector(list, list.append, finisher=_finish)
 
 
-def counting() -> Collector[Any, Counter, int]:
+def counting() -> Collector[Any, Any, int]:
     def _accumulate(container: Counter, element: Any) -> None:
         container.value += 1
 
@@ -224,27 +228,27 @@ def _averaging(mapper: NumberMapper) -> Collector[Any, _AvgBox, float]:
     return Collector(_supply, _accumulate, finisher=_finish)
 
 
-def summing_int(mapper: NumberMapper) -> Collector[Any, _SumBox, int]:
+def summing_int(mapper: NumberMapper) -> Collector[Any, Any, int]:
     return _summing(mapper, 0, None)
 
 
-def summing_long(mapper: NumberMapper) -> Collector[Any, _SumBox, int]:
+def summing_long(mapper: NumberMapper) -> Collector[Any, Any, int]:
     return _summing(mapper, 0, None)
 
 
-def summing_double(mapper: NumberMapper) -> Collector[Any, _SumBox, float]:
+def summing_double(mapper: NumberMapper) -> Collector[Any, Any, float]:
     return _summing(mapper, 0.0, float)
 
 
-def averaging_int(mapper: NumberMapper) -> Collector[Any, _AvgBox, float]:
+def averaging_int(mapper: NumberMapper) -> Collector[Any, Any, float]:
     return _averaging(mapper)
 
 
-def averaging_long(mapper: NumberMapper) -> Collector[Any, _AvgBox, float]:
+def averaging_long(mapper: NumberMapper) -> Collector[Any, Any, float]:
     return _averaging(mapper)
 
 
-def averaging_double(mapper: NumberMapper) -> Collector[Any, _AvgBox, float]:
+def averaging_double(mapper: NumberMapper) -> Collector[Any, Any, float]:
     return _averaging(mapper)
 
 
@@ -300,15 +304,15 @@ def _summarizing(
     return Collector(_supply, _accumulate, finisher=_finish)
 
 
-def summarizing_int(mapper: NumberMapper) -> Collector[Any, _SummaryBox, SummaryStatistics]:
+def summarizing_int(mapper: NumberMapper) -> Collector[Any, Any, SummaryStatistics]:
     return _summarizing(mapper, 0, None)
 
 
-def summarizing_long(mapper: NumberMapper) -> Collector[Any, _SummaryBox, SummaryStatistics]:
+def summarizing_long(mapper: NumberMapper) -> Collector[Any, Any, SummaryStatistics]:
     return _summarizing(mapper, 0, None)
 
 
-def summarizing_double(mapper: NumberMapper) -> Collector[Any, _SummaryBox, SummaryStatistics]:
+def summarizing_double(mapper: NumberMapper) -> Collector[Any, Any, SummaryStatistics]:
     return _summarizing(mapper, 0.0, float)
 
 
@@ -349,11 +353,11 @@ def _extremum(comparator: Comparator[T], asc: bool) -> Collector[T, _ExtremumBox
     return Collector(_supply, _accumulate, finisher=_finish)
 
 
-def min_by(comparator: Comparator[T]) -> Collector[T, _ExtremumBox, T | None]:
+def min_by(comparator: Comparator[T]) -> Collector[T, Any, T | None]:
     return _extremum(comparator, asc=True)
 
 
-def max_by(comparator: Comparator[T]) -> Collector[T, _ExtremumBox, T | None]:
+def max_by(comparator: Comparator[T]) -> Collector[T, Any, T | None]:
     return _extremum(comparator, asc=False)
 
 
@@ -369,17 +373,17 @@ class _ReduceBox:
 
 
 @overload
-def reducing(binary_operator: BinaryOperator[T]) -> Collector[T, _ReduceBox, T | None]: ...  # pragma: no cover
+def reducing(binary_operator: BinaryOperator[T]) -> Collector[T, Any, T | None]: ...  # pragma: no cover
 
 
 @overload
-def reducing(identity: T, binary_operator: BinaryOperator[T]) -> Collector[T, _ReduceBox, T]: ...  # pragma: no cover
+def reducing(identity: T, binary_operator: BinaryOperator[T]) -> Collector[T, Any, T]: ...  # pragma: no cover
 
 
 @overload
 def reducing(
     identity: R, mapper: Mapper[T, R], binary_operator: BinaryOperator[R]
-) -> Collector[T, _ReduceBox, R]: ...  # pragma: no cover
+) -> Collector[T, Any, R]: ...  # pragma: no cover
 
 
 def reducing(identity: Any = _UNSET, mapper: Any = _UNSET, binary_operator: Any = _UNSET) -> Any:
@@ -449,7 +453,7 @@ def to_map(
     key_mapper: Mapper[T, R],
     value_mapper: Mapper[T, Any],
     merge_function: BinaryOperator[Any] | None = None,
-) -> Collector[T, _ToMapBox, dict[R, Any]]:
+) -> Collector[T, Any, dict[R, Any]]:
     def _supply() -> _ToMapBox:
         return _ToMapBox()
 
@@ -537,8 +541,8 @@ def _check_downstream(downstream: Collector[Any, Any, Any]) -> None:
 
 def grouping_by(
     classifier: Mapper[T, R],
-    downstream: Collector[T, Any, Any] = to_list,
-) -> Collector[T, _GroupBox, dict[R, Any]]:
+    downstream: Collector[T, Any, Any] = to_list(),
+) -> Collector[T, Any, dict[R, Any]]:
     _check_downstream(downstream)
 
     def _supply() -> _GroupBox:
@@ -555,8 +559,8 @@ def grouping_by(
 
 def partitioning_by(
     predicate: Predicate[T],
-    downstream: Collector[T, Any, Any] = to_list,
-) -> Collector[T, _GroupBox, dict[bool, Any]]:
+    downstream: Collector[T, Any, Any] = to_list(),
+) -> Collector[T, Any, dict[bool, Any]]:
     _check_downstream(downstream)
 
     async def _supply() -> _GroupBox:
@@ -587,7 +591,7 @@ class _MappingBox:
         self.acc_checked = False
 
 
-def mapping(mapper: Mapper[T, R], downstream: Collector[R, Any, Any]) -> Collector[T, _MappingBox, Any]:
+def mapping(mapper: Mapper[T, R], downstream: Collector[R, Any, Any]) -> Collector[T, Any, Any]:
     _check_downstream(downstream)
 
     async def _supply() -> _MappingBox:
@@ -629,7 +633,7 @@ async def _finish_collecting_and_then(
     return await _maybe_await(finisher, result)
 
 
-def collecting_and_then(downstream: Collector[T, Any, R], finisher: Finisher[R, Any]) -> Collector[T, _CollectAndThenBox, Any]:
+def collecting_and_then(downstream: Collector[T, Any, R], finisher: Finisher[R, Any]) -> Collector[T, Any, Any]:
     _check_downstream(downstream)
 
     async def _supply() -> _CollectAndThenBox:

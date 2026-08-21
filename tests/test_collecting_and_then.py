@@ -12,7 +12,7 @@ async def _async_len(xs: list) -> int:
 @pytest.mark.asyncio
 async def test_collecting_and_then_applies_finisher() -> None:
     # when
-    result = await Stream.of([1, 2, 3]).collect(collecting_and_then(to_list, tuple))
+    result = await Stream.of([1, 2, 3]).collect(collecting_and_then(to_list(), tuple))
 
     # then
     assert result == (1, 2, 3)
@@ -21,7 +21,7 @@ async def test_collecting_and_then_applies_finisher() -> None:
 @pytest.mark.asyncio
 async def test_collecting_and_then_async_finisher() -> None:
     # when
-    result = await Stream.of([1, 2, 3]).collect(collecting_and_then(to_list, _async_len))
+    result = await Stream.of([1, 2, 3]).collect(collecting_and_then(to_list(), _async_len))
 
     # then
     assert result == 3
@@ -39,7 +39,7 @@ async def test_collecting_and_then_composes_with_downstream_finisher() -> None:
 @pytest.mark.asyncio
 async def test_collecting_and_then_empty_stream() -> None:
     # when
-    result = await Stream.of([]).collect(collecting_and_then(to_list, tuple))
+    result = await Stream.of([]).collect(collecting_and_then(to_list(), tuple))
 
     # then
     assert result == ()

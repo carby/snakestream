@@ -37,7 +37,7 @@ Static typing guarantee that the element type flowing through a `Stream`/`Parall
 `collect()`, `reduce()`, `for_each()`, `find_any()`, `min()`, `max()`, `all_match()`, `any_match()`, `none_match()`, and `count()` SHALL be typed using the stream's bound `T`, so that user-supplied collectors/accumulators/consumers/predicates are checked against the actual element type rather than an unbound `TypeVar`.
 
 #### Scenario: collect() return type follows the collector
-- **WHEN** `Stream[int].collect(to_list)` is called
+- **WHEN** `Stream[int].collect(to_list())` is called
 - **THEN** the result is typed as `list[int]`
 
 #### Scenario: for_each() consumer is checked against the element type

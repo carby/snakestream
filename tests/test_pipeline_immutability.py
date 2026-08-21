@@ -21,7 +21,7 @@ INTERMEDIATE_OPS = [
 ]
 
 TERMINAL_OPS = [
-    ("collect", lambda s: s.collect(to_list)),
+    ("collect", lambda s: s.collect(to_list())),
     ("reduce_no_identity", lambda s: s.reduce(lambda a, b: a)),
     ("reduce_identity", lambda s: s.reduce(0, lambda a, b: a + b)),
     ("for_each", lambda s: s.for_each(lambda x: None)),
@@ -81,7 +81,7 @@ async def test_parallel_invalidates_receiver() -> None:
     with pytest.raises(IllegalStateException):
         s.map(lambda x: x)
     with pytest.raises(IllegalStateException):
-        await s.collect(to_list)
+        await s.collect(to_list())
 
 
 @pytest.mark.asyncio
@@ -93,7 +93,7 @@ async def test_sequential_invalidates_receiver() -> None:
     with pytest.raises(IllegalStateException):
         s.map(lambda x: x)
     with pytest.raises(IllegalStateException):
-        await s.collect(to_list)
+        await s.collect(to_list())
 
 
 @pytest.mark.asyncio
@@ -102,7 +102,7 @@ async def test_derived_instance_is_fully_usable() -> None:
     s2 = s.map(lambda x: x * 2)
     s3 = s2.filter(lambda x: x > 2)
 
-    result = await s3.collect(to_list)
+    result = await s3.collect(to_list())
 
     assert result == [4, 6]
 
@@ -115,8 +115,8 @@ async def test_repeat_terminal_call_on_unextended_reference_still_allowed() -> N
     # must not regress
     s = _fresh_stream().distinct()
 
-    first = await s.collect(to_list)
-    second = await s.collect(to_list)
+    first = await s.collect(to_list())
+    second = await s.collect(to_list())
 
     assert first == [1, 2, 3]
     assert second == []

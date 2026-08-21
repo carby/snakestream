@@ -14,15 +14,15 @@ apply `mapper` (sync or async) to the element and feed the mapped value to
 `StreamBuildException`.
 
 #### Scenario: Mapped values are collected by the downstream collector
-- **WHEN** `Stream.of(["a", "bb", "ccc"]).collect(mapping(len, to_list))` is called
+- **WHEN** `Stream.of(["a", "bb", "ccc"]).collect(mapping(len, to_list()))` is called
 - **THEN** the result is `[1, 2, 3]`
 
 #### Scenario: Async mapper is awaited
-- **WHEN** `Stream.of([1, 2, 3]).collect(mapping(async_double, to_list))` is called with an async mapper doubling its input
+- **WHEN** `Stream.of([1, 2, 3]).collect(mapping(async_double, to_list()))` is called with an async mapper doubling its input
 - **THEN** the result is `[2, 4, 6]`
 
 #### Scenario: Empty stream yields the downstream's empty result
-- **WHEN** `Stream.of([]).collect(mapping(len, to_list))` is called
+- **WHEN** `Stream.of([]).collect(mapping(len, to_list()))` is called
 - **THEN** the result is `[]`
 
 #### Scenario: Mapping composes with a reducing downstream

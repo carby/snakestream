@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, Generic, cast
-from collections.abc import AsyncGenerator, AsyncIterable
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 
 from snakestream.exception import IllegalStateException
 from snakestream.sink import GeneratorBridgeSink, Op, Sink, TerminalSink
@@ -40,20 +41,19 @@ def _accept(source: Any) -> AsyncGenerator | None:
     return None
 
 
-class _maybe_aclosing:
-    """Like contextlib.aclosing(), but a no-op on __aexit__ if the wrapped
-    object has no aclose() — some accepted sources (e.g. a bare async
-    iterator implementing only __anext__) don't."""
-
-    def __init__(self, thing: AsyncGenerator) -> None:
-        self._thing = thing
-
-    async def __aenter__(self) -> AsyncGenerator:
-        return self._thing
-
-    async def __aexit__(self, *exc_info: Any) -> None:
-        if hasattr(self._thing, "aclose"):
-            await self._thing.aclose()
+@asynccontextmanager
+async def _maybe_aclosing(thing: AsyncGenerator) -> AsyncIterator[AsyncGenerator]:
+    """Like contextlib.aclosing(), but a no-op on exit if the wrapped object
+    has no aclose() — some accepted sources (e.g. a bare async iterator
+    implementing only __anext__) don't. The finally is load-bearing: the
+    source must be closed on the way out of a body that raised or broke
+    early (limit, find_any, any_match), not just one that ran to
+    exhaustion."""
+    try:
+        yield thing
+    finally:
+        if hasattr(thing, "aclose"):
+            await thing.aclose()
 
 
 def _wrap_sink(intermediaries: list[Op], terminal: Sink[Any]) -> Sink[Any]:

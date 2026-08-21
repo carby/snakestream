@@ -170,13 +170,64 @@ async def test_to_generator_directly_callable() -> None:
 
 @pytest.mark.asyncio
 async def test_grouping_by_downstream_containers_are_isolated() -> None:
-    result = await Stream.of([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2, to_list))
+    result = await Stream.of([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2, to_list()))
     result[1].append(999)
     assert result[0] == [2, 4]
 
 
 @pytest.mark.asyncio
 async def test_partitioning_by_downstream_containers_are_isolated() -> None:
-    result = await Stream.of([1, 2, 3, 4, 5]).collect(partitioning_by(lambda x: x % 2 == 0, to_list))
+    result = await Stream.of([1, 2, 3, 4, 5]).collect(partitioning_by(lambda x: x % 2 == 0, to_list()))
     result[True].append(999)
     assert result[False] == [1, 3, 5]
+
+
+@pytest.mark.asyncio
+async def test_to_list_is_a_factory() -> None:
+    # when
+    actual = await Stream.of([1, 2, 3]).collect(to_list())
+    # then
+    assert actual == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_collect_rejects_the_bare_to_list_name() -> None:
+    # given: to_list is a factory, so the bare name is a function, not a
+    # Collector - the break is loud, by the same rule that rejects any other
+    # plain callable
+    stream = Stream.of([1, 2, 3])
+
+    # when / then
+    with pytest.raises(StreamBuildException):
+        await stream.collect(to_list)
+
+
+@pytest.mark.asyncio
+async def test_one_to_list_collector_is_reusable_across_collections() -> None:
+    # given: a Collector holds no per-collection state, so a single returned
+    # instance still feeds two independent collections
+    collector = to_list()
+
+    # when
+    first = await Stream.of([1, 2, 3]).collect(collector)
+    second = await Stream.of([4, 5]).collect(collector)
+
+    # then
+    assert first == [1, 2, 3]
+    assert second == [4, 5]
+
+
+@pytest.mark.asyncio
+async def test_grouping_by_default_downstream_still_builds_lists() -> None:
+    # when
+    actual = await Stream.of([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2))
+    # then
+    assert actual == {1: [1, 3, 5], 0: [2, 4]}
+
+
+@pytest.mark.asyncio
+async def test_partitioning_by_default_downstream_still_builds_lists() -> None:
+    # when
+    actual = await Stream.of([1, 2, 3, 4]).collect(partitioning_by(lambda x: x % 2 == 0))
+    # then
+    assert actual == {False: [1, 3], True: [2, 4]}

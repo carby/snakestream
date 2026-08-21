@@ -43,7 +43,7 @@ async def test_unordered_returns_self_for_chaining() -> None:
 @pytest.mark.asyncio
 async def test_unordered_chains_with_other_intermediate_ops() -> None:
     # when
-    res = await Stream.of([1, 2, 3, 4]).unordered().filter(lambda x: x % 2 == 0).collect(to_list)
+    res = await Stream.of([1, 2, 3, 4]).unordered().filter(lambda x: x % 2 == 0).collect(to_list())
     # then
     assert sorted(res) == [2, 4]
 

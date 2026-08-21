@@ -31,7 +31,7 @@ async def test_iterator_yields_same_elements_as_collect() -> None:
 
     # when
     from_iterator = [x async for x in chain().iterator()]
-    from_collect = await chain().collect(to_list)
+    from_collect = await chain().collect(to_list())
 
     # then
     assert from_iterator == from_collect == [4, 6, 8]
@@ -67,7 +67,7 @@ async def test_iterator_does_not_consume_or_mutate_chain() -> None:
     # when
     first = [x async for x in stream.iterator()]
     chain_len_after_iterator = len(stream._chain)
-    second = await stream.collect(to_list)
+    second = await stream.collect(to_list())
 
     # then
     assert first == [2, 4, 6]
@@ -82,7 +82,7 @@ async def test_iterator_does_not_consume_or_mutate_chain() -> None:
 @pytest.mark.asyncio
 async def test_iterator_drains_a_buffering_sink_via_the_bridge() -> None:
     # sorted() buffers its whole input and flushes at end(); iterator() is a
-    # bridge consumer, unlike collect(to_list) which now drives a terminal
+    # bridge consumer, unlike collect(to_list()) which now drives a terminal
     # sink directly and no longer touches the bridge's end-of-source flush.
     it = Stream.of([3, 1, 2]).sorted().iterator()
     assert [x async for x in it] == [1, 2, 3]

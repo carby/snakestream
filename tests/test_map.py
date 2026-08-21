@@ -47,7 +47,7 @@ async def test_map_does_not_mutate_source(int_2_letter) -> None:
     source = [1, 2, 3, 4]
 
     # when
-    it = await Stream.of(source).map(lambda x: int_2_letter[x]).collect(to_list)
+    it = await Stream.of(source).map(lambda x: int_2_letter[x]).collect(to_list())
 
     # then
     assert source != it
@@ -59,7 +59,7 @@ async def test_map_does_not_mutate_source(int_2_letter) -> None:
 @pytest.mark.asyncio
 async def test_map_matches_builtin_map(values: list[int]) -> None:
     # when
-    actual = await Stream.of(values).map(lambda x: x * 2).collect(to_list)
+    actual = await Stream.of(values).map(lambda x: x * 2).collect(to_list())
 
     # then
     assert actual == list(map(lambda x: x * 2, values))
@@ -72,7 +72,7 @@ async def test_map_async_mapper_matches_builtin_map(values: list[int]) -> None:
         return x * 2
 
     # when
-    actual = await Stream.of(values).map(async_double).collect(to_list)
+    actual = await Stream.of(values).map(async_double).collect(to_list())
 
     # then
     assert actual == list(map(lambda x: x * 2, values))

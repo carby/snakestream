@@ -9,7 +9,7 @@ async def test_limit_does_not_pull_past_nth_element() -> None:
     seen: list[int] = []
 
     # when
-    lst = await Stream.iterate(0, lambda n: n + 1).peek(seen.append).limit(3).collect(to_list)
+    lst = await Stream.iterate(0, lambda n: n + 1).peek(seen.append).limit(3).collect(to_list())
 
     # then
     assert lst == [0, 1, 2]
@@ -19,7 +19,7 @@ async def test_limit_does_not_pull_past_nth_element() -> None:
 @pytest.mark.asyncio
 async def test_limit_exact_size_source() -> None:
     # when
-    lst = await Stream.of([0, 1, 2]).limit(3).collect(to_list)
+    lst = await Stream.of([0, 1, 2]).limit(3).collect(to_list())
 
     # then
     assert lst == [0, 1, 2]
@@ -28,7 +28,7 @@ async def test_limit_exact_size_source() -> None:
 @pytest.mark.asyncio
 async def test_limit_shorter_than_n_source() -> None:
     # when
-    lst = await Stream.of([0, 1]).limit(5).collect(to_list)
+    lst = await Stream.of([0, 1]).limit(5).collect(to_list())
 
     # then
     assert lst == [0, 1]
@@ -37,7 +37,7 @@ async def test_limit_shorter_than_n_source() -> None:
 @pytest.mark.asyncio
 async def test_limit_simple() -> None:
     # when
-    lst = await Stream.iterate(0, lambda n: n + 1).limit(10).collect(to_list)
+    lst = await Stream.iterate(0, lambda n: n + 1).limit(10).collect(to_list())
 
     # then
     assert len(lst) == 10
@@ -46,7 +46,7 @@ async def test_limit_simple() -> None:
 @pytest.mark.asyncio
 async def test_limit_zero() -> None:
     # when
-    lst = await Stream.iterate(0, lambda n: n + 1).limit(0).collect(to_list)
+    lst = await Stream.iterate(0, lambda n: n + 1).limit(0).collect(to_list())
 
     # then
     assert len(lst) == 0
@@ -55,7 +55,7 @@ async def test_limit_zero() -> None:
 @pytest.mark.asyncio
 async def test_limit_parallel() -> None:
     # when
-    lst = await Stream.iterate(0, lambda n: n + 1).parallel().limit(10).collect(to_list)
+    lst = await Stream.iterate(0, lambda n: n + 1).parallel().limit(10).collect(to_list())
 
     # then
     assert len(lst) == 10
@@ -68,7 +68,7 @@ async def test_limit_parallel_shared_close_across_branches() -> None:
     # out from under each other
 
     # when
-    lst = await Stream.of(list(range(1000))).parallel().limit(10).collect(to_list)
+    lst = await Stream.of(list(range(1000))).parallel().limit(10).collect(to_list())
 
     # then: no exception escapes collect(), and the total across all branches
     # is exactly max_size
@@ -83,7 +83,7 @@ async def test_limit_multiple() -> None:
         .limit(3)
         .flat_map(lambda x: Stream.of(x))
         .limit(6)
-        .collect(to_list)
+        .collect(to_list())
     )
 
     # then
@@ -93,11 +93,11 @@ async def test_limit_multiple() -> None:
 @pytest.mark.asyncio
 async def test_limit_state_not_shared_across_separate_streams() -> None:
     # given: a first stream exhausts its own limit() counter
-    await Stream.iterate(0, lambda n: n + 1).limit(5).collect(to_list)
+    await Stream.iterate(0, lambda n: n + 1).limit(5).collect(to_list())
 
     # when: a second, independently-built limit() stream should still allow
     # up to its own max_size, unaffected by the first stream's counter
-    second = await Stream.iterate(0, lambda n: n + 1).limit(5).collect(to_list)
+    second = await Stream.iterate(0, lambda n: n + 1).limit(5).collect(to_list())
 
     # then
     assert len(second) == 5
@@ -107,10 +107,10 @@ async def test_limit_state_not_shared_across_separate_streams() -> None:
 async def test_limit_state_fresh_on_second_composition() -> None:
     # given
     stream = Stream.iterate(0, lambda n: n + 1).limit(5)
-    first = await stream.collect(to_list)
+    first = await stream.collect(to_list())
 
     # when
-    second = await stream.collect(to_list)
+    second = await stream.collect(to_list())
 
     # then
     assert len(first) == 5
@@ -126,7 +126,7 @@ async def test_limit_zero_does_not_run_upstream_ops() -> None:
     seen: list[int] = []
 
     # when
-    lst = await Stream.of([1, 2, 3]).peek(seen.append).limit(0).collect(to_list)
+    lst = await Stream.of([1, 2, 3]).peek(seen.append).limit(0).collect(to_list())
 
     # then
     assert lst == []
@@ -144,7 +144,7 @@ async def test_limit_zero_does_not_pull_from_source() -> None:
             yield i
 
     # when
-    lst = await Stream.of(source()).limit(0).collect(to_list)
+    lst = await Stream.of(source()).limit(0).collect(to_list())
 
     # then
     assert lst == []
@@ -157,7 +157,7 @@ async def test_limit_zero_on_parallel_stream_yields_nothing() -> None:
     seen: list[int] = []
 
     # when
-    lst = await Stream.of([1, 2, 3, 4]).parallel().peek(seen.append).limit(0).collect(to_list)
+    lst = await Stream.of([1, 2, 3, 4]).parallel().peek(seen.append).limit(0).collect(to_list())
 
     # then
     assert lst == []
@@ -169,7 +169,7 @@ async def test_limit_zero_still_runs_the_full_sink_lifecycle() -> None:
     # given a chain that pulled nothing must still have been begun and ended:
     # sorted() flushes from end(), so an unended chain would silently swallow
     # a downstream terminal's result rather than returning an empty one
-    lst = await Stream.of([3, 1, 2]).sorted().limit(0).collect(to_list)
+    lst = await Stream.of([3, 1, 2]).sorted().limit(0).collect(to_list())
 
     # then
     assert lst == []

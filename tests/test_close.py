@@ -17,7 +17,7 @@ async def test_close_simple(mocker, int_2_letter) -> None:
         .distinct()
         .on_close(mock_callback1)
         .on_close(mock_callback2)
-        .collect(to_list)
+        .collect(to_list())
     )
 
     # when
@@ -47,7 +47,7 @@ async def test_close_after_stream_switch(mocker, int_2_letter) -> None:
         .distinct()
         .parallel()
         .on_close(mock_callback2)
-        .collect(to_list)
+        .collect(to_list())
     )
 
     # when
@@ -72,7 +72,7 @@ async def test_close_after_sequential_switch(mocker, int_2_letter) -> None:
         .distinct()
         .sequential()
         .on_close(mock_callback2)
-        .collect(to_list)
+        .collect(to_list())
     )
 
     # when
@@ -110,7 +110,7 @@ async def test_construct_with_initial_close_handlers(mocker, int_2_letter) -> No
     mock_callback = mocker.Mock()
 
     stream = Stream([1, 2, 3], [mock_callback])
-    await stream.collect(to_list)
+    await stream.collect(to_list())
 
     # when
     stream.close()
@@ -160,7 +160,7 @@ async def test_autoclose_simple(mocker, monkeypatch, int_2_letter):
 
     # when
     with closing(stream) as stream:
-        it = await stream.map(lambda x: int_2_letter[x]).distinct().collect(to_list)
+        it = await stream.map(lambda x: int_2_letter[x]).distinct().collect(to_list())
 
     # then
     close_mock.assert_called_once()
