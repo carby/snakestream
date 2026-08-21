@@ -6,16 +6,16 @@ the review-pass notes below. Completed items from that review remain in
 
 ## Now
 
-Ordered by dependency: each item can start once the ones above it have landed.
-Items 1 and 2 are independent of each other; item 1 wanted a settled
-`collector.py` and is now unblocked, and item 3 is last because it touches code
-item 1 rewrites.
+The two remaining items are independent of each other and can be taken in
+either order. The dependency that used to order this list — the min/max/count/
+reduce collapse, which items below waited on because it would have rewritten
+the code they touch — is resolved as of 2026-08-21 (see **Done**): the collapse
+was measured and rejected, so nothing here is waiting on it any more.
 
 | # | Item | Why now, and what it depends on |
 |---|---|---|
-| 1 | **Collapse the duplicated min/max, count and reduce algorithms across `terminals.py` and `collector.py`** — `_MinMaxSink` (`terminals.py:84-119`) and `_extremum` (`collector.py:260-291`) are the same algorithm down to the comparator-contract comment; `_CountSink` and `counting()` are the same; `_ReduceSink` and `reducing()`'s two-arg form are the same. `Stream.min`/`max`/`count` could become `collect(min_by(c))` / `collect(counting())`, deleting the three sinks. | **Unblocked as of 2026-08-20** — it was sequenced behind the remaining-`Collectors` item (now in **Done**) so the collector factories it folds onto would be complete first, and `summarizing*` has landed as a wrapper over the shared `_summing`/`_averaging` bodies rather than another copy of the accumulate-and-finish shape. **Benchmark-gated, and expected to be contentious:** routing the terminals through `_CollectorSink` adds a box indirection and an extra attribute hop per element on paths that are direct today, which is the same shape of trade that killed `add-callsite-dispatch` (see **Done**). Run the established harness (Python 3.14.5, 20,000 elements, best of 5, three runs per variant) before committing to the collapse; if it regresses, the fallback is to extract only the shared comparator core and leave the sinks in place. |
-| 2 | **Drop the pointless `async` on `Stream.concat`** — `stream.py:281-283` is an `async def concat(a, b)` whose body only constructs `Stream(_concat(a, b))`. It never awaits anything, yet every caller has to write `await Stream.concat(a, b)`. | Surfaced 2026-08-20. Mechanical, but it is a breaking signature change, so it needs a migration-log entry in README alongside the other pre-1.0 renames — the established convention here (`stream_of()` -> `Stream.of()`, the `Stream.of()` kwargs removal, the `str`/`bytes` spreading change). Independent of every other item; touches `stream.py`, the concat tests, and README. |
-| 3 | **Small-cleanups batch** — (a) `to_list` is a bare `Collector` instance while `to_set()` is a factory, so the public API reads `collect(to_list)` next to `collect(to_set())` for two equally stateless collectors; (b) `parallel_stream.py:468` builds a throwaway list every iteration in `any([n is not None for n in tasks])`, and line 473's `tasks.index(task)` is a linear scan per element where a `{task: idx}` dict would do; (c) `_CountSink` uses a `Counter` box although the sink owns its container exclusively and a plain `int` would do (`counting()` genuinely needs the box, since its accumulator has to mutate); (d) `_maybe_aclosing` is a 14-line class that is about 5 as an `@asynccontextmanager`; (e) private accumulator types leak into public signatures, e.g. `summing_int() -> Collector[Any, _SumBox, int]`. | Deliberately last: (c) is inside a sink item 1 may delete outright, and (a)/(e) are in `collector.py`, which item 1 also touches. Batching them behind that avoids making the same edits twice and keeps the diffs reviewable. **(b) is no longer blocked** — it was sequenced behind the drive-loop collapse as "inside the loop item 1 rewrites", but that change (now in **Done**) left `_parallel()`'s race loop untouched, so (b) could be split out and taken at any time — the same reasoning as the earlier "batch the small cleanups left by the Sink redesign" item in **Done**. Each part is independently revertable; none changes behaviour except (a), which is a public-API shape change and needs the same migration-log treatment as item 3. |
+| 1 | **Drop the pointless `async` on `Stream.concat`** — `stream.py:281-283` is an `async def concat(a, b)` whose body only constructs `Stream(_concat(a, b))`. It never awaits anything, yet every caller has to write `await Stream.concat(a, b)`. | Surfaced 2026-08-20. Mechanical, but it is a breaking signature change, so it needs a migration-log entry in README alongside the other pre-1.0 renames — the established convention here (`stream_of()` -> `Stream.of()`, the `Stream.of()` kwargs removal, the `str`/`bytes` spreading change). Independent of every other item; touches `stream.py`, the concat tests, and README. |
+| 2 | **Small-cleanups batch** — (a) `to_list` is a bare `Collector` instance while `to_set()` is a factory, so the public API reads `collect(to_list)` next to `collect(to_set())` for two equally stateless collectors; (b) `parallel_stream.py:468` builds a throwaway list every iteration in `any([n is not None for n in tasks])`, and line 473's `tasks.index(task)` is a linear scan per element where a `{task: idx}` dict would do; ~~(c) `_CountSink`'s `Counter` box~~ — **done 2026-08-21**, taken as the `count` fallback in the collapse item (see **Done**); (d) `_maybe_aclosing` is a 14-line class that is about 5 as an `@asynccontextmanager`; (e) private accumulator types leak into public signatures, e.g. `summing_int() -> Collector[Any, _SumBox, int]`. | **No longer blocked, as of 2026-08-21.** This batch was sequenced last because (c) sat inside a sink the collapse item might have deleted outright and (a)/(e) are in `collector.py`, which that item also touched. The collapse was measured and rejected (see **Done**), so the edits can no longer be made twice: (c) is already done as that item's `count` fallback, and (a)/(e) are free to take. (b) was sequenced behind the drive-loop collapse as "inside the loop item 1 rewrites", but that change (now in **Done**) left `_parallel()`'s race loop untouched, so (b) could be split out and taken at any time — the same reasoning as the earlier "batch the small cleanups left by the Sink redesign" item in **Done**. Each part is independently revertable; none changes behaviour except (a), which is a public-API shape change and needs the same migration-log treatment as item 1. |
 
 `Stream.reduce(identity, accumulator, combiner)` (3-arg, with a combiner for
 parallel merging) has moved to **Later** below — see the resolved
@@ -41,6 +41,90 @@ core semantic.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should instead be documented as intentional next to the `str`/`bytes` note. Surfaced 2026-08-20 in the same code-quality read that produced **Now** items 1-4. |
 
 ## Done
+
+- **Measured and rejected: collapsing `Stream.min`/`max`, `count` and `reduce`
+  onto the `min_by`/`max_by`, `counting()` and `reducing()` collectors.**
+  The duplication was real — `_MinMaxSink` and `_extremum` were the same
+  algorithm down to a verbatim copy of the comparator-contract comment,
+  `_CountSink` and `counting()` the same `+= 1`, `_ReduceSink` and
+  `reducing()`'s two-arg form the same `_UNSET`-seed fold — and the collapse
+  was implemented in full to find out what it cost.
+
+  **Equivalence is not in doubt**, which is what makes the rejection a pure
+  cost decision. With all three terminals routed through `collect(...)` and
+  the three sinks deleted, the **whole 505-test suite passed with no test file
+  edited**, and a separate 21-case audit (empty sources, singletons, falsy
+  identities, first-of-tied tie-break, the `bool`-comparator `TypeError`, async
+  callables, and all three on a `ParallelStream`) found **zero** differences
+  between the two forms.
+
+  **Killed on measurement at the gate the change's own tasks placed after the
+  collapse.** Both forms are public API today, so baseline and collapsed ran
+  interleaved in one process against the same source — a tighter comparison
+  than the usual edit-and-remeasure. Harness otherwise as established (Python
+  3.14.5, 20,000 elements, best of 5, three independent invocations), with one
+  deliberate change: **no intermediate chain**, since here the terminal is the
+  subject and an empty chain maximizes its share of per-element cost. Gate was
+  +10% on the sync variant, the level `collapse-terminal-drive-loop` already
+  treated as real:
+
+  | Variant | Baseline ns/element | Collapsed ns/element | Median delta |
+  |---|---|---|---|
+  | `count()` | 298 / 306 / 299 | 360 / 332 / 357 | **+19.6%** |
+  | `min(cmp)` sync | 467 / 442 / 422 | 608 / 560 / 522 | **+26.5%** |
+  | `min(cmp)` async | 558 / 551 / 513 | 648 / 626 / 651 | +16.2% |
+  | `reduce(acc)` sync | 332 / 356 / 354 | 622 / 562 / 601 | **+69.6%** |
+  | `reduce(0, acc)` sync | 369 / 331 / 355 | 630 / 590 / 601 | **+70.6%** |
+  | `reduce(acc)` async | 454 / 468 / 466 | 657 / 720 / 714 | +53.3% |
+
+  All three failed, so all three took the fallback. The cause is the same one
+  `add-callsite-dispatch` established: a `Collector` must be reusable across
+  concurrent collections, so its per-collection dispatch state lives on a
+  supplier-made box reached through a Python-level `async def` call, where a
+  sink has it inline on `self`. `reduce` is worst by a wide margin because
+  `reducing()` additionally routes every element through `_classify_step`,
+  which is a function call plus a tuple allocation and unpack per element per
+  callable — precisely the cost `optimize-callable-dispatch` hoisted out of the
+  per-element path in the first place.
+
+  **What landed instead — the per-terminal fallbacks, all behaviour-neutral,
+  505 tests passing unedited at 98.20% coverage:**
+
+  - **`min`/`max`: the shared rule was extracted, and it made both sides
+    faster.** `sort.py` gained `is_new_extremum(sign, asc)`, holding the
+    comparator-contract check, the sign test and the first-of-tied rule — the
+    part that had been duplicated verbatim — called by both `_MinMaxSink` and
+    `_extremum`. It *replaces* their existing `check_comparator_result_type()`
+    call rather than adding a second one, and inlines the `type(sign) is not
+    int` test so only the raising path calls out. Net one fewer Python-level
+    call per element: `min` sync went **442 -> 404 ns/element**. (Delegating to
+    `check_comparator_result_type` instead of inlining the test measured ~5%
+    slower, which is why it does not.)
+  - **`count`: roadmap item 2(c) taken as the fallback.** `_CountSink` now
+    accumulates into a plain `int` instead of a `Counter` box, since the sink
+    owns its container exclusively — 300 vs 299 ns/element, i.e. neutral on
+    time, with one allocation and one indirection gone. `counting()` keeps its
+    box, which it genuinely needs: its accumulator is a free function that has
+    to mutate a container it was handed. `Counter` itself stays regardless —
+    `ops.py`'s `_LimitOp` and `_SkipOp` use it as state shared across a
+    `ParallelStream`'s branches, the case a plain `int` cannot serve.
+  - **`reduce`: cross-referenced, not merged.** The shared part is the
+    `_UNSET`-seed rule and the empty-finishes-as-`None` rule — two lines and a
+    comment, not an extractable function. `_ReduceSink`'s docstring and
+    `reducing()` now each point at the other, recording that the duplication is
+    deliberate and measured and that a change to either rule belongs in both.
+
+  **Consequence:** routing these terminals through a `Collector` is now a
+  deliberately-accepted cost with numbers behind it rather than an open cleanup
+  item, and should not be re-proposed without new evidence — the same posture
+  `add-callsite-dispatch` established. The narrower reading that *did* pay off
+  is worth keeping in mind: extracting a **sync** helper that replaces an
+  existing per-element call is free or better, while anything adding a
+  coroutine frame or a box to the per-element path is not. `stream.py` is
+  untouched; `README.md` changed only in the `min_by`/`max_by` rows, whose
+  "Wraps `Stream.min()`'s existing logic" wording is now "shares the rule
+  with", which is what the code actually does. See
+  `openspec/changes/collapse-terminal-collector-duplication`.
 
 - **Collapsed the two terminal drive loops into `_copy_into()`.**
   `BaseStream._drive_to_sequential()` and `ParallelStream._drive_to()` each

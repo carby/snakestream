@@ -13,7 +13,7 @@ from snakestream.base_stream import _maybe_aclosing
 from snakestream.callable_dispatch import AsyncDispatch, _classify_step, _maybe_await, is_async_callable
 from snakestream.exception import StreamBuildException
 from snakestream.sink import Counter, TerminalSink, _UNSET
-from snakestream.sort import check_comparator_result_type
+from snakestream.sort import is_new_extremum
 from snakestream.type import (
     A,
     R,
@@ -332,8 +332,6 @@ def _extremum(comparator: Comparator[T], asc: bool) -> Collector[T, _ExtremumBox
             container.found = element
             return
 
-        # comparator(element, found): negative if element orders before found,
-        # positive if after. found (the earlier element) is kept on a tie.
         sign = comparator(element, container.found)
         if container.is_async:
             sign = await cast("Awaitable[int]", sign)
@@ -342,11 +340,7 @@ def _extremum(comparator: Comparator[T], asc: bool) -> Collector[T, _ExtremumBox
             if isawaitable(sign):
                 container.is_async = True
                 sign = await sign
-        sign = cast(int, sign)
-        check_comparator_result_type(sign)
-
-        is_new_extreme = sign < 0 if asc else sign > 0
-        if is_new_extreme:
+        if is_new_extremum(cast(int, sign), asc):
             container.found = element
 
     def _finish(container: _ExtremumBox) -> T | None:
@@ -389,6 +383,10 @@ def reducing(
 
 
 def reducing(identity: Any = _UNSET, mapper: Any = _UNSET, binary_operator: Any = _UNSET) -> Any:
+    """Implements the same _UNSET-seed fold as terminals.py's _ReduceSink, and
+    the same empty-finishes-as-None rule. The duplication is deliberate and
+    measured - see that sink's docstring - so a change to either rule belongs
+    in both places."""
     if mapper is _UNSET:
         # Called as reducing(binary_operator): the single positional arg is
         # the fold operator, with no identity and no element mapper.

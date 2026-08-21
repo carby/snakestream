@@ -5,8 +5,8 @@ from typing import Any, cast
 from collections.abc import Awaitable
 
 from snakestream.callable_dispatch import AsyncDispatch
-from snakestream.sink import Counter, TerminalSink, _UNSET
-from snakestream.sort import check_comparator_result_type
+from snakestream.sink import TerminalSink, _UNSET
+from snakestream.sort import is_new_extremum
 from snakestream.type import (
     T,
     Accumulator,
@@ -18,14 +18,17 @@ from snakestream.type import (
 
 
 class _CountSink(TerminalSink[T]):
-    def _create_container(self) -> Counter:
-        return Counter()
+    """A plain int, not a Counter: this sink owns its container exclusively,
+    so it can rebind it the way _ReduceSink rebinds its accumulation. The
+    counting() collector genuinely needs the Counter box, because its
+    accumulator is a free function that has to mutate a container it was
+    handed."""
+
+    def _create_container(self) -> int:
+        return 0
 
     async def accept(self, element: Any) -> None:
-        self._container.value += 1
-
-    def _finish(self, container: Counter) -> int:
-        return container.value
+        self._container += 1
 
 
 class _ForEachSink(AsyncDispatch, TerminalSink[T]):
@@ -53,7 +56,16 @@ class _ForEachSink(AsyncDispatch, TerminalSink[T]):
 class _ReduceSink(AsyncDispatch, TerminalSink[T]):
     """Folds every element into an accumulated value. An identity of _UNSET
     means the no-identity overload: the first element seeds the fold instead,
-    and an empty source finishes as None."""
+    and an empty source finishes as None.
+
+    That seeding rule is implemented twice, here and in collector.py's
+    reducing(), which is deliberate and measured rather than an oversight:
+    routing Stream.reduce() through reducing() cost +70% per element, because
+    the collector form reaches its callables through _classify_step and a
+    supplier-made box where this sink has them inline on itself. Keep the two
+    in step by hand - a change to the _UNSET-seed rule or the
+    empty-finishes-as-None rule belongs in both. See the collapse-terminal-
+    collector-duplication change for the figures."""
 
     def __init__(self, identity: Any, accumulator: Accumulator) -> None:
         super().__init__()
@@ -95,8 +107,6 @@ class _MinMaxSink(AsyncDispatch, TerminalSink[T]):
             self._container = element
             return
 
-        # comparator(element, found): negative if element orders before found,
-        # positive if after. found (the earlier element) is kept on a tie.
         sign = self._fn(element, self._container)
         if self._is_async:
             sign = await cast("Awaitable[int]", sign)
@@ -105,14 +115,7 @@ class _MinMaxSink(AsyncDispatch, TerminalSink[T]):
             if isawaitable(sign):
                 self._is_async = True
                 sign = await sign
-        sign = cast(int, sign)
-        check_comparator_result_type(sign)
-
-        if self._asc:
-            is_new_extreme = sign < 0
-        else:
-            is_new_extreme = sign > 0
-        if is_new_extreme:
+        if is_new_extremum(cast(int, sign), self._asc):
             self._container = element
 
     def _finish(self, container: Any) -> Any:
