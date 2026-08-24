@@ -1,6 +1,6 @@
 ## Purpose
 
-Defines the contract for turning a `BaseStream`'s queued chain of intermediate-operation closures into an executable pipeline via `_compose()` (and the `_wrap_sink()`/`_parallel()` helpers it uses). Covers two guarantees: that composing a chain never consumes or mutates it, so a stream can be composed and re-composed across multiple terminal operations; and that stateful intermediate operations (`distinct()`, `limit()`) start with fresh state on each composition rather than leaking state from a prior run, under both `SEQUENTIAL` execution and `RACING` execution (where state must additionally stay globally correct across racing branches within one composition).
+Defines the contract for turning a `Stream`'s queued chain of intermediate-operation closures into an executable pipeline via `_compose()` (and the `_wrap_sink()`/`_parallel()` helpers it uses). Covers two guarantees: that composing a chain never consumes or mutates it, so a stream can be composed and re-composed across multiple terminal operations; and that stateful intermediate operations (`distinct()`, `limit()`) start with fresh state on each composition rather than leaking state from a prior run, under both `SEQUENTIAL` execution and `RACING` execution (where state must additionally stay globally correct across racing branches within one composition).
 
 ## Requirements
 
@@ -181,7 +181,7 @@ them, not necessarily the first `n` elements in source order.
 
 ### Requirement: Building a composed pipeline does not recurse per chained operation
 
-`BaseStream._compose()` (and the `_wrap_sink()` helper it uses to link the sink chain) SHALL build the executable pipeline without recursing once per queued intermediate operation. Building (as opposed to consuming) a chain of intermediate operations SHALL NOT fail with `RecursionError` regardless of how many operations are queued, up to ordinary Python list-size limits.
+`Stream._compose()` (and the `_wrap_sink()` helper it uses to link the sink chain) SHALL build the executable pipeline without recursing once per queued intermediate operation. Building (as opposed to consuming) a chain of intermediate operations SHALL NOT fail with `RecursionError` regardless of how many operations are queued, up to ordinary Python list-size limits.
 
 Note: this requirement covers only the build-time traversal that links the sink chain. It does not cover recursion that occurs while *consuming* the composed pipeline: each intermediate sink's `accept()` calls `downstream.accept()`, so pushing one element through a chain of *k* operations is O(k) stack-deep. That is a separate concern, not addressed by this requirement, and is unchanged by the push-based redesign — the same O(k) per-element depth existed under the previous `async for`/`__anext__()` delegation model, and Java's own `Sink.ChainedReference` has it too.
 

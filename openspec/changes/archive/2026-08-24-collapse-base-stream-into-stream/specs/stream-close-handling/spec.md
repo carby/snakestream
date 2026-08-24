@@ -1,8 +1,4 @@
-## Purpose
-
-Defines the `on_close()`/`close()` close-handler contract on `Stream`, regardless of execution mode — Java's AutoClose equivalent. Covers registering close handlers, invoking them on `close()`, initializing a stream's close handlers at construction time (including via an explicit `close_handlers` argument), and carrying registered handlers across `sequential()`/`parallel()` mode switches.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: on_close() registers a close handler
 
@@ -41,20 +37,6 @@ Defines the `on_close()`/`close()` close-handler contract on `Stream`, regardles
 
 - **WHEN** `close()` is called on a stream with handlers `[bad_a, bad_b]` registered in that order, both of which raise when called
 - **THEN** both `bad_a` and `bad_b` are called, and `close()` raises `bad_a`'s exception (the first one encountered)
-
-### Requirement: A stream constructed with initial close handlers uses them
-
-`Stream(source, close_handlers)` SHALL initialize the new stream's close handlers to the given list. `Stream(source)` (no `close_handlers` argument, or `None`) SHALL initialize the new stream with an empty list of close handlers. This holds whichever executor the resulting stream carries.
-
-#### Scenario: Constructing with an explicit close_handlers list
-
-- **WHEN** `Stream(source, [handler])` is constructed
-- **THEN** `close()` on the resulting stream invokes `handler`
-
-#### Scenario: Constructing with no close_handlers argument
-
-- **WHEN** `Stream(source)` is constructed without a `close_handlers` argument
-- **THEN** `close()` on the resulting stream invokes nothing, and `on_close()` can still be used afterward to register handlers
 
 ### Requirement: Close handlers propagate across sequential()/parallel() mode switches
 

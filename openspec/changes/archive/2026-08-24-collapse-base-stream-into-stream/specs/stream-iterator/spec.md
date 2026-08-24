@@ -1,8 +1,4 @@
-## Purpose
-
-Defines the contract for `Stream.iterator()`, an escape-hatch terminal-ish operation that composes a stream's currently-queued chain of intermediate operations into an executable `AsyncGenerator` and hands it to the caller without pulling any elements from it. Unlike other terminal operations, `iterator()` does not drive consumption itself — the caller does, via `async for`, direct `__anext__()` calls, or partial consumption — and, like other terminal operations, it composes non-destructively so the stream instance remains valid for further use afterward. Applies identically under `SEQUENTIAL` and `RACING` execution.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: iterator() exposes the composed pipeline without consuming it
 `Stream.iterator()` SHALL compose the stream's currently-queued chain of intermediate operations (via the same `_compose()` mechanism used by terminal operations) and return the resulting `AsyncGenerator[T, None]` to the caller, without pulling any elements from it. The caller SHALL be responsible for driving iteration (e.g. via `async for`, direct `__anext__()` calls, or partial consumption).
