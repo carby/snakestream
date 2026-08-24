@@ -86,17 +86,6 @@ This can be especially useful if you are subclassing Stream to do something that
 In snakestream this has been omitted since python has generators and those can be sent in as a source with `Stream.of()`
 
 ## API
-### BaseStream
-
-| function       | returns  | type     | summary                                                                                             |
-| -------------- | -------- | ---------| --------------------------------------------------------------------------------------------------- |
-| is_ordered()   | bool     | instance | Returns whether this stream is still considered order-dependent (i.e. `unordered()` has not been called) |
-| is_parallel()  | bool     | instance | Returns whether this stream, if a terminal operation were to be executed, would execute in parallel |
-| iterator()     | AsyncGenerator | instance | Composes the current chain and returns the resulting async generator directly, without consuming it, so the caller can drive iteration themselves |
-| parallel()     | Stream   | instance | Returns an equivalent stream that will execute in parallel. Applies to the **whole** pipeline, not only the operations declared after it, matching Java; the last mode switch before a terminal operation is the one that governs |
-| sequential()   | Stream   | instance | Returns an equivalent stream that will execute sequentially. Applies to the **whole** pipeline, on the same rule as `parallel()`                                                                                              |
-| unordered()    | Stream   | instance | Marks the stream as not order-dependent; the flag persists across `parallel()`/`sequential()` mode switches |
-
 ### Stream
 
 | done | function                        | returns                     | type     | summary                                                                                 |
@@ -120,7 +109,10 @@ In snakestream this has been omitted since python has generators and those can b
 | x | for_each(consumer: Callable[T]) | Any                         | instance | Performs an action for each element of this stream | 
 | x | for_each_ordered(consumer: Callable[T]) | Any               | instance | Performs an action for each element of this stream, in the encounter order of the stream if the stream has a defined encounter order | 
 |   | ~~generate(supplier: Callable[T])~~           | Stream        | static   | Not relevant. We can send in generators directly to `Stream.of()` already|
+| x | is_ordered() | bool | instance | Returns whether this stream is still considered order-dependent (i.e. `unordered()` has not been called) |
+| x | is_parallel() | bool | instance | Returns whether this stream, if a terminal operation were to be executed, would execute in parallel |
 | x | iterate(seed: T, nxt: Callable[[T], T]) | Stream | static | Returns an infinite sequential ordered Stream produced by iterative application of a function f to an initial element seed, producing a Stream consisting of seed, f(seed), f(f(seed)), etc. |
+| x | iterator() | AsyncGenerator | instance | Composes the current chain and returns the resulting async generator directly, without consuming it, so the caller can drive iteration themselves |
 | x | limit(max_size: int)                    | Stream | instance | Returns a stream consisting of the elements of this stream, truncated to be no longer than max_size() in length. |
 | x | map(mapper: Mapper)                     | Stream | instance | Returns a stream consisting of the results of applying the given function to the elements of this stream. |
 |   | ~~map_to_double(mapper: ToDoubleMapper)~~  | Stream | instance | Not relevant, same reasoning as `flat_map_to_double`. |
@@ -130,13 +122,16 @@ In snakestream this has been omitted since python has generators and those can b
 | x | min(comparator: Comparator)             | Optional[T] | instance | Returns the minimum element of this stream according to the provided Comparator. |
 | x | none_match(predicate: Predicate)        | bool | instance | Returns whether no elements of this stream match the provided predicate. |
 | x | of(*args: T)                            | Stream | static | Returns a sequential ordered stream whose elements are the specified values |
+| x | parallel()     | Stream   | instance | Returns an equivalent stream that will execute in parallel. Applies to the **whole** pipeline, not only the operations declared after it, matching Java; the last mode switch before a terminal operation is the one that governs |
 | x | peek(self, consumer: Consumer)          | Stream | instance | Returns a stream consisting of the elements of this stream, additionally performing the provided action on each element as elements are consumed from the resulting stream. |
 | x | reduce(identity: T \| R, accumulator: Accumulator) | T \| R | instance | Performs a reduction on the elements of this stream, using the provided identity value and an associative accumulation function, and returns the reduced value. |
 | x | reduce(accumulator: BinaryOperator) | T \| None | instance | Performs a reduction on the elements of this stream, using an associative accumulation function seeded by the stream's own first element, and returns the reduced value, or None if the stream is empty. |
+| x | sequential()   | Stream   | instance | Returns an equivalent stream that will execute sequentially. Applies to the **whole** pipeline, on the same rule as `parallel()` |
 | x | skip(n: int)                             | Stream | instance | Returns a stream consisting of the remaining elements of this stream after discarding the first n elements of the stream. |
 | x | sorted(comparator: Comparator \| None = None, reverse: bool = False) | Stream | instance | Returns a stream consisting of the elements of this stream, sorted according to natural ordering, or according to the provided Comparator if given. |
 | x | to_array()                              | List[T] | instance | Returns a list containing the elements of this stream. Equivalent to `collect(to_list())`; Java's `toArray()` returns an array, but Python has no distinct array type competing with `list`. |
 |   | ~~toArray(generator: IntFunction[Array[T]])~~ | Array[T] | instance | Not relevant. Exists in Java to work around the lack of runtime generic-array construction, letting callers get a correctly-typed array instead of `Object[]`. Python's `list` has no array/generic-array distinction to work around, so there's no equivalent problem for this overload to solve. |
+| x | unordered()    | Stream   | instance | Marks the stream as not order-dependent; the flag persists across `parallel()`/`sequential()` mode switches |
 
 ### Collectors
 

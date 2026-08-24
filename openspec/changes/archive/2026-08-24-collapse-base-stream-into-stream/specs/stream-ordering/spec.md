@@ -1,8 +1,4 @@
-## Purpose
-
-Defines the contract for `Stream`'s ordered/unordered bookkeeping: the `_ordered` flag, `unordered()`, and `is_ordered()`, mirroring Java's `BaseStream.unordered()`. This is purely a declarative marker on a stream instance — it does not itself alter iteration order under `SEQUENTIAL` or `RACING` execution — but it must be tracked correctly per-instance and survive `sequential()`/`parallel()` mode switches so that order-sensitive operations (e.g. `for_each_ordered()`) built on top of it behave correctly.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Stream tracks an ordered/unordered flag defaulting to ordered
 Every `Stream` instance SHALL carry a per-instance ordering flag that
