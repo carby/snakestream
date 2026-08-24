@@ -1,6 +1,6 @@
 ## Purpose
 
-Static typing guarantee that the element type flowing through a `Stream`/`ParallelStream` pipeline is tracked by the type checker (`ty`) end to end, instead of being `Unknown`, so mismatches like calling a `str`-only method on `int` elements are caught statically.
+Static typing guarantee that the element type flowing through a `Stream` pipeline, regardless of execution mode, is tracked by the type checker (`ty`) end to end, instead of being `Unknown`, so mismatches like calling a `str`-only method on `int` elements are caught statically.
 
 ## Requirements
 
@@ -11,9 +11,9 @@ Static typing guarantee that the element type flowing through a `Stream`/`Parall
 - **WHEN** a `Stream[int]` is constructed (e.g. `Stream.of([1, 2, 3])`)
 - **THEN** `ty` infers its element type as `int`, not `Unknown`
 
-#### Scenario: ParallelStream inherits the element type
-- **WHEN** a `Stream[T]` is switched to parallel mode via `.parallel()`
-- **THEN** the result is generic over the same element type — now `Stream[T]`, since execution mode is a value rather than a class, and `ParallelStream` was never exported so no published name changes
+#### Scenario: A RACING stream inherits the element type
+- **WHEN** a `Stream[T]` is switched to `RACING` execution via `.parallel()`
+- **THEN** the result is generic over the same element type — still `Stream[T]`, since execution mode is a value rather than a class, and the retired parallel-stream class was never exported so no published name changes
 
 ### Requirement: Type-changing intermediate operations update the element type
 `map()` and `flat_map()` SHALL be typed so that the returned stream's element type reflects the mapper's declared return type, rather than preserving the input element type.

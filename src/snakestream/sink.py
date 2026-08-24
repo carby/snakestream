@@ -58,7 +58,7 @@ class Op(ABC):
 
     make_shared_state() returns one fresh instance of the state this op's sinks
     share when several chains are built from the same op list (see
-    ParallelStream), or None for a stateless op. None means "no shared state",
+    RACING), or None for a stateless op. None means "no shared state",
     so an op that does need state returns a container — a set, a list, a
     counter object — never None."""
 
@@ -74,7 +74,7 @@ class StatelessOp(Op):
     its sink class, in that order, after the downstream.
 
     Stateless here means no *shared* state — nothing that has to cross
-    ParallelStream's racing branches. A sink may still buffer locally: `sorted`
+    RACING's racing branches. A sink may still buffer locally: `sorted`
     holds the whole stream in its sink and is still a StatelessOp, because that
     buffer belongs to one sink and is never shared with another."""
 
@@ -89,7 +89,7 @@ class StatelessOp(Op):
 
 class StatefulOp(StatelessOp):
     """An Op whose sinks share state across the chains built from it (see
-    ParallelStream). Like StatelessOp, but link() passes the op itself as the
+    RACING). Like StatelessOp, but link() passes the op itself as the
     sink's second argument, so the sink can key the state map by it.
 
     A subclass sets _sink_cls and overrides make_shared_state() to declare what
@@ -185,7 +185,7 @@ class GeneratorBridgeSink(TerminalSink[T]):
     calling a drain() that hands back a fresh list - that ran once per element,
     on the hot path. Clearing after the yields is safe because nothing can push
     into a bridge whose driving loop is suspended: that loop is the only thing
-    driving accept(), and each ParallelStream branch has its own bridge."""
+    driving accept(), and each RACING branch has its own bridge."""
 
     def __init__(self) -> None:
         super().__init__()

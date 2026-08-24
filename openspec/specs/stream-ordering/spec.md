@@ -1,6 +1,6 @@
 ## Purpose
 
-Defines the contract for `BaseStream`'s ordered/unordered bookkeeping: the `_ordered` flag, `unordered()`, and `is_ordered()`, mirroring Java's `BaseStream.unordered()`. This is purely a declarative marker on a stream instance — it does not itself alter iteration order in `Stream` or `ParallelStream` — but it must be tracked correctly per-instance and survive `sequential()`/`parallel()` mode switches so that order-sensitive operations (e.g. `for_each_ordered()`) built on top of it behave correctly.
+Defines the contract for `BaseStream`'s ordered/unordered bookkeeping: the `_ordered` flag, `unordered()`, and `is_ordered()`, mirroring Java's `BaseStream.unordered()`. This is purely a declarative marker on a stream instance — it does not itself alter iteration order under `SEQUENTIAL` or `RACING` execution — but it must be tracked correctly per-instance and survive `sequential()`/`parallel()` mode switches so that order-sensitive operations (e.g. `for_each_ordered()`) built on top of it behave correctly.
 
 ## Requirements
 
@@ -10,7 +10,7 @@ defaults to ordered (`True`) at construction, queryable via
 `is_ordered() -> bool`.
 
 #### Scenario: A freshly constructed stream is ordered by default
-- **WHEN** a new `Stream` (or `ParallelStream`) is constructed
+- **WHEN** a new `Stream` is constructed
 - **THEN** `.is_ordered()` returns `True`
 
 ### Requirement: BaseStream.unordered() marks the stream as not order-dependent

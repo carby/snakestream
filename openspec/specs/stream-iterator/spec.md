@@ -1,6 +1,6 @@
 ## Purpose
 
-Defines the contract for `BaseStream.iterator()`, an escape-hatch terminal-ish operation that composes a stream's currently-queued chain of intermediate operations into an executable `AsyncGenerator` and hands it to the caller without pulling any elements from it. Unlike other terminal operations, `iterator()` does not drive consumption itself — the caller does, via `async for`, direct `__anext__()` calls, or partial consumption — and, like other terminal operations, it composes non-destructively so the stream instance remains valid for further use afterward. Applies identically to `Stream` (sequential) and `ParallelStream` (parallel) composition.
+Defines the contract for `BaseStream.iterator()`, an escape-hatch terminal-ish operation that composes a stream's currently-queued chain of intermediate operations into an executable `AsyncGenerator` and hands it to the caller without pulling any elements from it. Unlike other terminal operations, `iterator()` does not drive consumption itself — the caller does, via `async for`, direct `__anext__()` calls, or partial consumption — and, like other terminal operations, it composes non-destructively so the stream instance remains valid for further use afterward. Applies identically under `SEQUENTIAL` and `RACING` execution.
 
 ## Requirements
 
@@ -22,8 +22,8 @@ Defines the contract for `BaseStream.iterator()`, an escape-hatch terminal-ish o
 ### Requirement: iterator() works identically for sequential and parallel streams
 `BaseStream.iterator()` SHALL work under either executor — sequential composition, linking the chain onto one sink via `_wrap_sink()`, or racing composition — without requiring any mode-specific override, relying on the executor's element-producing operation.
 
-#### Scenario: iterator() on a ParallelStream
-- **WHEN** `.iterator()` is called on a parallel stream with a queued chain of intermediate operations
+#### Scenario: iterator() under RACING execution
+- **WHEN** `.iterator()` is called on a stream using `RACING` execution with a queued chain of intermediate operations
 - **THEN** the returned `AsyncGenerator`, when iterated, yields the elements the racing composition would produce (racing branches, unordered), following the racing executor's existing execution semantics
 
 ### Requirement: iterator() does not consume or mutate the chain

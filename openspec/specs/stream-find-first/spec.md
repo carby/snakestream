@@ -1,9 +1,8 @@
 ## Purpose
 
-Defines `find_first()`'s contract on `Stream` and `ParallelStream`,
-matching Java's `Stream.findFirst()` — including its dependence on the
-`is_ordered()` flag for choosing an ordered vs. racing pull strategy on a
-`ParallelStream`.
+Defines `find_first()`'s contract on `Stream`, matching Java's
+`Stream.findFirst()` — including its dependence on the `is_ordered()` flag
+for choosing an ordered vs. racing pull strategy under `RACING` execution.
 
 ## Requirements
 

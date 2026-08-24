@@ -1,6 +1,6 @@
 ## Purpose
 
-Defines the `on_close()`/`close()` close-handler contract shared by `BaseStream`, `Stream`, and `ParallelStream` — Java's AutoClose equivalent. Covers registering close handlers, invoking them on `close()`, initializing a stream's close handlers at construction time (including via an explicit `close_handlers` argument), and carrying registered handlers across `sequential()`/`parallel()` mode switches.
+Defines the `on_close()`/`close()` close-handler contract shared by `BaseStream` and `Stream`, regardless of execution mode — Java's AutoClose equivalent. Covers registering close handlers, invoking them on `close()`, initializing a stream's close handlers at construction time (including via an explicit `close_handlers` argument), and carrying registered handlers across `sequential()`/`parallel()` mode switches.
 
 ## Requirements
 

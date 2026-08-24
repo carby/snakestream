@@ -53,7 +53,7 @@ class AsyncDispatch:
     different constructor signatures, and several take further arguments.
 
     The state is per-sink, and a sink is built once per composition - so
-    classification never leaks across compositions or across a ParallelStream's
+    classification never leaks across compositions or across RACING's
     branches, which is the same requirement the comment above places on the
     generator form's locals."""
 
