@@ -109,12 +109,12 @@ class Stream(Generic[T]):
         """The chain as a generator, under this stream's executor."""
         return self._executor.elements(self._chain, self._stream)
 
-    async def _evaluate(self, terminal: TerminalSink[Any]) -> Any:
-        """The chain driven into a terminal sink, under this stream's executor.
-        The one place a stream's execution mode is consulted; a terminal that
-        needs encounter order regardless of mode names SEQUENTIAL itself."""
+    async def _evaluate(self, terminal: TerminalSink[Any], executor: Executor | None = None) -> Any:
+        """The chain driven into a terminal sink. The one place a stream's
+        execution mode is consulted; a terminal that needs encounter order
+        regardless of the stream's mode passes SEQUENTIAL itself."""
         self._check_not_consumed()
-        return await self._executor.value(self._chain, self._stream, terminal)
+        return await (executor or self._executor).value(self._chain, self._stream, terminal)
 
     def _derive_executor(self, executor: Executor) -> Any:
         """A mode switch: a new stream over the SAME source and the SAME queued
@@ -290,8 +290,7 @@ class Stream(Generic[T]):
         return await self._evaluate(_ForEachSink(consumer))
 
     async def for_each_ordered(self, consumer: Consumer[T]) -> None:
-        self._check_not_consumed()
-        return await SEQUENTIAL.value(self._chain, self._stream, _ForEachSink(consumer))
+        return await self._evaluate(_ForEachSink(consumer), SEQUENTIAL)
 
     async def to_array(self) -> list[T]:
         # collect() runs _check_not_consumed() itself
@@ -302,8 +301,7 @@ class Stream(Generic[T]):
         # names SEQUENTIAL itself instead of following self._executor
         if not self.is_ordered():
             return await self.find_any()
-        self._check_not_consumed()
-        return await SEQUENTIAL.value(self._chain, self._stream, _FindSink())
+        return await self._evaluate(_FindSink(), SEQUENTIAL)
 
     async def find_any(self) -> T | None:
         return await self._evaluate(_FindSink())
