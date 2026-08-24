@@ -94,7 +94,7 @@ class Stream(Generic[T]):
 
     def _check_not_consumed(self) -> None:
         if self._consumed:
-            raise IllegalStateException("this stream has already been extended into a new instance or terminally consumed")
+            raise IllegalStateException("this stream has already been extended into a new instance")
 
     def _derive(self, chain: list[Op], executor: Executor) -> Stream[Any]:
         self._check_not_consumed()
