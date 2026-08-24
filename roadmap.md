@@ -16,35 +16,34 @@ value rather than a class hierarchy, `summing_int`/`summing_long` sharing a body
 
 ## Now
 
-Eight items, none blocking any other.
+Seven items, none blocking any other.
 
-Item 1 is what remains of the three the executor-value change opened on
-2026-08-21; the other two — retiring the `ParallelStream` name, and collapsing
-`BaseStream` into `Stream` — both landed on 2026-08-24 and have moved to
-**Done**.
+The item that remained of the three the executor-value change opened on
+2026-08-21 — `to_collection()`'s private `_C` TypeVar — landed on 2026-08-24
+alongside the other two from that batch (retiring the `ParallelStream` name,
+and collapsing `BaseStream` into `Stream`), and has moved to **Done**.
 
-Items 2-8 came out of a legibility read of the execution path on 2026-08-24
+Items 1-7 came out of a legibility read of the execution path on 2026-08-24
 (`stream.py`, `execution.py`, `sink.py`, `ops.py`, `terminals.py`,
 `callable_dispatch.py`, at `a48f1aa`, immediately after those two landed). All
 seven are off the per-element path, so none of them faces the benchmark gate;
 all seven are private-surface only, so none changes the public API. They share
-one implementation brief — see **Implementation notes for items 2-8** directly
+one implementation brief — see **Implementation notes for items 1-7** directly
 below the table, which carries the anchors, the proposed code, the per-item
 tripwire and the spec impact. Read that brief and the fences at its end before
 picking any of them up.
 
 | # | Item | Why now, and what it depends on |
 |---|---|---|
-| 1 | **`to_collection()`'s private `_C` TypeVar in a public signature.** `to_collection(collection_supplier: Supplier[_C]) -> Collector[Any, _C, _C]` is the one public collector signature still naming a private type. It was left alone deliberately when the other 18 factories widened their accumulator parameter to `Any` on 2026-08-21, because here `A` genuinely *is* the caller's own container type rather than an internal box — widening it to `Any` would throw away real information. | Small and independent. The question is not whether to widen it but whether `_C` (and its bound, the private `_SupportsAdd` protocol) should move to `type.py`, where the project's convention puts shared callable/composite types. A caller never writes `_C` — the checker infers it — so it was lower-value than the two items it shared the **Now** bucket with (both now in **Done**), and it is the last survivor of that batch rather than the most pressing thing here. |
-| 2 | **Route every terminal through `_evaluate()`.** Its docstring (`stream.py:112-116`) calls itself "the one place a stream's execution mode is consulted", but two terminals bypass it and hand-roll the body: `for_each_ordered()` (`stream.py:292-294`) and `find_first()` (`stream.py:300-305`) each call `self._check_not_consumed()` and then `SEQUENTIAL.value(self._chain, self._stream, sink)` directly. So there are three drive sites, not one, and `self._chain, self._stream` is spelled out at each. Give `_evaluate()` an optional `executor` parameter and let those two pass `SEQUENTIAL`. | **The highest-value of the batch**, because it is the one that makes a false comment true: a reader who trusts the docstring and traces terminals through `_evaluate()` will never find the ordered pair. Fixing it turns "which executor runs this terminal" into a single readable route with the override visible as an argument at the call site rather than as a different call. Independent of items 3 and 4, which touch the same file but different methods — do this one first if taking more than one, since it is the one the other two read against. |
-| 3 | **One copier behind `_derive()` and `_derive_executor()`.** `stream.py:99-106` and `stream.py:132-137` are line-for-line the same five-field copy, differing only in whether `_chain` or `_executor` is the field that varies. Two copies of a copy-constructor is where a future sixth field gets added to one and not the other. | Small, mechanical, and it protects an invariant that is currently maintained by hand across two bodies: an op-derived stream and a mode-switched stream must carry the same source, close handlers, ordering flag and consumed semantics. The `_derive_executor()` docstring ("must not compose", "must not assign onto self") is the load-bearing part and must survive the merge — move it onto `parallel()`/`sequential()` rather than deleting it with the method. |
-| 4 | **Rename `Stream._stream` to `Stream._source`.** `stream.py:88` names the normalized source `self._stream`, while every function in `execution.py` that receives it names the same value `source` (`stream_through`, `race_through`, `feed_through`, `_guarded`). Reading `self._executor.elements(self._chain, self._stream)` you have to stop and work out whether `_stream` is the raw source or something already composed. | Pure private rename with the widest read-benefit per line changed: after it, every call site reads as the `(chain, source)` pair the three execution primitives already take. **No test touches `._stream`** (verified 2026-08-24: zero hits across `tests/`), so this one is fully test-invisible and the usual tripwire applies cleanly. |
-| 5 | **`StatefulOp(StatelessOp)` — the docstring argues against its own base class.** `sink.py:90-106` spends a paragraph explaining that a stateful op is *not* a kind of stateless one and that the inheritance is "a mechanical convenience". The two share `__init__` and the `_sink_cls` declaration and differ only in `link()`. A neutral base holding those two, with `StatelessOp` (`sink.py:72`) and `StatefulOp` as siblings, deletes the disclaimer. | When a class docstring has to disclaim its own hierarchy, the hierarchy is the thing misleading the reader. This is the same shape of finding as the two items archived on 2026-08-24 — structure that organizes nothing — at a smaller scale. **Both public-ish names must be kept**: `tests/test_sink.py:8-10` imports `StatelessOp` and `StatefulOp` and subclasses both (`test_sink.py:265+`), so adding a base underneath them is test-invisible while renaming either is not. |
-| 6 | **The `IllegalStateException` message describes a state the code cannot be in.** `stream.py:97` reads "this stream has already been extended into a new instance **or terminally consumed**", but `_consumed = True` is set only by the two derive paths — and `pipeline-immutability` spec line 51 explicitly *requires* that a merely-terminally-consumed stream stay usable. `terminal-sinks` spec line 38 already words the scenario as "has already been extended into a new instance", with no "or terminally consumed". | A one-line fix with a real debugging cost behind it: anyone hitting this exception will go looking for the terminal call that set the flag and find that none exists. The trim brings the message into line with the two specs rather than away from them. No test asserts the message text (verified 2026-08-24 — the eight `pytest.raises(IllegalStateException)` sites across `test_pipeline_immutability.py` and `test_execution_model.py` all match on type only). |
-| 7 | **Module docstrings for `execution.py`, `sink.py` and `ops.py`.** All three open straight into imports. They are the three files a reader has to hold in their head at once, and the map that explains how they fit lives only in `CLAUDE.md`. | The map should be where a reader opening the file will hit it, not only in a file they may never open. Four or five lines each: `execution.py` — the four primitives and the two executors, and that `Sequential.value()`'s override is the one asymmetry; `sink.py` — the op/sink pair and the `begin`/`accept`/`end` protocol; `ops.py` — one `Op` plus one `Sink` per intermediate operation, and no execution logic. Do **not** restate what the per-class docstrings already say; these are orientation, not summary. |
-| 8 | **Three unrelated smalls, batchable as one commit.** (a) `unordered()` (`stream.py:149`) and `on_close()` (`stream.py:156`) mutate and return `self` while all eight intermediates derive-and-consume; this is deliberate and specified (`stream-ordering` spec, and `pipeline-immutability` spec line 58 for `on_close`) but nothing in the code says so. (b) `stream.py:10` re-exports `PROCESSES` (`from snakestream.execution import PROCESSES as PROCESSES`) although `stream.py` never uses it and `snakestream/__init__.py` does not export it — public by accident of import path, while README documents it as public. (c) `collector.py:1-4` carries four `# pylint: disable=missing-*-docstring` pragmas that no longer match how documented that file is. | Each is a line or two and none is worth its own commit. (a) is the one with actual risk attached — without a note, a future reader "fixes" the inconsistency and breaks a specified contract; a one-line docstring on each method pointing at the requirement is the whole fix. (b) needs a decision, not just an edit: either export `PROCESSES` from `snakestream/__init__.py` to match the README, or drop the re-export and have README name `snakestream.execution.PROCESSES`. (c) is a check-then-delete: confirm `ruff`'s configured rule set makes them dead before removing. |
+| 1 | **Route every terminal through `_evaluate()`.** Its docstring (`stream.py:112-116`) calls itself "the one place a stream's execution mode is consulted", but two terminals bypass it and hand-roll the body: `for_each_ordered()` (`stream.py:292-294`) and `find_first()` (`stream.py:300-305`) each call `self._check_not_consumed()` and then `SEQUENTIAL.value(self._chain, self._stream, sink)` directly. So there are three drive sites, not one, and `self._chain, self._stream` is spelled out at each. Give `_evaluate()` an optional `executor` parameter and let those two pass `SEQUENTIAL`. | **The highest-value of the batch**, because it is the one that makes a false comment true: a reader who trusts the docstring and traces terminals through `_evaluate()` will never find the ordered pair. Fixing it turns "which executor runs this terminal" into a single readable route with the override visible as an argument at the call site rather than as a different call. Independent of items 2 and 3, which touch the same file but different methods — do this one first if taking more than one, since it is the one the other two read against. |
+| 2 | **One copier behind `_derive()` and `_derive_executor()`.** `stream.py:99-106` and `stream.py:132-137` are line-for-line the same five-field copy, differing only in whether `_chain` or `_executor` is the field that varies. Two copies of a copy-constructor is where a future sixth field gets added to one and not the other. | Small, mechanical, and it protects an invariant that is currently maintained by hand across two bodies: an op-derived stream and a mode-switched stream must carry the same source, close handlers, ordering flag and consumed semantics. The `_derive_executor()` docstring ("must not compose", "must not assign onto self") is the load-bearing part and must survive the merge — move it onto `parallel()`/`sequential()` rather than deleting it with the method. |
+| 3 | **Rename `Stream._stream` to `Stream._source`.** `stream.py:88` names the normalized source `self._stream`, while every function in `execution.py` that receives it names the same value `source` (`stream_through`, `race_through`, `feed_through`, `_guarded`). Reading `self._executor.elements(self._chain, self._stream)` you have to stop and work out whether `_stream` is the raw source or something already composed. | Pure private rename with the widest read-benefit per line changed: after it, every call site reads as the `(chain, source)` pair the three execution primitives already take. **No test touches `._stream`** (verified 2026-08-24: zero hits across `tests/`), so this one is fully test-invisible and the usual tripwire applies cleanly. |
+| 4 | **`StatefulOp(StatelessOp)` — the docstring argues against its own base class.** `sink.py:90-106` spends a paragraph explaining that a stateful op is *not* a kind of stateless one and that the inheritance is "a mechanical convenience". The two share `__init__` and the `_sink_cls` declaration and differ only in `link()`. A neutral base holding those two, with `StatelessOp` (`sink.py:72`) and `StatefulOp` as siblings, deletes the disclaimer. | When a class docstring has to disclaim its own hierarchy, the hierarchy is the thing misleading the reader. This is the same shape of finding as the two items archived on 2026-08-24 — structure that organizes nothing — at a smaller scale. **Both public-ish names must be kept**: `tests/test_sink.py:8-10` imports `StatelessOp` and `StatefulOp` and subclasses both (`test_sink.py:265+`), so adding a base underneath them is test-invisible while renaming either is not. |
+| 5 | **The `IllegalStateException` message describes a state the code cannot be in.** `stream.py:97` reads "this stream has already been extended into a new instance **or terminally consumed**", but `_consumed = True` is set only by the two derive paths — and `pipeline-immutability` spec line 51 explicitly *requires* that a merely-terminally-consumed stream stay usable. `terminal-sinks` spec line 38 already words the scenario as "has already been extended into a new instance", with no "or terminally consumed". | A one-line fix with a real debugging cost behind it: anyone hitting this exception will go looking for the terminal call that set the flag and find that none exists. The trim brings the message into line with the two specs rather than away from them. No test asserts the message text (verified 2026-08-24 — the eight `pytest.raises(IllegalStateException)` sites across `test_pipeline_immutability.py` and `test_execution_model.py` all match on type only). |
+| 6 | **Module docstrings for `execution.py`, `sink.py` and `ops.py`.** All three open straight into imports. They are the three files a reader has to hold in their head at once, and the map that explains how they fit lives only in `CLAUDE.md`. | The map should be where a reader opening the file will hit it, not only in a file they may never open. Four or five lines each: `execution.py` — the four primitives and the two executors, and that `Sequential.value()`'s override is the one asymmetry; `sink.py` — the op/sink pair and the `begin`/`accept`/`end` protocol; `ops.py` — one `Op` plus one `Sink` per intermediate operation, and no execution logic. Do **not** restate what the per-class docstrings already say; these are orientation, not summary. |
+| 7 | **Three unrelated smalls, batchable as one commit.** (a) `unordered()` (`stream.py:149`) and `on_close()` (`stream.py:156`) mutate and return `self` while all eight intermediates derive-and-consume; this is deliberate and specified (`stream-ordering` spec, and `pipeline-immutability` spec line 58 for `on_close`) but nothing in the code says so. (b) `stream.py:10` re-exports `PROCESSES` (`from snakestream.execution import PROCESSES as PROCESSES`) although `stream.py` never uses it and `snakestream/__init__.py` does not export it — public by accident of import path, while README documents it as public. (c) `collector.py:1-4` carries four `# pylint: disable=missing-*-docstring` pragmas that no longer match how documented that file is. | Each is a line or two and none is worth its own commit. (a) is the one with actual risk attached — without a note, a future reader "fixes" the inconsistency and breaks a specified contract; a one-line docstring on each method pointing at the requirement is the whole fix. (b) needs a decision, not just an edit: either export `PROCESSES` from `snakestream/__init__.py` to match the README, or drop the re-export and have README name `snakestream.execution.PROCESSES`. (c) is a check-then-delete: confirm `ruff`'s configured rule set makes them dead before removing. |
 
-### Implementation notes for items 2-8
+### Implementation notes for items 1-7
 
 Shared brief for the 2026-08-24 batch. Line anchors are as of `a48f1aa` and
 will drift — the symbol names are the durable part.
@@ -52,8 +51,8 @@ will drift — the symbol names are the durable part.
 **The tripwire, for all seven:** none of these changes behaviour, so the full
 suite must pass **with no test file edited**. That is the same tripwire the
 `ParallelStream` retirement carried and cleared, and it is the whole
-verification story for items 2, 3, 4, 6 and 7. Item 5 keeps `StatelessOp` and
-`StatefulOp` as importable names for the same reason. Item 8(b) is the one part of the batch that may legitimately touch a
+verification story for items 1, 2, 3, 5 and 6. Item 4 keeps `StatelessOp` and
+`StatefulOp` as importable names for the same reason. Item 7(b) is the one part of the batch that may legitimately touch a
 test, if the `PROCESSES` decision moves the exported name.
 
 **Benchmark gate: not required.** Every site in this batch runs once per
@@ -63,7 +62,7 @@ chain-building or drive-entry code. Do not spend a harness run on these unless
 something in the diff drifts onto the per-element path — if it does, that is a
 sign the change went wrong, not a reason to measure it.
 
-**Item 2, the proposed shape:**
+**Item 1, the proposed shape:**
 
 ```python
 async def _evaluate(self, terminal: TerminalSink[Any], executor: Executor | None = None) -> Any:
@@ -83,7 +82,7 @@ for its own drive", which passing `SEQUENTIAL` as an argument still satisfies �
 but if the sentence reads as naming the old call shape after the edit, nudge
 the wording. That is a direct spec edit, not a delta: no requirement changes.
 
-**Item 3, the proposed shape** — one copier taking both varying fields:
+**Item 2, the proposed shape** — one copier taking both varying fields:
 
 ```python
 def _derive(self, chain: list[Op], executor: Executor) -> Stream[Any]:
@@ -104,9 +103,9 @@ constraint the current code already has and the merge must preserve:
 `_check_not_consumed()` runs **before** the copy, and `self._consumed = True`
 is set **after** it, so a raising copy leaves the receiver valid.
 
-**Items 2, 3 and 4 are best taken as one commit** if more than one is taken:
+**Items 1, 2 and 3 are best taken as one commit** if more than one is taken:
 they touch adjacent private plumbing in the same file, and a reader reviewing
-them separately would read the same six methods three times. Items 5, 7 and 8
+them separately would read the same six methods three times. Items 4, 6 and 7
 are independent of that group and of each other.
 
 **Fences — do not let this batch drift into already-rejected territory.** All
@@ -127,12 +126,12 @@ figures:
 
 ## Next
 
-Empty as of 2026-08-24. All eight **Now** items are independent of each other,
+Empty as of 2026-08-24. All seven **Now** items are independent of each other,
 so none of them is waiting on another to be promoted; **Later** is parked behind
 explicit decisions rather than sequencing, so there is nothing to pull up from
-there either. Note that **Now** is deliberately eight small items rather than a
-prioritized queue — items 2-8 are a single afternoon's batch, and finishing them
-empties the bucket down to item 1.
+there either. Note that **Now** is deliberately seven small items rather than a
+prioritized queue — they are a single afternoon's batch, and finishing them
+empties the bucket.
 
 ## Later
 
@@ -148,6 +147,26 @@ core semantic.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should instead be documented as intentional next to the `str`/`bytes` note. Surfaced 2026-08-20 in the same code-quality read that produced **Now** items 1-4. |
 
 ## Done
+
+- **Moved `to_collection()`'s private `_C` TypeVar and `_SupportsAdd`
+  protocol from `collector.py` to `type.py`** (2026-08-24). The last public
+  collector signature naming a type outside `type.py`, the project's
+  established home for shared callable/composite type aliases —
+  `to_collection(collection_supplier: Supplier[_C]) -> Collector[Any, _C,
+  _C]` kept `_C`/`_SupportsAdd` defined locally instead. Deliberately left
+  alone on 2026-08-21 when the other 18 collector factories widened their
+  accumulator parameter to `Any`, because here `A` genuinely is the caller's
+  own container type rather than an internal box, so `_C` had to move rather
+  than be erased.
+
+  Pure relocation, both names moved together as a pair since `_C`'s bound is
+  `_SupportsAdd`: `to_collection`'s signature and behavior are unchanged, and
+  both stay private (leading underscore) and unexported — a caller never
+  writes `_C` themselves, the checker infers it. Full suite green (535
+  tests) with **no test file edited**, `ruff`, `ty check src` and `openspec
+  validate --strict` all pass. `skip_specs: true`: no spec-level behavior
+  changed, only where two private type declarations live. See
+  `openspec/changes/archive/2026-08-24-move-to-collection-typevar-to-type-module`.
 
 - **Collapsed `BaseStream` into `Stream`; `base_stream.py` is gone**
   (2026-08-24). The split existed because Java needs `BaseStream` as the shared

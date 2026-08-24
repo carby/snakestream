@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from inspect import isawaitable
-from typing import Any, Generic, NamedTuple, Protocol, TypeVar, cast, overload
+from typing import Any, Generic, NamedTuple, cast, overload
 from collections.abc import AsyncGenerator, Awaitable, Callable
 
 from snakestream.execution import _maybe_aclosing
@@ -27,6 +27,7 @@ from snakestream.type import (
     NumberMapper,
     Predicate,
     Supplier,
+    _C,
 )
 
 
@@ -650,13 +651,6 @@ def collecting_and_then(downstream: Collector[T, Any, R], finisher: Finisher[R, 
         return _finish_collecting_and_then(downstream, finisher, container.container)
 
     return Collector(_supply, _accumulate, finisher=_finish)
-
-
-class _SupportsAdd(Protocol):
-    def add(self, item: Any) -> Any: ...
-
-
-_C = TypeVar("_C", bound=_SupportsAdd)
 
 
 def to_collection(collection_supplier: Supplier[_C]) -> Collector[Any, _C, _C]:
