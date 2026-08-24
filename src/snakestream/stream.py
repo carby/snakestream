@@ -85,7 +85,7 @@ async def _concat(a: Stream, b: Stream) -> AsyncGenerator:
 
 class Stream(Generic[T]):
     def __init__(self, source: Any, close_handlers: list[CloseHandler] | None = None) -> None:
-        self._stream: AsyncGenerator[T, None] = _accept(source) or _normalize(source)
+        self._source: AsyncGenerator[T, None] = _accept(source) or _normalize(source)
         self._chain: list[Op] = []
         self._close_handlers: list[CloseHandler] = [] if close_handlers is None else close_handlers
         self._ordered: bool = True
@@ -98,7 +98,7 @@ class Stream(Generic[T]):
 
     def _derive(self, chain: list[Op], executor: Executor) -> Stream[Any]:
         self._check_not_consumed()
-        new_stream = type(self)(self._stream, self._close_handlers)
+        new_stream = type(self)(self._source, self._close_handlers)
         new_stream._chain = chain
         new_stream._ordered = self._ordered
         new_stream._executor = executor
@@ -107,14 +107,14 @@ class Stream(Generic[T]):
 
     def _compose(self) -> AsyncGenerator[T, None]:
         """The chain as a generator, under this stream's executor."""
-        return self._executor.elements(self._chain, self._stream)
+        return self._executor.elements(self._chain, self._source)
 
     async def _evaluate(self, terminal: TerminalSink[Any], executor: Executor | None = None) -> Any:
         """The chain driven into a terminal sink. The one place a stream's
         execution mode is consulted; a terminal that needs encounter order
         regardless of the stream's mode passes SEQUENTIAL itself."""
         self._check_not_consumed()
-        return await (executor or self._executor).value(self._chain, self._stream, terminal)
+        return await (executor or self._executor).value(self._chain, self._source, terminal)
 
     def sequential(self) -> Stream[T]:
         """A mode switch: a new stream over the SAME source and the SAME queued
