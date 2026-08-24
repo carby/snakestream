@@ -16,7 +16,7 @@ value rather than a class hierarchy, `summing_int`/`summing_long` sharing a body
 
 ## Now
 
-Two items, none blocking any other.
+One item.
 
 The item that remained of the three the executor-value change opened on
 2026-08-21 — `to_collection()`'s private `_C` TypeVar — landed on 2026-08-24
@@ -31,25 +31,24 @@ to `Stream._source`", has also landed and moved to **Done**. Former item 1 of
 the remaining four, extracting a neutral base class for `StatelessOp`/
 `StatefulOp`, has also landed and moved to **Done**. Former item 1 of the
 remaining three, the `IllegalStateException` message trim, has also landed
-and moved to **Done**; the remaining two items below are renumbered 1-2
-accordingly.
+and moved to **Done**. Former item 1 of the remaining two, the module
+docstrings for `execution.py`, `sink.py` and `ops.py`, has also landed and
+moved to **Done**; the remaining item below is renumbered 1 accordingly.
 
-Items 1-2 came out of a legibility read of the execution path on 2026-08-24
+Item 1 came out of a legibility read of the execution path on 2026-08-24
 (`stream.py`, `execution.py`, `sink.py`, `ops.py`, `terminals.py`,
 `callable_dispatch.py`, at `a48f1aa`, immediately after the first two of that
-batch landed). Both are off the per-element path, so neither faces the
-benchmark gate; both are private-surface only, so neither changes the public
-API. They share one implementation brief — see **Implementation notes for
-items 1-2** directly below the table, which carries the anchors, the proposed
-code, the per-item tripwire and the spec impact. Read that brief and the
-fences at its end before picking either of them up.
+batch landed). It is off the per-element path, so it does not face the
+benchmark gate; it is private-surface only, so it does not change the public
+API. See **Implementation notes for item 1** directly below the table, which
+carries the anchors, the proposed code, the tripwire and the spec impact.
+Read that brief and the fences at its end before picking it up.
 
 | # | Item | Why now, and what it depends on |
 |---|---|---|
-| 1 | **Module docstrings for `execution.py`, `sink.py` and `ops.py`.** All three open straight into imports. They are the three files a reader has to hold in their head at once, and the map that explains how they fit lives only in `CLAUDE.md`. | The map should be where a reader opening the file will hit it, not only in a file they may never open. Four or five lines each: `execution.py` — the four primitives and the two executors, and that `Sequential.value()`'s override is the one asymmetry; `sink.py` — the op/sink pair and the `begin`/`accept`/`end` protocol; `ops.py` — one `Op` plus one `Sink` per intermediate operation, and no execution logic. Do **not** restate what the per-class docstrings already say; these are orientation, not summary. |
-| 2 | **Three unrelated smalls, batchable as one commit.** (a) `unordered()` (`stream.py:149`) and `on_close()` (`stream.py:156`) mutate and return `self` while all eight intermediates derive-and-consume; this is deliberate and specified (`stream-ordering` spec, and `pipeline-immutability` spec line 58 for `on_close`) but nothing in the code says so. (b) `stream.py:10` re-exports `PROCESSES` (`from snakestream.execution import PROCESSES as PROCESSES`) although `stream.py` never uses it and `snakestream/__init__.py` does not export it — public by accident of import path, while README documents it as public. (c) `collector.py:1-4` carries four `# pylint: disable=missing-*-docstring` pragmas that no longer match how documented that file is. | Each is a line or two and none is worth its own commit. (a) is the one with actual risk attached — without a note, a future reader "fixes" the inconsistency and breaks a specified contract; a one-line docstring on each method pointing at the requirement is the whole fix. (b) needs a decision, not just an edit: either export `PROCESSES` from `snakestream/__init__.py` to match the README, or drop the re-export and have README name `snakestream.execution.PROCESSES`. (c) is a check-then-delete: confirm `ruff`'s configured rule set makes them dead before removing. |
+| 1 | **Three unrelated smalls, batchable as one commit.** (a) `unordered()` (`stream.py:149`) and `on_close()` (`stream.py:156`) mutate and return `self` while all eight intermediates derive-and-consume; this is deliberate and specified (`stream-ordering` spec, and `pipeline-immutability` spec line 58 for `on_close`) but nothing in the code says so. (b) `stream.py:10` re-exports `PROCESSES` (`from snakestream.execution import PROCESSES as PROCESSES`) although `stream.py` never uses it and `snakestream/__init__.py` does not export it — public by accident of import path, while README documents it as public. (c) `collector.py:1-4` carries four `# pylint: disable=missing-*-docstring` pragmas that no longer match how documented that file is. | Each is a line or two and none is worth its own commit. (a) is the one with actual risk attached — without a note, a future reader "fixes" the inconsistency and breaks a specified contract; a one-line docstring on each method pointing at the requirement is the whole fix. (b) needs a decision, not just an edit: either export `PROCESSES` from `snakestream/__init__.py` to match the README, or drop the re-export and have README name `snakestream.execution.PROCESSES`. (c) is a check-then-delete: confirm `ruff`'s configured rule set makes them dead before removing. |
 
-### Implementation notes for items 1-2
+### Implementation notes for item 1
 
 Shared brief for the 2026-08-24 batch. Line anchors are as of `a48f1aa` and
 will drift — the symbol names are the durable part. Item numbers below are
@@ -57,37 +56,36 @@ post-renumbering (former item 1, "route every terminal through `_evaluate()`",
 former item 2, "one copier behind `_derive()` and `_derive_executor()`",
 former item 3, "rename `Stream._stream` to `Stream._source`", former item 1 of
 the following four, "extract a neutral base class for
-`StatelessOp`/`StatefulOp`", and former item 1 of the following three, "the
-`IllegalStateException` message trim", all landed and moved to **Done**; the
-unified `_derive(chain, executor)` shape the second introduced, the `(chain,
-source)` naming the third introduced, and the `_ArgsOp` base the fourth
-introduced, are now what every other item's call-site reasoning assumes).
+`StatelessOp`/`StatefulOp`", former item 1 of the following three, "the
+`IllegalStateException` message trim", and former item 1 of the following
+two, "module docstrings for `execution.py`, `sink.py` and `ops.py`", all
+landed and moved to **Done**; the unified `_derive(chain, executor)` shape
+the second introduced, the `(chain, source)` naming the third introduced,
+and the `_ArgsOp` base the fourth introduced, are now what every other
+item's call-site reasoning assumes).
 
-**The tripwire, for both:** neither of these changes behaviour, so the full
-suite must pass **with no test file edited**. That is the same tripwire the
-`ParallelStream` retirement carried and cleared. Item 2(b) is the one part of
-the batch that may legitimately touch a test, if the `PROCESSES` decision
+**The tripwire:** this does not change behaviour, so the full suite must
+pass **with no test file edited**. That is the same tripwire the
+`ParallelStream` retirement carried and cleared. Item 1(b) is the one part
+of the batch that may legitimately touch a test, if the `PROCESSES` decision
 moves the exported name.
 
 **Benchmark gate: not required.** Every site in this batch runs once per
-composition or once per stream construction, never per element. `_derive()`,
-`_evaluate()` and the op constructors are all chain-building or drive-entry
-code. Do not spend a harness run on these unless something in the diff drifts
-onto the per-element path — if it does, that is a sign the change went wrong,
-not a reason to measure it.
-
-**Items 1-2 are independent of each other.**
+composition or once per stream construction, never per element. Do not
+spend a harness run on this unless something in the diff drifts onto the
+per-element path — if it does, that is a sign the change went wrong, not a
+reason to measure it.
 
 **Fences — do not let this batch drift into already-rejected territory.** All
 three of these were killed on measurement and are recorded in **Done** with
 figures:
 
-- Do **not** collapse the duplicated async-dispatch shape while adding module
-  docstrings to `sink.py`/`ops.py`. The `CallSite` proposal was rejected at
+- Do **not** collapse the duplicated async-dispatch shape while touching
+  `sink.py`/`ops.py` for item 1. The `CallSite` proposal was rejected at
   +32%/+75% per element; the canonical-shape comment in `callable_dispatch.py`
   is load-bearing documentation, not a smell.
 - Do **not** dedup `stream_through()`'s bridge-buffer flush against
-  `_copy_into()`'s loop while writing `execution.py`'s module docstring. The
+  `_copy_into()`'s loop while touching `execution.py` for item 1. The
   two loops differ because one yields, and the flush dedup is explicitly
   fenced ("do not re-propose without new figures").
 - Do **not** route `count`/`reduce`/`min`/`max` through the equivalent
@@ -96,12 +94,10 @@ figures:
 
 ## Next
 
-Empty as of 2026-08-24. Both **Now** items are independent of each other,
-so neither is waiting on the other to be promoted; **Later** is parked behind
-explicit decisions rather than sequencing, so there is nothing to pull up from
-there either. Note that **Now** is deliberately two small items rather than a
-prioritized queue — they are the residue of a single afternoon's batch (five of
-the original seven have already landed), and finishing them empties the bucket.
+Empty as of 2026-08-24. **Later** is parked behind explicit decisions rather
+than sequencing, so there is nothing to pull up from there. Note that **Now**
+is the last item of a single afternoon's batch (six of the original seven
+have already landed), and finishing it empties the bucket.
 
 ## Later
 
@@ -117,6 +113,30 @@ core semantic.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should instead be documented as intentional next to the `str`/`bytes` note. Surfaced 2026-08-20 in the same code-quality read that produced **Now** items 1-4. |
 
 ## Done
+
+- **Added module docstrings to `execution.py`, `sink.py` and `ops.py`**
+  (2026-08-24). All three opened straight into imports; the map that
+  explains how the chain-of-ops model executes — the four execution
+  primitives and the two executors, the op/sink `begin`/`accept`/`end`
+  protocol, one `Op`/`Sink` pair per intermediate operation — lived only in
+  `CLAUDE.md`, a file a reader opening any of the three directly might never
+  see.
+
+  Each docstring is four or five lines and orientation only, not a
+  restatement of what the per-class docstrings in the same file already
+  say: `execution.py` names `stream_through`/`race_through`/`feed_through`/
+  `drain` and `Sequential`/`Racing`, and points at `Sequential.value()`'s
+  docstring for the fused-push figures rather than repeating them;
+  `sink.py` names the `Sink` protocol and the shapes built on it;
+  `ops.py` states it holds no execution logic, which lives in
+  `execution.py`.
+
+  Pure documentation, `skip_specs: true`: no spec-level behavior changed,
+  only what a reader sees before the imports. 535 tests green with **no
+  test file edited**; `ruff`, `ruff format --check` and `ty check src` all
+  pass. Off the per-element path (docstrings are read, never executed), so
+  no benchmark gate applied. See
+  `openspec/changes/add-execution-module-docstrings`.
 
 - **Trimmed the `IllegalStateException` message to drop "or terminally
   consumed"** (2026-08-24). `stream.py:97` read "this stream has already been

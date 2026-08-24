@@ -1,3 +1,8 @@
+"""One Op plus one Sink per intermediate operation - filter, map, peek,
+sorted, flat_map, distinct, limit, skip - built on the Op/Sink protocol
+sink.py defines. No execution logic lives here: how a chain of these gets
+driven, sequentially or racing, is execution.py's job."""
+
 from __future__ import annotations
 
 from contextlib import aclosing

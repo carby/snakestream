@@ -1,3 +1,11 @@
+"""The Op/Sink pair: an Op sits in a stream's chain and builds the Sink that
+does the per-element work once it is linked into a chain. A Sink implements
+one push protocol - begin(state_map), accept(element), end() - plus a
+synchronous cancellation_requested() query a driving loop polls to stop
+early. IntermediateSink, StatefulSink, TerminalSink and GeneratorBridgeSink
+are the shapes that protocol comes in; ops.py builds one Op/Sink pair per
+intermediate operation on top of them."""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
