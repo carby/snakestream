@@ -1,3 +1,4 @@
+from snakestream.execution import PROCESSES as PROCESSES
 from snakestream.stream import Stream as Stream
 from importlib.metadata import PackageNotFoundError, version  # pragma: no cover
 

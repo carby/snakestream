@@ -149,6 +149,8 @@ class Stream(Generic[T]):
         return self._compose()
 
     def unordered(self) -> Stream[T]:
+        """Mutates and returns self, unlike the eight derive-and-consume
+        intermediate ops - deliberate, per the stream-ordering spec."""
         self._ordered = False
         return self
 
@@ -156,6 +158,8 @@ class Stream(Generic[T]):
         return self._ordered
 
     def on_close(self, close_handler: CloseHandler) -> Stream[T]:
+        """Mutates and returns self, unlike the eight derive-and-consume
+        intermediate ops - deliberate, per pipeline-immutability spec line 58."""
         self._close_handlers.append(close_handler)
         return self
 
