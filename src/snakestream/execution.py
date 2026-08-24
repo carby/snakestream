@@ -1,3 +1,13 @@
+"""How a composed chain actually runs. Four primitives do the work:
+stream_through() (push in, pull out, lazily), race_through() (N branches
+racing one shared source), feed_through() (fused push straight to a
+terminal, nothing buffered) and drain() (any generator into a terminal).
+Two Executor values sit on top: Sequential.elements() and Racing.elements()
+each pick a primitive; Sequential.value() is the one asymmetry in the
+protocol, overriding the generic drain(elements(...), terminal) with
+feed_through() because composing-then-draining measured far more
+expensive per element (see its own docstring for the figures)."""
+
 from __future__ import annotations
 
 import asyncio
