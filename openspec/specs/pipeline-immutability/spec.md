@@ -1,11 +1,11 @@
 ## Purpose
 
-Defines the contract for treating `Stream`/`ParallelStream` instances as immutable, single-use references once they have been extended: intermediate operations and mode switches (`sequential()`/`parallel()`) return a new instance carrying the extended chain rather than mutating and returning the receiver, and the superseded receiver is invalidated so it can no longer be used to build or terminally consume a pipeline. Lifecycle operations (`on_close()`/`close()`) are exempt from this invalidation, and repeat terminal consumption of a reference that was never extended remains governed by the existing `pipeline-composition` chain-recomposition contract.
+Defines the contract for treating stream instances as immutable, single-use references once they have been extended: intermediate operations and mode switches (`sequential()`/`parallel()`) return a new instance carrying the extended chain rather than mutating and returning the receiver, and the superseded receiver is invalidated so it can no longer be used to build or terminally consume a pipeline. Lifecycle operations (`on_close()`/`close()`) are exempt from this invalidation, and repeat terminal consumption of a reference that was never extended remains governed by the existing `pipeline-composition` chain-recomposition contract.
 
 ## Requirements
 
 ### Requirement: Intermediate ops return a new instance
-`Stream`'s intermediate operations (`map`, `filter`, `flat_map`, `sorted`, `distinct`, `peek`, `limit`, `skip`) SHALL return a new `Stream`/`ParallelStream` instance carrying the extended chain, rather than mutating and returning the receiver.
+`Stream`'s intermediate operations (`map`, `filter`, `flat_map`, `sorted`, `distinct`, `peek`, `limit`, `skip`) SHALL return a new `Stream` instance carrying the extended chain, rather than mutating and returning the receiver.
 
 #### Scenario: map() returns a distinct object
 - **WHEN** `s2 = s.map(f)` is called on a `Stream` instance `s`

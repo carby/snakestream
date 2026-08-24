@@ -1,6 +1,6 @@
 ## Purpose
 
-Defines the contract for `Stream.collect(supplier, accumulator, combiner)`, the 3-arg mutable-reduction overload of `collect()` that builds a result container directly from a supplier/accumulator pair, mirroring Java's `Stream.collect(Supplier<R>, BiConsumer<R,? super T>, BiConsumer<R,R>)`. Exists alongside, and does not change, the existing single-arg `collect(collector)` form. Applies identically to `Stream` (sequential) and `ParallelStream` (parallel) composition.
+Defines the contract for `Stream.collect(supplier, accumulator, combiner)`, the 3-arg mutable-reduction overload of `collect()` that builds a result container directly from a supplier/accumulator pair, mirroring Java's `Stream.collect(Supplier<R>, BiConsumer<R,? super T>, BiConsumer<R,R>)`. Exists alongside, and does not change, the existing single-arg `collect(collector)` form. Applies identically under `SEQUENTIAL` and `RACING` execution.
 
 ## Requirements
 

@@ -1,6 +1,6 @@
 ## Purpose
 
-Defines the contract for `Stream.for_each_ordered(consumer)`, an ordered variant of `for_each()` that guarantees the consumer is invoked in the stream's encounter order, even when called on a `ParallelStream` instance whose racing-branch execution model does not otherwise preserve order. Mirrors Java's `Stream.forEachOrdered()`.
+Defines the contract for `Stream.for_each_ordered(consumer)`, an ordered variant of `for_each()` that guarantees the consumer is invoked in the stream's encounter order, even under `RACING` execution whose racing-branch execution model does not otherwise preserve order. Mirrors Java's `Stream.forEachOrdered()`.
 
 ## Requirements
 
@@ -15,13 +15,13 @@ Defines the contract for `Stream.for_each_ordered(consumer)`, an ordered variant
 - **WHEN** `for_each_ordered()` is called with a synchronous consumer, and separately with an `async def` consumer
 - **THEN** both invocations complete successfully, each consumer call awaited if it returns an awaitable, matching `for_each()`'s existing sync/async dispatch convention
 
-### Requirement: for_each_ordered() preserves encounter order on ParallelStream
-`Stream.for_each_ordered(consumer)`, when called on a `ParallelStream` instance, SHALL invoke `consumer` in the stream's encounter order, even though `ParallelStream._compose()`'s racing-branch execution model does not itself preserve order and `for_each()` on the same instance makes no such guarantee.
+### Requirement: for_each_ordered() preserves encounter order under RACING execution
+`Stream.for_each_ordered(consumer)`, when called on a stream whose executor is `RACING` (i.e. `.parallel()` was the last mode switch before this call), SHALL invoke `consumer` in the stream's encounter order, even though `RACING`'s branch-racing execution does not itself preserve order and `for_each()` on the same stream makes no such guarantee.
 
-#### Scenario: ParallelStream yields ordered results via for_each_ordered
-- **WHEN** a `ParallelStream` built from an ordered source (e.g. `Stream.of([1, 2, 3, 4]).parallel()`) has `.for_each_ordered(consumer)` called on it
-- **THEN** `consumer` is invoked with `1`, then `2`, then `3`, then `4`, in that order — the same order `for_each_ordered()` would produce on the equivalent sequential `Stream`
+#### Scenario: A RACING stream yields ordered results via for_each_ordered
+- **WHEN** a stream built from an ordered source and switched to `RACING` execution (e.g. `Stream.of([1, 2, 3, 4]).parallel()`) has `.for_each_ordered(consumer)` called on it
+- **THEN** `consumer` is invoked with `1`, then `2`, then `3`, then `4`, in that order — the same order `for_each_ordered()` would produce on the equivalent `SEQUENTIAL` stream
 
 #### Scenario: for_each_ordered does not alter for_each's behavior
-- **WHEN** `for_each()` is called on a `ParallelStream` (unrelated to any `for_each_ordered()` call)
+- **WHEN** `for_each()` is called on a stream using `RACING` execution (unrelated to any `for_each_ordered()` call)
 - **THEN** `for_each()`'s existing unordered-completion behavior is unchanged

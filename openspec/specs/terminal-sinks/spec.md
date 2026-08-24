@@ -1,6 +1,6 @@
 ## Purpose
 
-Defines how a stream's terminal operations execute: as terminal sinks fed by the same push protocol the intermediate operations use, driven by a loop that pushes source elements through the chain and returns the terminal's finished result — rather than pulling elements out of a composed `AsyncGenerator`. Covers what a short-circuiting terminal is entitled to do (request cancellation so upstream operations stop), which terminals still go through a generator, and the ordered-drive variant that `for_each_ordered()` and an ordered `ParallelStream.find_first()` rely on.
+Defines how a stream's terminal operations execute: as terminal sinks fed by the same push protocol the intermediate operations use, driven by a loop that pushes source elements through the chain and returns the terminal's finished result — rather than pulling elements out of a composed `AsyncGenerator`. Covers what a short-circuiting terminal is entitled to do (request cancellation so upstream operations stop), which terminals still go through a generator, and the ordered-drive variant that `for_each_ordered()` and an ordered `find_first()` under `RACING` execution rely on.
 
 ## Requirements
 

@@ -19,8 +19,8 @@ Defines the contract for `Stream.to_array()`, a terminal operation aliasing `col
 - **WHEN** the same chain is terminated once with `to_array()` and once with `collect(to_list())`
 - **THEN** both calls return equal lists
 
-#### Scenario: Works on `ParallelStream`
-- **WHEN** `to_array()` is called on a parallel stream
+#### Scenario: Works under RACING execution
+- **WHEN** `to_array()` is called on a stream using `RACING` execution
 - **THEN** the result is a `list` containing all source elements (order not guaranteed, matching the racing executor's existing unordered semantics)
 
 ### Requirement: No `toArray(generator)` overload
