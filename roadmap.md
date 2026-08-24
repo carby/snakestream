@@ -16,7 +16,7 @@ value rather than a class hierarchy, `summing_int`/`summing_long` sharing a body
 
 ## Now
 
-Six items, none blocking any other.
+Five items, none blocking any other.
 
 The item that remained of the three the executor-value change opened on
 2026-08-21 — `to_collection()`'s private `_C` TypeVar — landed on 2026-08-24
@@ -24,75 +24,54 @@ alongside the other two from that batch (retiring the `ParallelStream` name,
 and collapsing `BaseStream` into `Stream`), and has moved to **Done**.
 
 Item 1 of the 2026-08-24 legibility batch — routing every terminal through
-`_evaluate()` — has also landed and moved to **Done**; the remaining six items
-below are renumbered 1-6 accordingly.
+`_evaluate()` — has also landed and moved to **Done**. Item 2 of that
+batch — merging `_derive()` and `_derive_executor()` into one copier — has
+also landed and moved to **Done**; the remaining five items below are
+renumbered 1-5 accordingly.
 
-Items 1-6 came out of a legibility read of the execution path on 2026-08-24
+Items 1-5 came out of a legibility read of the execution path on 2026-08-24
 (`stream.py`, `execution.py`, `sink.py`, `ops.py`, `terminals.py`,
 `callable_dispatch.py`, at `a48f1aa`, immediately after those two landed). All
-six are off the per-element path, so none of them faces the benchmark gate;
-all six are private-surface only, so none changes the public API. They share
-one implementation brief — see **Implementation notes for items 1-6** directly
+five are off the per-element path, so none of them faces the benchmark gate;
+all five are private-surface only, so none changes the public API. They share
+one implementation brief — see **Implementation notes for items 1-5** directly
 below the table, which carries the anchors, the proposed code, the per-item
 tripwire and the spec impact. Read that brief and the fences at its end before
 picking any of them up.
 
 | # | Item | Why now, and what it depends on |
 |---|---|---|
-| 1 | **One copier behind `_derive()` and `_derive_executor()`.** `stream.py:99-106` and `stream.py:132-137` are line-for-line the same five-field copy, differing only in whether `_chain` or `_executor` is the field that varies. Two copies of a copy-constructor is where a future sixth field gets added to one and not the other. | Small, mechanical, and it protects an invariant that is currently maintained by hand across two bodies: an op-derived stream and a mode-switched stream must carry the same source, close handlers, ordering flag and consumed semantics. The `_derive_executor()` docstring ("must not compose", "must not assign onto self") is the load-bearing part and must survive the merge — move it onto `parallel()`/`sequential()` rather than deleting it with the method. |
-| 2 | **Rename `Stream._stream` to `Stream._source`.** `stream.py:88` names the normalized source `self._stream`, while every function in `execution.py` that receives it names the same value `source` (`stream_through`, `race_through`, `feed_through`, `_guarded`). Reading `self._executor.elements(self._chain, self._stream)` you have to stop and work out whether `_stream` is the raw source or something already composed. | Pure private rename with the widest read-benefit per line changed: after it, every call site reads as the `(chain, source)` pair the three execution primitives already take. **No test touches `._stream`** (verified 2026-08-24: zero hits across `tests/`), so this one is fully test-invisible and the usual tripwire applies cleanly. |
-| 3 | **`StatefulOp(StatelessOp)` — the docstring argues against its own base class.** `sink.py:90-106` spends a paragraph explaining that a stateful op is *not* a kind of stateless one and that the inheritance is "a mechanical convenience". The two share `__init__` and the `_sink_cls` declaration and differ only in `link()`. A neutral base holding those two, with `StatelessOp` (`sink.py:72`) and `StatefulOp` as siblings, deletes the disclaimer. | When a class docstring has to disclaim its own hierarchy, the hierarchy is the thing misleading the reader. This is the same shape of finding as the two items archived on 2026-08-24 — structure that organizes nothing — at a smaller scale. **Both public-ish names must be kept**: `tests/test_sink.py:8-10` imports `StatelessOp` and `StatefulOp` and subclasses both (`test_sink.py:265+`), so adding a base underneath them is test-invisible while renaming either is not. |
-| 4 | **The `IllegalStateException` message describes a state the code cannot be in.** `stream.py:97` reads "this stream has already been extended into a new instance **or terminally consumed**", but `_consumed = True` is set only by the two derive paths — and `pipeline-immutability` spec line 51 explicitly *requires* that a merely-terminally-consumed stream stay usable. `terminal-sinks` spec line 38 already words the scenario as "has already been extended into a new instance", with no "or terminally consumed". | A one-line fix with a real debugging cost behind it: anyone hitting this exception will go looking for the terminal call that set the flag and find that none exists. The trim brings the message into line with the two specs rather than away from them. No test asserts the message text (verified 2026-08-24 — the eight `pytest.raises(IllegalStateException)` sites across `test_pipeline_immutability.py` and `test_execution_model.py` all match on type only). |
-| 5 | **Module docstrings for `execution.py`, `sink.py` and `ops.py`.** All three open straight into imports. They are the three files a reader has to hold in their head at once, and the map that explains how they fit lives only in `CLAUDE.md`. | The map should be where a reader opening the file will hit it, not only in a file they may never open. Four or five lines each: `execution.py` — the four primitives and the two executors, and that `Sequential.value()`'s override is the one asymmetry; `sink.py` — the op/sink pair and the `begin`/`accept`/`end` protocol; `ops.py` — one `Op` plus one `Sink` per intermediate operation, and no execution logic. Do **not** restate what the per-class docstrings already say; these are orientation, not summary. |
-| 6 | **Three unrelated smalls, batchable as one commit.** (a) `unordered()` (`stream.py:149`) and `on_close()` (`stream.py:156`) mutate and return `self` while all eight intermediates derive-and-consume; this is deliberate and specified (`stream-ordering` spec, and `pipeline-immutability` spec line 58 for `on_close`) but nothing in the code says so. (b) `stream.py:10` re-exports `PROCESSES` (`from snakestream.execution import PROCESSES as PROCESSES`) although `stream.py` never uses it and `snakestream/__init__.py` does not export it — public by accident of import path, while README documents it as public. (c) `collector.py:1-4` carries four `# pylint: disable=missing-*-docstring` pragmas that no longer match how documented that file is. | Each is a line or two and none is worth its own commit. (a) is the one with actual risk attached — without a note, a future reader "fixes" the inconsistency and breaks a specified contract; a one-line docstring on each method pointing at the requirement is the whole fix. (b) needs a decision, not just an edit: either export `PROCESSES` from `snakestream/__init__.py` to match the README, or drop the re-export and have README name `snakestream.execution.PROCESSES`. (c) is a check-then-delete: confirm `ruff`'s configured rule set makes them dead before removing. |
+| 1 | **Rename `Stream._stream` to `Stream._source`.** `stream.py:88` names the normalized source `self._stream`, while every function in `execution.py` that receives it names the same value `source` (`stream_through`, `race_through`, `feed_through`, `_guarded`). Reading `self._executor.elements(self._chain, self._stream)` you have to stop and work out whether `_stream` is the raw source or something already composed. | Pure private rename with the widest read-benefit per line changed: after it, every call site reads as the `(chain, source)` pair the three execution primitives already take. **No test touches `._stream`** (verified 2026-08-24: zero hits across `tests/`), so this one is fully test-invisible and the usual tripwire applies cleanly. |
+| 2 | **`StatefulOp(StatelessOp)` — the docstring argues against its own base class.** `sink.py:90-106` spends a paragraph explaining that a stateful op is *not* a kind of stateless one and that the inheritance is "a mechanical convenience". The two share `__init__` and the `_sink_cls` declaration and differ only in `link()`. A neutral base holding those two, with `StatelessOp` (`sink.py:72`) and `StatefulOp` as siblings, deletes the disclaimer. | When a class docstring has to disclaim its own hierarchy, the hierarchy is the thing misleading the reader. This is the same shape of finding as the two items archived on 2026-08-24 — structure that organizes nothing — at a smaller scale. **Both public-ish names must be kept**: `tests/test_sink.py:8-10` imports `StatelessOp` and `StatefulOp` and subclasses both (`test_sink.py:265+`), so adding a base underneath them is test-invisible while renaming either is not. |
+| 3 | **The `IllegalStateException` message describes a state the code cannot be in.** `stream.py:97` reads "this stream has already been extended into a new instance **or terminally consumed**", but `_consumed = True` is set only by the two derive paths — and `pipeline-immutability` spec line 51 explicitly *requires* that a merely-terminally-consumed stream stay usable. `terminal-sinks` spec line 38 already words the scenario as "has already been extended into a new instance", with no "or terminally consumed". | A one-line fix with a real debugging cost behind it: anyone hitting this exception will go looking for the terminal call that set the flag and find that none exists. The trim brings the message into line with the two specs rather than away from them. No test asserts the message text (verified 2026-08-24 — the eight `pytest.raises(IllegalStateException)` sites across `test_pipeline_immutability.py` and `test_execution_model.py` all match on type only). |
+| 4 | **Module docstrings for `execution.py`, `sink.py` and `ops.py`.** All three open straight into imports. They are the three files a reader has to hold in their head at once, and the map that explains how they fit lives only in `CLAUDE.md`. | The map should be where a reader opening the file will hit it, not only in a file they may never open. Four or five lines each: `execution.py` — the four primitives and the two executors, and that `Sequential.value()`'s override is the one asymmetry; `sink.py` — the op/sink pair and the `begin`/`accept`/`end` protocol; `ops.py` — one `Op` plus one `Sink` per intermediate operation, and no execution logic. Do **not** restate what the per-class docstrings already say; these are orientation, not summary. |
+| 5 | **Three unrelated smalls, batchable as one commit.** (a) `unordered()` (`stream.py:149`) and `on_close()` (`stream.py:156`) mutate and return `self` while all eight intermediates derive-and-consume; this is deliberate and specified (`stream-ordering` spec, and `pipeline-immutability` spec line 58 for `on_close`) but nothing in the code says so. (b) `stream.py:10` re-exports `PROCESSES` (`from snakestream.execution import PROCESSES as PROCESSES`) although `stream.py` never uses it and `snakestream/__init__.py` does not export it — public by accident of import path, while README documents it as public. (c) `collector.py:1-4` carries four `# pylint: disable=missing-*-docstring` pragmas that no longer match how documented that file is. | Each is a line or two and none is worth its own commit. (a) is the one with actual risk attached — without a note, a future reader "fixes" the inconsistency and breaks a specified contract; a one-line docstring on each method pointing at the requirement is the whole fix. (b) needs a decision, not just an edit: either export `PROCESSES` from `snakestream/__init__.py` to match the README, or drop the re-export and have README name `snakestream.execution.PROCESSES`. (c) is a check-then-delete: confirm `ruff`'s configured rule set makes them dead before removing. |
 
-### Implementation notes for items 1-6
+### Implementation notes for items 1-5
 
 Shared brief for the 2026-08-24 batch. Line anchors are as of `a48f1aa` and
 will drift — the symbol names are the durable part. Item numbers below are
 post-renumbering (former item 1, "route every terminal through `_evaluate()`",
-landed and moved to **Done**; the code shape it introduced —
-`_evaluate(terminal, executor=None)` — is now what item 1 below builds on).
+and former item 2, "one copier behind `_derive()` and `_derive_executor()`",
+both landed and moved to **Done**; the unified `_derive(chain, executor)`
+shape the second introduced is now what every other item's call-site
+reasoning assumes).
 
-**The tripwire, for all six:** none of these changes behaviour, so the full
+**The tripwire, for all five:** none of these changes behaviour, so the full
 suite must pass **with no test file edited**. That is the same tripwire the
 `ParallelStream` retirement carried and cleared, and it is the whole
-verification story for items 1, 2 and 4. Item 3 keeps `StatelessOp` and
-`StatefulOp` as importable names for the same reason. Item 6(b) is the one part of the batch that may legitimately touch a
+verification story for items 1 and 3. Item 2 keeps `StatelessOp` and
+`StatefulOp` as importable names for the same reason. Item 5(b) is the one part of the batch that may legitimately touch a
 test, if the `PROCESSES` decision moves the exported name.
 
 **Benchmark gate: not required.** Every site in this batch runs once per
 composition or once per stream construction, never per element. `_derive()`,
-`_derive_executor()`, `_evaluate()` and the op constructors are all
-chain-building or drive-entry code. Do not spend a harness run on these unless
-something in the diff drifts onto the per-element path — if it does, that is a
-sign the change went wrong, not a reason to measure it.
+`_evaluate()` and the op constructors are all chain-building or drive-entry
+code. Do not spend a harness run on these unless something in the diff drifts
+onto the per-element path — if it does, that is a sign the change went wrong,
+not a reason to measure it.
 
-**Item 1, the proposed shape** — one copier taking both varying fields:
-
-```python
-def _derive(self, chain: list[Op], executor: Executor) -> Stream[Any]:
-    self._check_not_consumed()
-    new_stream = type(self)(self._stream, self._close_handlers)
-    new_stream._chain = chain
-    new_stream._ordered = self._ordered
-    new_stream._executor = executor
-    self._consumed = True
-    return new_stream
-```
-
-Intermediates call `self._derive(self._chain + [op], self._executor)`;
-`parallel()` calls `self._derive(self._chain, RACING)` and `sequential()`
-`self._derive(self._chain, SEQUENTIAL)`. The `self._chain + [op]` must stay a
-fresh list — the receiver's chain is never mutated. Note the ordering
-constraint the current code already has and the merge must preserve:
-`_check_not_consumed()` runs **before** the copy, and `self._consumed = True`
-is set **after** it, so a raising copy leaves the receiver valid.
-
-**Items 1 and 2 are best taken as one commit** if more than one is taken:
-they touch adjacent private plumbing in the same file, and a reader reviewing
-them separately would read the same methods twice. Items 3, 5 and 6
-are independent of that group and of each other.
+**Items 1 and 2 are independent of each other**, and of items 3-5.
 
 **Fences — do not let this batch drift into already-rejected territory.** All
 three of these were killed on measurement and are recorded in **Done** with
@@ -112,12 +91,12 @@ figures:
 
 ## Next
 
-Empty as of 2026-08-24. All six **Now** items are independent of each other,
+Empty as of 2026-08-24. All five **Now** items are independent of each other,
 so none of them is waiting on another to be promoted; **Later** is parked behind
 explicit decisions rather than sequencing, so there is nothing to pull up from
-there either. Note that **Now** is deliberately six small items rather than a
-prioritized queue — they are the residue of a single afternoon's batch (one of
-the original seven has already landed), and finishing them empties the bucket.
+there either. Note that **Now** is deliberately five small items rather than a
+prioritized queue — they are the residue of a single afternoon's batch (two of
+the original seven have already landed), and finishing them empties the bucket.
 
 ## Later
 
@@ -158,6 +137,39 @@ core semantic.
   `for_each_ordered()` and `find_first()` were the only two hand-rolled call
   sites, and both are gone. See
   `openspec/changes/route-terminals-through-evaluate` (pending archive).
+
+- **Merged `_derive()` and `_derive_executor()` into one copier** (2026-08-24).
+  `stream.py:99-106` and `stream.py:132-137` were line-for-line the same
+  five-field copy — `self._stream`, `self._close_handlers`, `self._chain`,
+  `self._ordered`, `self._executor` — differing only in whether `_chain` or
+  `_executor` was the field that varied. Now one `_derive(self, chain:
+  list[Op], executor: Executor) -> Stream[Any]` takes both as parameters: the
+  eight intermediate ops call `self._derive(self._chain + [op],
+  self._executor)`, and `parallel()`/`sequential()` call
+  `self._derive(self._chain, RACING)` / `self._derive(self._chain,
+  SEQUENTIAL)`. `_derive_executor()` is gone.
+
+  Landed to the shape the roadmap's own implementation notes proposed, with
+  one adjustment: the pre-existing `_derive()` took a single `op: Op` and
+  composed `self._chain + [op]` internally rather than taking a pre-built
+  chain, so the call sites (not just the method body) needed the `self._chain
+  + [op]` expression moved onto them — the unified signature is
+  `_derive(chain, executor)` exactly as designed, only the caller-vs-callee
+  split of that one line differs from the sketch. The check-before-copy /
+  consume-after-copy ordering is unchanged: `_check_not_consumed()` still runs
+  before the copy and `self._consumed = True` still after, so a raising copy
+  leaves the receiver valid. The `_derive_executor()` docstring ("must not
+  compose", "must not assign onto self") moved onto `parallel()` and
+  `sequential()` rather than being deleted with the method, since those two
+  are the only call sites its warning actually protects.
+
+  535 tests green with **no test file edited**; `ruff`, `ruff format --check`
+  and `ty check src` all pass. A grep for `_derive_executor` across `src/` and
+  `openspec/specs/` after the edit returns nothing. `skip_specs: true`: no
+  spec-level behavior changed, only where the copy-constructor logic lives.
+  Off the per-element path (chain-building/mode-switch code, run once per
+  composition), so no benchmark gate applied. See
+  `openspec/changes/unify-derive-copier`.
 
 - **Moved `to_collection()`'s private `_C` TypeVar and `_SupportsAdd`
   protocol from `collector.py` to `type.py`** (2026-08-24). The last public
