@@ -96,12 +96,12 @@ class Stream(Generic[T]):
         if self._consumed:
             raise IllegalStateException("this stream has already been extended into a new instance or terminally consumed")
 
-    def _derive(self, op: Op) -> Stream[Any]:
+    def _derive(self, chain: list[Op], executor: Executor) -> Stream[Any]:
         self._check_not_consumed()
         new_stream = type(self)(self._stream, self._close_handlers)
-        new_stream._chain = self._chain + [op]
+        new_stream._chain = chain
         new_stream._ordered = self._ordered
-        new_stream._executor = self._executor
+        new_stream._executor = executor
         self._consumed = True
         return new_stream
 
@@ -116,7 +116,7 @@ class Stream(Generic[T]):
         self._check_not_consumed()
         return await (executor or self._executor).value(self._chain, self._stream, terminal)
 
-    def _derive_executor(self, executor: Executor) -> Any:
+    def sequential(self) -> Stream[T]:
         """A mode switch: a new stream over the SAME source and the SAME queued
         chain, differing only in its executor, consuming this one.
 
@@ -128,19 +128,21 @@ class Stream(Generic[T]):
         It must not assign onto self and return self either, however tempting:
         pipeline-immutability requires the receiver be invalidated, and an
         in-place flip would leave it usable."""
-        self._check_not_consumed()
-        new_stream = type(self)(self._stream, self._close_handlers)
-        new_stream._chain = self._chain
-        new_stream._ordered = self._ordered
-        new_stream._executor = executor
-        self._consumed = True
-        return new_stream
-
-    def sequential(self) -> Stream[T]:
-        return cast("Stream[T]", self._derive_executor(SEQUENTIAL))
+        return cast("Stream[T]", self._derive(self._chain, SEQUENTIAL))
 
     def parallel(self) -> Stream[T]:
-        return cast("Stream[T]", self._derive_executor(RACING))
+        """A mode switch: a new stream over the SAME source and the SAME queued
+        chain, differing only in its executor, consuming this one.
+
+        It must not compose. Composing here is what made `.parallel()`
+        position-dependent — ops queued before the switch were frozen under the
+        old mode — where Java's `parallel()` sets a flag on the source stage and
+        so governs the whole pipeline wherever it appears.
+
+        It must not assign onto self and return self either, however tempting:
+        pipeline-immutability requires the receiver be invalidated, and an
+        in-place flip would leave it usable."""
+        return cast("Stream[T]", self._derive(self._chain, RACING))
 
     def iterator(self) -> AsyncGenerator[T, None]:
         self._check_not_consumed()
@@ -203,10 +205,10 @@ class Stream(Generic[T]):
 
     # Intermediaries
     def filter(self, predicate: Predicate[T]) -> Stream[T]:
-        return cast("Stream[T]", self._derive(_FilterOp(predicate)))
+        return cast("Stream[T]", self._derive(self._chain + [_FilterOp(predicate)], self._executor))
 
     def map(self, mapper: Mapper[T, R]) -> Stream[R]:
-        return cast("Stream[R]", self._derive(_MapOp(mapper)))
+        return cast("Stream[R]", self._derive(self._chain + [_MapOp(mapper)], self._executor))
 
     def flat_map(self, flat_mapper: FlatMapper[T, R]) -> Stream[R]:
         # Pre-call rejection, not a dispatch site: flat_mapper must return a
@@ -215,22 +217,22 @@ class Stream(Generic[T]):
         if iscoroutinefunction(flat_mapper):
             raise StreamBuildException("flat_map() does not support coroutines")
 
-        return cast("Stream[R]", self._derive(_FlatMapOp(flat_mapper)))
+        return cast("Stream[R]", self._derive(self._chain + [_FlatMapOp(flat_mapper)], self._executor))
 
     def sorted(self, comparator: Comparator[T] | None = None, reverse=False) -> Stream[T]:
-        return cast("Stream[T]", self._derive(_SortedOp(comparator, reverse)))
+        return cast("Stream[T]", self._derive(self._chain + [_SortedOp(comparator, reverse)], self._executor))
 
     def distinct(self) -> Stream[T]:
-        return cast("Stream[T]", self._derive(_DistinctOp()))
+        return cast("Stream[T]", self._derive(self._chain + [_DistinctOp()], self._executor))
 
     def peek(self, consumer: Consumer[T]) -> Stream[T]:
-        return cast("Stream[T]", self._derive(_PeekOp(consumer)))
+        return cast("Stream[T]", self._derive(self._chain + [_PeekOp(consumer)], self._executor))
 
     def limit(self, max_size: int) -> Stream[T]:
-        return cast("Stream[T]", self._derive(_LimitOp(max_size)))
+        return cast("Stream[T]", self._derive(self._chain + [_LimitOp(max_size)], self._executor))
 
     def skip(self, n: int) -> Stream[T]:
-        return cast("Stream[T]", self._derive(_SkipOp(n)))
+        return cast("Stream[T]", self._derive(self._chain + [_SkipOp(n)], self._executor))
 
     # Terminals
     @overload
