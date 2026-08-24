@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 from collections.abc import Awaitable, Callable
 
 if TYPE_CHECKING:
@@ -31,3 +31,10 @@ NumberMapper = Callable[[T], int | float | Awaitable[int | float]]
 # Collector protocol
 Finisher = Callable[[A], R | Awaitable[R]]
 Combiner = Callable[[A, A], A | Awaitable[A]]
+
+
+class _SupportsAdd(Protocol):
+    def add(self, item: Any) -> Any: ...
+
+
+_C = TypeVar("_C", bound=_SupportsAdd)
