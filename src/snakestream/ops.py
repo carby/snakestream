@@ -12,7 +12,7 @@ from collections.abc import Awaitable
 
 from snakestream.callable_dispatch import AsyncDispatch
 from snakestream.sink import Counter, IntermediateSink, Op, Sink, StatefulOp, StatefulSink, StatelessOp
-from snakestream.sort import merge_sort
+from snakestream.sort import sort
 from snakestream.type import (
     T,
     Comparator,
@@ -101,11 +101,9 @@ class _SortedSink(IntermediateSink[T]):
     async def end(self) -> None:
         cache = self._buffer
         if self._comparator is not None:
-            # Always merge_sort here rather than list.sort()+cmp_to_key: the
-            # comparator may be an async-__call__ object, which needs an await
-            # merge_sort's _merge already does. Trades away Timsort's speed for
-            # sync comparators; see the add-maybe-await-helper design doc.
-            cache = await merge_sort(cache, self._comparator)
+            # sort() owns the choice between Timsort and merge_sort; which one
+            # a comparator allows is sort.py's question, not this sink's.
+            cache = await sort(cache, self._comparator)
         else:
             cache.sort()
         items = reversed(cache) if self._reverse else cache
