@@ -123,3 +123,73 @@ async def test_concat_leaves_the_second_stream_untouched_until_the_first_is_done
     # then
     assert from_a == [1, 2]
     assert from_b == []
+
+
+def test_concat_carries_both_operands_close_handlers_in_order(mocker) -> None:
+    calls = []
+    a1 = mocker.Mock(side_effect=lambda: calls.append("a1"))
+    a2 = mocker.Mock(side_effect=lambda: calls.append("a2"))
+    b1 = mocker.Mock(side_effect=lambda: calls.append("b1"))
+    b2 = mocker.Mock(side_effect=lambda: calls.append("b2"))
+
+    a = Stream.of([1, 2]).on_close(a1).on_close(a2)
+    b = Stream.of([3, 4]).on_close(b1).on_close(b2)
+
+    # when
+    Stream.concat(a, b).close()
+
+    # then
+    assert calls == ["a1", "a2", "b1", "b2"]
+
+
+def test_concat_with_only_one_side_having_handlers(mocker) -> None:
+    b1 = mocker.Mock()
+
+    a = Stream.of([1, 2])
+    b = Stream.of([3, 4]).on_close(b1)
+
+    # when
+    Stream.concat(a, b).close()
+
+    # then
+    b1.assert_called_once()
+
+
+def test_concat_with_neither_side_having_handlers() -> None:
+    a = Stream.of([1, 2])
+    b = Stream.of([3, 4])
+
+    # when / then
+    Stream.concat(a, b).close()
+
+
+def test_concat_does_not_pick_up_handlers_registered_after_concat(mocker) -> None:
+    late_handler = mocker.Mock()
+
+    a = Stream.of([1, 2])
+    b = Stream.of([3, 4])
+
+    concatenated = Stream.concat(a, b)
+    a.on_close(late_handler)
+
+    # when
+    concatenated.close()
+
+    # then
+    late_handler.assert_not_called()
+
+
+def test_concat_raising_handler_on_a_does_not_skip_bs_handler(mocker) -> None:
+    bad_a = mocker.Mock(side_effect=ValueError("boom"))
+    good_b = mocker.Mock()
+
+    a = Stream.of([1, 2]).on_close(bad_a)
+    b = Stream.of([3, 4]).on_close(good_b)
+
+    # when
+    with pytest.raises(ValueError, match="boom"):
+        Stream.concat(a, b).close()
+
+    # then
+    bad_a.assert_called_once()
+    good_b.assert_called_once()

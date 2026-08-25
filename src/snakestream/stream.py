@@ -203,7 +203,7 @@ class Stream(Generic[T]):
     @staticmethod
     def concat(a: Stream[T], b: Stream[T]) -> Stream[T]:
         new_stream = _concat(a, b)
-        return Stream(new_stream)
+        return Stream(new_stream, a._close_handlers + b._close_handlers)
 
     @staticmethod
     def builder() -> StreamBuilder:
