@@ -24,6 +24,9 @@ Predicate = Callable[[T], bool | Awaitable[bool]]
 Mapper = Callable[[T], R | None | Awaitable[R | None]]
 FlatMapper = Callable[[T], "Stream[R]"]
 Comparator = Callable[[T, T], int | Awaitable[int]]
+# The awaitable arm of Comparator, for the merge-sort path that reaches it
+# only after sort() has established the comparator returns awaitables.
+AsyncComparator = Callable[[T, T], Awaitable[int]]
 Consumer = Callable[[T], None | Awaitable[None]]
 CloseHandler = Callable[[], None]
 

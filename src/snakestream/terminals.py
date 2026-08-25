@@ -5,8 +5,8 @@ from typing import Any, cast
 from collections.abc import Awaitable
 
 from snakestream.callable_dispatch import AsyncDispatch
+from snakestream.comparator import is_new_extremum
 from snakestream.sink import TerminalSink, _UNSET
-from snakestream.sort import is_new_extremum
 from snakestream.type import (
     T,
     Accumulator,

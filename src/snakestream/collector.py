@@ -6,9 +6,9 @@ from collections.abc import AsyncGenerator, Awaitable, Callable
 
 from snakestream.execution import _maybe_aclosing
 from snakestream.callable_dispatch import AsyncDispatch, _classify_step, _maybe_await, is_async_callable
+from snakestream.comparator import is_new_extremum
 from snakestream.exception import StreamBuildException
 from snakestream.sink import Counter, TerminalSink, _UNSET
-from snakestream.sort import is_new_extremum
 from snakestream.type import (
     A,
     R,
