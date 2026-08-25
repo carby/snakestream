@@ -49,9 +49,6 @@ class _ForEachSink(AsyncDispatch, TerminalSink[T]):
                 self._is_async = True
                 await r
 
-    def _finish(self, container: Any) -> None:
-        return None
-
 
 class _ReduceSink(AsyncDispatch, TerminalSink[T]):
     """Folds every element into an accumulated value. An identity of _UNSET
