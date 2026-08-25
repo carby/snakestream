@@ -258,7 +258,7 @@ class Stream(Generic[T]):
 
         return self._extend(_FlatMapOp(flat_mapper))
 
-    def sorted(self, comparator: Comparator[T] | None = None, reverse=False) -> Stream[T]:
+    def sorted(self, comparator: Comparator[T] | None = None, reverse: bool = False) -> Stream[T]:
         return self._extend(_SortedOp(comparator, reverse))
 
     def distinct(self) -> Stream[T]:
