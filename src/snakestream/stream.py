@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from inspect import isawaitable, iscoroutinefunction
 from typing import TYPE_CHECKING, Any, Generic, cast, overload
 from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Coroutine, Iterable
@@ -185,7 +186,11 @@ class Stream(Generic[T]):
             except Exception as e:
                 exceptions.append(e)
         if exceptions:
-            raise exceptions[0]
+            first = exceptions[0]
+            if sys.version_info >= (3, 11):
+                for later in exceptions[1:]:
+                    first.add_note(f"close() also raised: {later!r}")
+            raise first
 
     def is_parallel(self) -> bool:
         return self._executor.is_parallel

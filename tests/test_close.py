@@ -1,4 +1,6 @@
 from contextlib import closing
+import sys
+
 import pytest
 
 from snakestream.collector import to_list
@@ -149,6 +151,43 @@ def test_close_with_multiple_raising_handlers_runs_all_and_raises_first(mocker) 
     # then
     bad_a.assert_called_once()
     bad_b.assert_called_once()
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="add_note() requires 3.11+")
+def test_close_with_three_raising_handlers_notes_the_other_two(mocker) -> None:
+    bad_a = mocker.Mock(side_effect=ValueError("first"))
+    bad_b = mocker.Mock(side_effect=ValueError("second"))
+    bad_c = mocker.Mock(side_effect=ValueError("third"))
+
+    stream = Stream.of([1, 2, 3])
+    stream.on_close(bad_a).on_close(bad_b).on_close(bad_c)
+
+    # when
+    with pytest.raises(ValueError, match="first") as exc_info:
+        stream.close()
+
+    # then
+    bad_a.assert_called_once()
+    bad_b.assert_called_once()
+    bad_c.assert_called_once()
+    assert len(exc_info.value.__notes__) == 2
+    assert "second" in exc_info.value.__notes__[0]
+    assert "third" in exc_info.value.__notes__[1]
+
+
+def test_close_with_a_single_raising_handler_gains_no_notes(mocker) -> None:
+    bad = mocker.Mock(side_effect=ValueError("boom"))
+
+    stream = Stream.of([1, 2, 3])
+    stream.on_close(bad)
+
+    # when
+    with pytest.raises(ValueError, match="boom") as exc_info:
+        stream.close()
+
+    # then
+    bad.assert_called_once()
+    assert not getattr(exc_info.value, "__notes__", [])
 
 
 @pytest.mark.asyncio
