@@ -18,9 +18,9 @@ from snakestream.type import (
 
 
 class _CountSink(TerminalSink[T]):
-    """A plain int, not a Counter: this sink owns its container exclusively,
+    """A plain int, not a Box: this sink owns its container exclusively,
     so it can rebind it the way _ReduceSink rebinds its accumulation. The
-    counting() collector genuinely needs the Counter box, because its
+    counting() collector genuinely needs the Box, because its
     accumulator is a free function that has to mutate a container it was
     handed."""
 

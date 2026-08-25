@@ -33,15 +33,6 @@ class Box:
         self.value = value
 
 
-class Counter(Box):
-    """A mutable integer box. An op's shared count travels through the state
-    map as one of these, so every sink built from that op increments the same
-    instance."""
-
-    def __init__(self, value: int = 0) -> None:
-        super().__init__(value)
-
-
 class Sink(ABC, Generic[T]):
     """Push-based op protocol: begin(state_map) / accept(element) / end(),
     plus a synchronous cancellation_requested() query."""
