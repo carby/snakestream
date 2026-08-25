@@ -16,28 +16,26 @@ value rather than a class hierarchy, `summing_int`/`summing_long` sharing a body
 
 ## Now
 
-Four stories, the remainder of the six that bundled the fourteen findings of a
+Three stories, the remainder of the six that bundled the fourteen findings of a
 legibility and stdlib-usage read of all twelve modules in `src/snakestream/`
-(2026-08-25, at `946fff0`). **Stories 1 and 2 are done** — see **Done**. The
-original numbering is kept for the four that remain, so the dependency notes
+(2026-08-25, at `946fff0`). **Stories 1, 2 and 3 are done** — see **Done**. The
+original numbering is kept for the three that remain, so the dependency notes
 and the per-story headings below still refer to the same stories they always
 did.
 
-They are **sequenced in dependency order**: story 3 is next, and edits
-`stream.py` right after story 2's edits landed there; story 5 renames the file
-story 4 rewrites; and story 6 is independent of the other three and may be
-taken at any point.
+They are **sequenced in dependency order**: story 4 is next; story 5 renames
+the file story 4 rewrites; and story 6 is independent of both and may be taken
+at any point.
 
 Only story 4 faces the benchmark gate; its figures are already measured and
 recorded below, so the gate is a confirmation run rather than an open question.
-Story 6 changes observable behaviour and carries spec impact; stories 3, 4
-and 5 are private-surface only. Read **Implementation notes for the
+Story 6 changes observable behaviour and carries spec impact; stories 4 and 5
+are private-surface only. Read **Implementation notes for the
 2026-08-25 batch** below the table before picking any of them up — it carries
 the repros, the anchors, the per-story tripwire and the spec impact.
 
 | # | Story | Why it sits here in the order |
 |---|---|---|
-| 3 | **Chain-building and dead-code smalls.** **(a)** The eight intermediate ops (`stream.py:211-239`) are each `cast("Stream[X]", self._derive(self._chain + [_SomeOp(...)], self._executor))`; a private `_extend(op)` leaves each as `return self._extend(_MapOp(mapper))` and puts `self._chain + [op]` in one place. **(b)** `_ForEachSink._finish` (`terminals.py:52`) returns `None` for a container that `_create_container` already always makes `None` — it restates `TerminalSink._finish`'s default. **(c)** `sorted(..., reverse=False)` (`stream.py:226`) is the only unannotated parameter in `stream.py`. **(d)** `execution.py:140,153` use `asyncio.ensure_future` where both arguments are always coroutines, so `asyncio.create_task` is the documented-preferred spelling and skips `ensure_future`'s type dispatch. | Last of the three `stream.py` stories because **(a)** rewrites all eight intermediate one-liners, which is the widest diff in that file and the one most likely to conflict with stories 1 and 2 if taken first. None of the four changes behaviour, so the whole story rides one tripwire: the suite passes with no test file edited. **(d)** is the only part on a per-element path (once per element per racing branch) and is a spelling change with no allocation difference, so it does not pull the story into the benchmark gate — but if the diff grows past a one-word substitution there, that is a sign it went wrong. |
 | 4 | **The sync-comparator fast path: `functools.cmp_to_key` in `_SortedSink`** (`ops.py:91-108`, `sort.py:33`). `_SortedSink.end()` always calls `merge_sort`, and its own comment states the cost as if unavoidable — "Trades away Timsort's speed for sync comparators". It is avoidable: `sort.py` already classifies comparators with `is_async_callable`, so the sync case can take `cache.sort(key=cmp_to_key(comparator))` and leave `merge_sort` for the async case only. **Measured 2.2x** with the spec-required `bool` rejection preserved, 3.6x without it (table below). | Independent of stories 1-3, and **the largest measured win in the batch by a wide margin** — the only story here that makes the library faster rather than easier to read. It sits after them only because they are cheaper and carry crashes; a reader with time for one story should consider taking this one first. It is the single benchmark-gated story, and the gate is already half-run: the figures below establish the win, so the confirmation run only has to show the async path unchanged. `comparator-contract` spec's "Comparators must not return bool" requirement is the constraint that decides the shape — see the notes. |
 | 5 | **`sort.py` holds two different things; name it for what is in it.** `merge_sort` is sorting, but `is_new_extremum` (`sort.py:11`) and `check_comparator_result_type` (`sort.py:6`) are comparator *semantics*, consumed by `terminals.py` and `collector.py` and never by the sort. `comparator.py` names the whole contents, and matches the `comparator-contract` spec that already governs all three functions. The module is also the only fully unannotated one in `src/`, despite `ty` running in CI on the 3.14 leg. | **Strictly after story 4**, which rewrites `merge_sort`'s only caller and decides whether `check_comparator_result_type` still runs per comparison — renaming a file that is about to be substantially rewritten puts the churn in the wrong commit and makes story 4's diff unreadable. Fully test-invisible: **zero references to `snakestream.sort`, `merge_sort`, `is_new_extremum` or `check_comparator_result_type` outside `src/`** (verified 2026-08-25 across `tests/`, `README.md` and `openspec/specs/`), which is unusual enough for a rename that it is worth the grep before starting rather than assuming it still holds. |
 | 6 | **Collector containers, and the duplicate-key exception** (`collector.py`, `sink.py`). **(a)** Nine hand-written `__slots__`-plus-`__init__` classes — `_SumBox`, `_AvgBox`, `_SummaryBox`, `_ExtremumBox`, `_ReduceBox`, `_ToMapBox`, `_GroupBox`, `_MappingBox`, `_CollectAndThenBox` (`collector.py:157,193,259,315,360,427,482,579,615`) — are ~90 lines of boilerplate that `@dataclass(slots=True)` generates. **(b)** `Counter` (`sink.py:36`) shadows `collections.Counter` and adds exactly one thing to `Box`: a default of `0`. **(c)** `to_map()` raises `ValueError` on a duplicate key (`collector.py:469`) where Java's `Collectors.toMap` throws `IllegalStateException` — a class this project already defines in `exception.py`. | Independent of everything above; it is last only because nothing else waits on it. **(a) must state plainly why it is not the rejected `CallSite` proposal**: those nine containers are built once per collection, never per element, so unlike wrapping per-element callables this cannot land on the hot path — attribute access after construction is byte-for-byte what it is today. **Two parts are not test-invisible and must be planned for, not discovered:** `tests/test_sink.py` imports `Counter` and constructs `Counter()`, `Counter(7)` and `Counter(10)` (lines 4, 277-278, 304, 326-327, 336), so (b) is an API change to a tested name; and `tests/test_to_map.py:47` asserts `pytest.raises(ValueError)`, so (c) is a **public breaking change** needing a `collector-to-map` spec delta and a README migration-log entry alongside the `str`/`bytes` and kwargs entries. |
@@ -47,8 +45,7 @@ the repros, the anchors, the per-story tripwire and the spec impact.
 Line anchors are as of `946fff0` and will drift — the symbol names are the
 durable part.
 
-**Tripwires.** Story 3 changes nothing observable, so the full suite must pass
-**with no test file edited** — that is its entire verification story. Story
+**Tripwires.** Story
 6 legitimately touches tests, but only at the specific sites named in the
 table; a test edit anywhere else in that story is a signal the change went
 wider than the story. Story 5 must touch no test at all (see its grep).
@@ -57,9 +54,9 @@ the async-comparator and bool-rejection cases.
 
 **Benchmark gate: story 4 only.** Every other site in this batch runs once per
 stream construction, once per composition, or once per collection. The one
-per-element site is story 3(d)'s `ensure_future` -> `create_task`, which is a
-spelling change on the same object graph. Do not spend a harness run on the
-others.
+per-element site was story 3(d)'s `ensure_future` -> `create_task`, a spelling
+change on the same object graph, and it is now landed. Do not spend a harness
+run on the others.
 
 **Story 4, the measured figures.** 20,000 random floats, sync 3-way
 comparator, best of 5, Python 3.14.5:
@@ -104,6 +101,69 @@ core semantic.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should instead be documented as intentional next to the `str`/`bytes` note. Surfaced 2026-08-20 in the same code-quality read that produced **Now** items 1-4. |
 
 ## Done
+
+- **Chain-building and dead-code smalls** (2026-08-25). Story 3 of the
+  2026-08-25 batch, and the last of its three `stream.py` stories. Four
+  independent findings, one commit each, none of them observable.
+
+  **(a)** The eight intermediate ops were each the same 90-column line —
+  `cast("Stream[X]", self._derive(self._chain + [_SomeOp(...)], self._executor))`
+  — so the chain-extension rule was written eight times while the one thing
+  each method is *about*, the `Op` it queues, was the least visible part of
+  the line. A private `_extend(op)` now holds
+  `self._derive(self._chain + [op], self._executor)`, and each op is a
+  one-liner: `return self._extend(_MapOp(mapper))`.
+
+  `_extend` takes a **built** `Op` rather than the class plus its arguments.
+  The eight `Op` constructors take between zero and two arguments of unrelated
+  types (`_DistinctOp()` takes none, `_SortedOp` takes a comparator and a
+  flag), so an `_extend(op_cls, *args)` form would degrade to `*args: Any` and
+  lose exactly the type information the call site has. It also does not run
+  `_check_not_consumed()` — `_derive()` already does, and duplicating the
+  guard one frame up would make it ambiguous which one is load-bearing.
+  `_derive_executor()` was deliberately left out: `parallel()`/`sequential()`
+  pass `self._chain` **unchanged** under a different executor, the opposite of
+  what `_extend` does, and folding both into one helper would re-couple what
+  the batch's earlier stories separated.
+
+  **Beyond the story as written: the eight `cast()` wrappers went too, and
+  that is most of the win.** The `cast` was never necessary — `_derive()`
+  returns `Stream[Any]`, and `Any` is assignable to each method's declared
+  return type, so the cast narrowed nothing while reading like a real
+  narrowing. Verified against the `ty` version CI runs on the 3.14 leg before
+  committing to the shape, since `cast` is erased at runtime and no test can
+  tell the two forms apart. The `cast` import stays: `sequential()`,
+  `parallel()`, `iterate()` and the 3-arg `collect()` still use it.
+
+  **(b)** `_ForEachSink._finish` deleted. `TerminalSink._finish` is
+  `return container`, `_ForEachSink._create_container` is `return None`, and
+  the sink assigns `self._container` nowhere else — so the override returned
+  `None` for the one input on which the base already returns `None`. Recorded
+  in the commit message because the override *looks* load-bearing: a reader
+  who assumes `for_each` must discard a result will read it as the thing doing
+  the discarding. It is not; `result()` being `None` comes from
+  `_create_container`. The three other `_finish` overrides in `terminals.py`
+  were checked and kept — each translates the `_UNSET` sentinel, which the
+  base does not do.
+
+  **(c)** `sorted(..., reverse: bool = False)`. `stream.py` now has no
+  unannotated parameter at all (AST-checked, not eyeballed).
+
+  **(d)** `asyncio.ensure_future` -> `asyncio.create_task` at both
+  `race_through()` sites. The benchmark exemption was written as
+  **conditional** rather than granted — it held only while the diff stayed a
+  one-word substitution at each site, and it did: two lines, one word each,
+  nothing else moved. Both arguments are `branch.__anext__()` on an async
+  generator, always a coroutine, so `ensure_future`'s
+  `isfuture`/`iscoroutine`/`isawaitable` ladder always landed on the coroutine
+  arm and called its internal `loop.create_task` anyway.
+
+  561 tests green, **no test file edited** — the entire verification story for
+  a change with no new behaviour to assert. `ruff`, `ruff format --check`,
+  `ty check src` and `openspec validate --strict` all pass, 98.03% coverage.
+  No spec impact: the change set `skip_specs: true`, the same treatment as
+  `split-ops-into-ops-module` and `collapse-terminal-drive-loop`. See
+  `openspec/changes/tidy-stream-chain-building`.
 
 - **Settled what counts as a source, and how a racing branch consumes one**
   (2026-08-25). Story 1 of the 2026-08-25 batch, and the only crash in it.
