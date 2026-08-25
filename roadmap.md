@@ -16,23 +16,26 @@ value rather than a class hierarchy, `summing_int`/`summing_long` sharing a body
 
 ## Now
 
-Six stories, bundling the fourteen findings of a legibility and
-stdlib-usage read of all twelve modules in `src/snakestream/` (2026-08-25, at
-`946fff0`). They are **sequenced in dependency order**: stories 1-3 all edit
+Five stories, the remainder of the six that bundled the fourteen findings of a
+legibility and stdlib-usage read of all twelve modules in `src/snakestream/`
+(2026-08-25, at `946fff0`). **Story 1 is done** — see **Done**. The original
+numbering is kept for the five that remain, so the dependency notes and the
+per-story headings below still refer to the same stories they always did.
+
+They are **sequenced in dependency order**: stories 2 and 3 both edit
 `stream.py` and must land in that order, story 5 renames the file story 4
-rewrites, and story 6 is independent of the other five and may be taken at any
+rewrites, and story 6 is independent of the other four and may be taken at any
 point.
 
 Only story 4 faces the benchmark gate; its figures are already measured and
 recorded below, so the gate is a confirmation run rather than an open question.
-Stories 1, 2 and 6 change observable behaviour and carry spec impact; stories
+Stories 2 and 6 change observable behaviour and carry spec impact; stories
 3, 4 and 5 are private-surface only. Read **Implementation notes for the
 2026-08-25 batch** below the table before picking any of them up — it carries
 the repros, the anchors, the per-story tripwire and the spec impact.
 
 | # | Story | Why it sits here in the order |
 |---|---|---|
-| 1 | **What counts as a source, and how a racing branch consumes one** (`stream.py:51,73`, `execution.py:67`). **(a)** `_guarded()` calls `await source.aclose()` in its `finally` and pulls with `source.__anext__()`, both unconditionally — but `_accept()` (`stream.py:73`) admits any `AsyncIterable`, so `.parallel()` over a source with neither method raises `AttributeError` where the sequential path succeeds. Every other close site in the codebase goes through `_maybe_aclosing()` for exactly this reason. **(b)** `_accept()`'s `isinstance(source, AsyncGenerator) or isinstance(source, AsyncIterable)` is one redundant check: `AsyncGenerator` is a subclass of `AsyncIterable`. **(c)** `_normalize()`'s `hasattr(source, "__iter__")` is exactly `isinstance(source, Iterable)`, matching how `_accept()` already classifies the async side. **(d)** A decision, not a defect: `bytearray` and `memoryview` spread into ints while `bytes` stays scalar. | **First, because it is the only crash in the batch**, and because (a) cannot be fixed without settling what `_accept()` admits — which is (b) and (c). The four parts are one question asked at four sites: what is a source, and what may the code assume about it. Taking (a) alone would leave the assumption it violates still written down in two other places. **(d) needs an explicit call before the story is proposed**, since `stream-construction` spec's "Scalar source normalization" requirement names exactly `dict`/`str`/`bytes` — spreading `bytearray` is specified behaviour today, so this is a spec change either way (extend the scalar set, or state the divergence). |
 | 2 | **`stream.py`'s API surface outside the chain: `iterate`, `concat`, `close`.** **(a)** `Stream.iterate()` (`stream.py:201`) is the one user-supplied callable in the library not routed through `_maybe_await`/`AsyncDispatch`, so an `async def nxt` produces a stream of un-awaited coroutine objects instead of values, with no error. **(b)** `Stream.concat()` (`stream.py:190`) builds its result with an empty close-handler list, dropping both operands' handlers; Java's `Stream.concat` returns a stream whose `close()` closes both inputs. **(c)** `close()` (`stream.py:166`) collects every handler exception and raises `exceptions[0]`, discarding the rest entirely. | After story 1, before story 3 — all three edit `stream.py`, and story 3 rewrites the intermediate-op block that sits between them. **(a) is the only silent-wrong-answer in the batch** and is what earns this story its place this high: it does not raise, it returns garbage. **(c) is narrower than it first looks and must not be overreached**: raising the first exception is *specified* (`stream-close-handling` spec, "Requirement: close() invokes every registered close handler", spec line 23) and *tested* (`tests/test_close.py:138-151`, `test_close_with_multiple_raising_handlers_runs_all_and_raises_first`). The story is to stop losing the other exceptions' detail while keeping which one is raised unchanged — not to change the rule. **(b) is a clean spec gap**: `stream-concat` spec says nothing about close handlers, so it is an ADDED requirement rather than a MODIFIED one. |
 | 3 | **Chain-building and dead-code smalls.** **(a)** The eight intermediate ops (`stream.py:211-239`) are each `cast("Stream[X]", self._derive(self._chain + [_SomeOp(...)], self._executor))`; a private `_extend(op)` leaves each as `return self._extend(_MapOp(mapper))` and puts `self._chain + [op]` in one place. **(b)** `_ForEachSink._finish` (`terminals.py:52`) returns `None` for a container that `_create_container` already always makes `None` — it restates `TerminalSink._finish`'s default. **(c)** `sorted(..., reverse=False)` (`stream.py:226`) is the only unannotated parameter in `stream.py`. **(d)** `execution.py:140,153` use `asyncio.ensure_future` where both arguments are always coroutines, so `asyncio.create_task` is the documented-preferred spelling and skips `ensure_future`'s type dispatch. | Last of the three `stream.py` stories because **(a)** rewrites all eight intermediate one-liners, which is the widest diff in that file and the one most likely to conflict with stories 1 and 2 if taken first. None of the four changes behaviour, so the whole story rides one tripwire: the suite passes with no test file edited. **(d)** is the only part on a per-element path (once per element per racing branch) and is a spelling change with no allocation difference, so it does not pull the story into the benchmark gate — but if the diff grows past a one-word substitution there, that is a sign it went wrong. |
 | 4 | **The sync-comparator fast path: `functools.cmp_to_key` in `_SortedSink`** (`ops.py:91-108`, `sort.py:33`). `_SortedSink.end()` always calls `merge_sort`, and its own comment states the cost as if unavoidable — "Trades away Timsort's speed for sync comparators". It is avoidable: `sort.py` already classifies comparators with `is_async_callable`, so the sync case can take `cache.sort(key=cmp_to_key(comparator))` and leave `merge_sort` for the async case only. **Measured 2.2x** with the spec-required `bool` rejection preserved, 3.6x without it (table below). | Independent of stories 1-3, and **the largest measured win in the batch by a wide margin** — the only story here that makes the library faster rather than easier to read. It sits after them only because they are cheaper and carry crashes; a reader with time for one story should consider taking this one first. It is the single benchmark-gated story, and the gate is already half-run: the figures below establish the win, so the confirmation run only has to show the async path unchanged. `comparator-contract` spec's "Comparators must not return bool" requirement is the constraint that decides the shape — see the notes. |
@@ -46,7 +49,7 @@ durable part.
 
 **Tripwires.** Story 3 changes nothing observable, so the full suite must pass
 **with no test file edited** — that is its entire verification story. Stories
-1, 2 and 6 each legitimately touch tests, but only at the specific sites named
+2 and 6 each legitimately touch tests, but only at the specific sites named
 in the table; a test edit anywhere else in those stories is a signal the change
 went wider than the story. Story 5 must touch no test at all (see its grep).
 Story 4 must leave every existing `sorted()` test passing unmodified, including
@@ -57,38 +60,6 @@ stream construction, once per composition, or once per collection. The one
 per-element site is story 3(d)'s `ensure_future` -> `create_task`, which is a
 spelling change on the same object graph. Do not spend a harness run on the
 others.
-
-**Story 1(a), the repro** — both forms fail, and both succeed sequentially:
-
-```python
-class BareAsyncIter:                       # __aiter__ + __anext__, no aclose
-    def __init__(self, n): self.i = iter(range(n))
-    def __aiter__(self): return self
-    async def __anext__(self):
-        try: return next(self.i)
-        except StopIteration: raise StopAsyncIteration
-
-await Stream(BareAsyncIter(5)).to_array()             # [0, 1, 2, 3, 4]
-await Stream(BareAsyncIter(5)).parallel().to_array()  # AttributeError: no attribute 'aclose'
-```
-
-An `__aiter__`-only object (one whose `__aiter__` returns a separate generator)
-fails the same way, for the second reason: `_guarded` assumes the source is its
-own iterator. `aiter()` is a builtin as of 3.10, so `src = aiter(source)` once
-before the loop covers that half, and routing the `finally` through the
-existing `_maybe_aclosing()` covers the other.
-
-**Story 1(c), the half that must NOT be adopted.** `hasattr(source, "__iter__")`
--> `isinstance(source, Iterable)` is exactly equivalent. The neighbouring
-`hasattr(source, "__next__")` branch is **not** equivalent to
-`isinstance(source, Iterator)` and must stay a `hasattr`: the ABC's
-`__subclasshook__` requires *both* `__iter__` and `__next__`, so an object
-exposing only `__next__` is neither `Iterable` nor `Iterator`
-(verified 2026-08-25) — and `stream-construction` spec explicitly requires that
-object be spread ("Scenario: Iterator source exposing only `__next__`"). That
-branch exists because of a bug fixed at `3554cc1`; converting it to an ABC
-check would reintroduce that bug. Recorded here so the tidier-looking
-conversion is not re-proposed as an oversight.
 
 **Story 2(a), the repro:**
 
@@ -148,6 +119,68 @@ core semantic.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should instead be documented as intentional next to the `str`/`bytes` note. Surfaced 2026-08-20 in the same code-quality read that produced **Now** items 1-4. |
 
 ## Done
+
+- **Settled what counts as a source, and how a racing branch consumes one**
+  (2026-08-25). Story 1 of the 2026-08-25 batch, and the only crash in it.
+
+  **(a)** `.parallel()` raised `AttributeError` on any source the sequential
+  path accepts but that is not a full async generator: `_guarded()` called
+  `await source.aclose()` unconditionally and pulled with
+  `source.__anext__()`, while `_accept()` admits any `AsyncIterable`. Both
+  halves fixed — `race_through()` now calls `aiter(source)` **once** for all
+  branches, and `_guarded()`'s `finally` closes only if the source is
+  closeable.
+
+  **The trap worth recording:** the obvious placement for `aiter()` is the
+  first line of `_guarded()`, and it is silently wrong. `_guarded()` runs once
+  per branch, so a source whose `__aiter__` hands back a fresh iterator would
+  give each branch its own and yield the elements `PROCESSES` times over — a
+  wrong answer strictly worse than the crash it replaces. The
+  `__aiter__`-returns-a-separate-iterator test asserts the exact multiset for
+  this reason, and was confirmed to fail against the per-branch placement
+  before being accepted.
+
+  **(b)** `_accept()` collapsed to one `isinstance(source, AsyncIterable)` —
+  `AsyncGenerator` is a subclass of it, so the narrower arm could never
+  decide. **(c)** `_normalize()`'s `hasattr(source, "__iter__")` became
+  `isinstance(source, Iterable)`.
+
+  **Deliberately not done, and now recorded in the code rather than here:**
+  the neighbouring `hasattr(source, "__next__")` branch stays a `hasattr`.
+  `Iterator`'s `__subclasshook__` requires *both* dunders, so an object with
+  only `__next__` is neither `Iterable` nor `Iterator`; converting it would
+  reintroduce the bug fixed at `3554cc1` and break
+  `stream-construction`'s "Iterator source exposing only `__next__`"
+  scenario. The comment on that branch now says so, so the tidier-looking
+  conversion cannot be re-proposed as an oversight.
+
+  **(d) was the open decision, and it went to consistency:** `bytearray` and
+  `memoryview` are now scalar sources alongside `dict`/`str`/`bytes`.
+  `Stream.of(bytearray(b"ab"))` yields the one `bytearray`, not `[97, 98]`.
+  `bytes` was already scalar, so the mutable buffer and the view over a buffer
+  were spreading while the immutable buffer of the same data was not. This
+  **breaks silently** — results change, nothing raises — so it carries a
+  README migration-log entry. The `memoryview` half is a genuine judgement
+  call rather than pure consistency, since a `memoryview` cast to a non-byte
+  format has meaningful per-item iteration; spreading stays available as
+  `Stream.of(*mv)`.
+
+  One implementation detail beyond the plan: `_maybe_aclosing()`'s conditional
+  close was split into a `_maybe_aclose()` coroutine that both it and
+  `_guarded()` call. The context-manager form cannot hold the shared lock
+  across its own exit, and `_guarded()` must close under that lock, so
+  reusing the helper as-is was not available — the split keeps one definition
+  of "close if closeable" rather than duplicating the check.
+
+  546 tests green (536 + 10 new), **no existing test edited** — both test
+  files are pure additions. `ruff`, `ruff format --check`, `ty check src` and
+  `openspec validate --strict` all pass, 98% coverage. No benchmark gate:
+  every site runs once per stream construction or once per racing branch,
+  never per element. Spec impact: `stream-construction`'s scalar and
+  spreading requirements MODIFIED, and a new
+  "Source acceptance does not depend on execution mode" requirement ADDED to
+  `stream-execution-model` — the gap the crash fell through. See
+  `openspec/changes/define-and-guard-stream-sources`.
 
 - **Took the final three-part smalls batch: `unordered()`/`on_close()`
   docstrings, the `PROCESSES` top-level export, and the dead `pylint`

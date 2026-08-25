@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from inspect import iscoroutinefunction
 from typing import TYPE_CHECKING, Any, Generic, cast, overload
-from collections.abc import AsyncGenerator, AsyncIterable, Callable, Coroutine, Generator
+from collections.abc import AsyncGenerator, AsyncIterable, Callable, Coroutine, Generator, Iterable
 
 from snakestream.callable_dispatch import _maybe_await
 from snakestream.collector import Collector, StreamingCollector, _CollectorSink, to_list
@@ -49,17 +49,27 @@ if TYPE_CHECKING:
 
 
 async def _normalize(source: Any) -> AsyncGenerator:
-    if isinstance(source, (dict, str, bytes)):
+    # The scalar set, and the complete set of exceptions to the spreading
+    # below. It stays first in the ladder so a bytearray never reaches the
+    # Iterable branch. The three binary types are here together on purpose:
+    # whether a buffer of bytes is immutable, mutable or a view over another
+    # buffer should not change how many elements it produces.
+    if isinstance(source, (dict, str, bytes, bytearray, memoryview)):
         yield source
-    elif hasattr(source, "__iter__"):
+    elif isinstance(source, Iterable):
         for i in source:
             yield i
     elif hasattr(source, "__next__"):
-        # A bare sync iterator, implementing only __next__. It can't be driven
-        # with `for`, and StopIteration must not escape: PEP 479 turns one
-        # raised inside an async generator into RuntimeError. Only the next()
-        # call is guarded, so a StopIteration thrown in at the yield still
-        # propagates to the caller rather than silently ending the stream.
+        # A bare sync iterator, implementing only __next__. This one stays a
+        # hasattr where the branch above became an ABC check: Iterator's
+        # __subclasshook__ requires *both* __iter__ and __next__, so an object
+        # with only __next__ is neither Iterable nor Iterator, and
+        # isinstance(source, Iterator) here would reintroduce the bug fixed at
+        # 3554cc1. It can't be driven with `for`, and StopIteration must not
+        # escape: PEP 479 turns one raised inside an async generator into
+        # RuntimeError. Only the next() call is guarded, so a StopIteration
+        # thrown in at the yield still propagates to the caller rather than
+        # silently ending the stream.
         while True:
             try:
                 i = next(source)
@@ -71,7 +81,11 @@ async def _normalize(source: Any) -> AsyncGenerator:
 
 
 def _accept(source: Any) -> AsyncGenerator | None:
-    if isinstance(source, AsyncGenerator) or isinstance(source, AsyncIterable):
+    # one question, not two: AsyncGenerator is a subclass of AsyncIterable, so
+    # the narrower check could never be the deciding one. Everything accepted
+    # here is passed through untouched, so the consuming side must not assume
+    # more than __aiter__ (see execution._guarded).
+    if isinstance(source, AsyncIterable):
         return source
     return None
 

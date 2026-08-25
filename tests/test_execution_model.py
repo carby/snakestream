@@ -193,3 +193,115 @@ async def test_racing_uses_the_generic_value_unchanged() -> None:
     # chain, so there is no single chain to fuse a terminal onto
     assert type(RACING).value is type(SEQUENTIAL).__mro__[1].value
     assert type(SEQUENTIAL).value is not type(SEQUENTIAL).__mro__[1].value
+
+
+# --- source acceptance does not depend on execution mode --------------------
+
+
+class _BareAsyncIter:
+    """__aiter__ returning self, __anext__, and deliberately no aclose() —
+    the shape an `async def` generator function does NOT produce."""
+
+    def __init__(self, n: int) -> None:
+        self._it = iter(range(n))
+
+    def __aiter__(self) -> "_BareAsyncIter":
+        return self
+
+    async def __anext__(self) -> int:
+        try:
+            return next(self._it)
+        except StopIteration:
+            raise StopAsyncIteration from None
+
+
+class _SeparateIterAsyncIterable:
+    """__aiter__ handing back a fresh iterator rather than self, so a consumer
+    that calls __anext__ on the object itself, or that calls __aiter__ once per
+    branch, gets it wrong."""
+
+    def __init__(self, n: int) -> None:
+        self._n = n
+
+    def __aiter__(self):
+        async def gen():
+            for i in range(self._n):
+                yield i
+
+        return gen()
+
+
+@pytest.mark.asyncio
+async def test_racing_over_an_async_iterator_with_no_aclose() -> None:
+    # when
+    sequential = await Stream(_BareAsyncIter(5)).collect(to_list())
+    racing = await Stream(_BareAsyncIter(5)).parallel().collect(to_list())
+
+    # then: no AttributeError, and the same elements as a multiset
+    assert sorted(racing) == sorted(sequential) == [0, 1, 2, 3, 4]
+
+
+@pytest.mark.asyncio
+async def test_racing_over_a_source_whose_aiter_returns_a_separate_iterator() -> None:
+    # when
+    racing = await Stream(_SeparateIterAsyncIterable(5)).parallel().collect(to_list())
+
+    # then: the exact multiset, not merely the absence of an AttributeError.
+    # aiter() called once per branch instead of once per consumption would
+    # give every branch its own iterator and yield each element PROCESSES
+    # times over, which an existence-only assertion would happily pass.
+    assert sorted(racing) == [0, 1, 2, 3, 4]
+    assert len(racing) == 5
+
+
+@pytest.mark.asyncio
+async def test_a_closeable_source_is_still_closed_under_racing() -> None:
+    # given
+    closed = False
+
+    async def source():
+        nonlocal closed
+        try:
+            for i in range(5):
+                yield i
+        finally:
+            closed = True
+
+    # when
+    racing = await Stream(source()).parallel().collect(to_list())
+
+    # then
+    assert sorted(racing) == [0, 1, 2, 3, 4]
+    assert closed is True
+
+
+class _BareSyncIter:
+    """__next__ only, no __iter__ — the sync counterpart, spread by source
+    normalization rather than passed through."""
+
+    def __init__(self, n: int) -> None:
+        self._it = iter(range(n))
+
+    def __next__(self) -> int:
+        return next(self._it)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "make_source",
+    [
+        lambda: [0, 1, 2, 3, 4],
+        lambda: _BareSyncIter(5),
+        lambda: 7,
+        lambda: bytearray(b"ab"),
+    ],
+    ids=["list", "bare-sync-iterator", "scalar", "bytearray-scalar"],
+)
+async def test_sync_and_scalar_sources_race_identically(make_source) -> None:
+    # when
+    sequential = await Stream(make_source()).collect(to_list())
+    racing = await Stream(make_source()).parallel().collect(to_list())
+
+    # then: same multiset; racing makes no promise about order
+    assert len(racing) == len(sequential)
+    assert all(element in sequential for element in racing)
