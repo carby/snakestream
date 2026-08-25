@@ -156,7 +156,7 @@ async def race_through(chain: list[Op], source: AsyncGenerator, workers: int) ->
     # per element. A branch that raised StopAsyncIteration is simply not
     # re-armed, which is what drains this dict to empty.
     in_flight: dict[asyncio.Task[Any], int] = {
-        asyncio.ensure_future(branch.__anext__()): idx for idx, branch in enumerate(branches)
+        asyncio.create_task(branch.__anext__()): idx for idx, branch in enumerate(branches)
     }
 
     try:
@@ -169,7 +169,7 @@ async def race_through(chain: list[Op], source: AsyncGenerator, workers: int) ->
                     result = task.result()
                 except StopAsyncIteration:
                     continue
-                in_flight[asyncio.ensure_future(branches[branch].__anext__())] = branch
+                in_flight[asyncio.create_task(branches[branch].__anext__())] = branch
                 yield result
     finally:
         # if we're leaving early (e.g. a task raised), make sure no other
