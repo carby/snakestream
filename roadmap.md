@@ -16,27 +16,27 @@ value rather than a class hierarchy, `summing_int`/`summing_long` sharing a body
 
 ## Now
 
-Five stories, the remainder of the six that bundled the fourteen findings of a
+Four stories, the remainder of the six that bundled the fourteen findings of a
 legibility and stdlib-usage read of all twelve modules in `src/snakestream/`
-(2026-08-25, at `946fff0`). **Story 1 is done** — see **Done**. The original
-numbering is kept for the five that remain, so the dependency notes and the
-per-story headings below still refer to the same stories they always did.
+(2026-08-25, at `946fff0`). **Stories 1 and 2 are done** — see **Done**. The
+original numbering is kept for the four that remain, so the dependency notes
+and the per-story headings below still refer to the same stories they always
+did.
 
-They are **sequenced in dependency order**: stories 2 and 3 both edit
-`stream.py` and must land in that order, story 5 renames the file story 4
-rewrites, and story 6 is independent of the other four and may be taken at any
-point.
+They are **sequenced in dependency order**: story 3 is next, and edits
+`stream.py` right after story 2's edits landed there; story 5 renames the file
+story 4 rewrites; and story 6 is independent of the other three and may be
+taken at any point.
 
 Only story 4 faces the benchmark gate; its figures are already measured and
 recorded below, so the gate is a confirmation run rather than an open question.
-Stories 2 and 6 change observable behaviour and carry spec impact; stories
-3, 4 and 5 are private-surface only. Read **Implementation notes for the
+Story 6 changes observable behaviour and carries spec impact; stories 3, 4
+and 5 are private-surface only. Read **Implementation notes for the
 2026-08-25 batch** below the table before picking any of them up — it carries
 the repros, the anchors, the per-story tripwire and the spec impact.
 
 | # | Story | Why it sits here in the order |
 |---|---|---|
-| 2 | **`stream.py`'s API surface outside the chain: `iterate`, `concat`, `close`.** **(a)** `Stream.iterate()` (`stream.py:201`) is the one user-supplied callable in the library not routed through `_maybe_await`/`AsyncDispatch`, so an `async def nxt` produces a stream of un-awaited coroutine objects instead of values, with no error. **(b)** `Stream.concat()` (`stream.py:190`) builds its result with an empty close-handler list, dropping both operands' handlers; Java's `Stream.concat` returns a stream whose `close()` closes both inputs. **(c)** `close()` (`stream.py:166`) collects every handler exception and raises `exceptions[0]`, discarding the rest entirely. | After story 1, before story 3 — all three edit `stream.py`, and story 3 rewrites the intermediate-op block that sits between them. **(a) is the only silent-wrong-answer in the batch** and is what earns this story its place this high: it does not raise, it returns garbage. **(c) is narrower than it first looks and must not be overreached**: raising the first exception is *specified* (`stream-close-handling` spec, "Requirement: close() invokes every registered close handler", spec line 23) and *tested* (`tests/test_close.py:138-151`, `test_close_with_multiple_raising_handlers_runs_all_and_raises_first`). The story is to stop losing the other exceptions' detail while keeping which one is raised unchanged — not to change the rule. **(b) is a clean spec gap**: `stream-concat` spec says nothing about close handlers, so it is an ADDED requirement rather than a MODIFIED one. |
 | 3 | **Chain-building and dead-code smalls.** **(a)** The eight intermediate ops (`stream.py:211-239`) are each `cast("Stream[X]", self._derive(self._chain + [_SomeOp(...)], self._executor))`; a private `_extend(op)` leaves each as `return self._extend(_MapOp(mapper))` and puts `self._chain + [op]` in one place. **(b)** `_ForEachSink._finish` (`terminals.py:52`) returns `None` for a container that `_create_container` already always makes `None` — it restates `TerminalSink._finish`'s default. **(c)** `sorted(..., reverse=False)` (`stream.py:226`) is the only unannotated parameter in `stream.py`. **(d)** `execution.py:140,153` use `asyncio.ensure_future` where both arguments are always coroutines, so `asyncio.create_task` is the documented-preferred spelling and skips `ensure_future`'s type dispatch. | Last of the three `stream.py` stories because **(a)** rewrites all eight intermediate one-liners, which is the widest diff in that file and the one most likely to conflict with stories 1 and 2 if taken first. None of the four changes behaviour, so the whole story rides one tripwire: the suite passes with no test file edited. **(d)** is the only part on a per-element path (once per element per racing branch) and is a spelling change with no allocation difference, so it does not pull the story into the benchmark gate — but if the diff grows past a one-word substitution there, that is a sign it went wrong. |
 | 4 | **The sync-comparator fast path: `functools.cmp_to_key` in `_SortedSink`** (`ops.py:91-108`, `sort.py:33`). `_SortedSink.end()` always calls `merge_sort`, and its own comment states the cost as if unavoidable — "Trades away Timsort's speed for sync comparators". It is avoidable: `sort.py` already classifies comparators with `is_async_callable`, so the sync case can take `cache.sort(key=cmp_to_key(comparator))` and leave `merge_sort` for the async case only. **Measured 2.2x** with the spec-required `bool` rejection preserved, 3.6x without it (table below). | Independent of stories 1-3, and **the largest measured win in the batch by a wide margin** — the only story here that makes the library faster rather than easier to read. It sits after them only because they are cheaper and carry crashes; a reader with time for one story should consider taking this one first. It is the single benchmark-gated story, and the gate is already half-run: the figures below establish the win, so the confirmation run only has to show the async path unchanged. `comparator-contract` spec's "Comparators must not return bool" requirement is the constraint that decides the shape — see the notes. |
 | 5 | **`sort.py` holds two different things; name it for what is in it.** `merge_sort` is sorting, but `is_new_extremum` (`sort.py:11`) and `check_comparator_result_type` (`sort.py:6`) are comparator *semantics*, consumed by `terminals.py` and `collector.py` and never by the sort. `comparator.py` names the whole contents, and matches the `comparator-contract` spec that already governs all three functions. The module is also the only fully unannotated one in `src/`, despite `ty` running in CI on the 3.14 leg. | **Strictly after story 4**, which rewrites `merge_sort`'s only caller and decides whether `check_comparator_result_type` still runs per comparison — renaming a file that is about to be substantially rewritten puts the churn in the wrong commit and makes story 4's diff unreadable. Fully test-invisible: **zero references to `snakestream.sort`, `merge_sort`, `is_new_extremum` or `check_comparator_result_type` outside `src/`** (verified 2026-08-25 across `tests/`, `README.md` and `openspec/specs/`), which is unusual enough for a rename that it is worth the grep before starting rather than assuming it still holds. |
@@ -48,10 +48,10 @@ Line anchors are as of `946fff0` and will drift — the symbol names are the
 durable part.
 
 **Tripwires.** Story 3 changes nothing observable, so the full suite must pass
-**with no test file edited** — that is its entire verification story. Stories
-2 and 6 each legitimately touch tests, but only at the specific sites named
-in the table; a test edit anywhere else in those stories is a signal the change
-went wider than the story. Story 5 must touch no test at all (see its grep).
+**with no test file edited** — that is its entire verification story. Story
+6 legitimately touches tests, but only at the specific sites named in the
+table; a test edit anywhere else in that story is a signal the change went
+wider than the story. Story 5 must touch no test at all (see its grep).
 Story 4 must leave every existing `sorted()` test passing unmodified, including
 the async-comparator and bool-rejection cases.
 
@@ -60,24 +60,6 @@ stream construction, once per composition, or once per collection. The one
 per-element site is story 3(d)'s `ensure_future` -> `create_task`, which is a
 spelling change on the same object graph. Do not spend a harness run on the
 others.
-
-**Story 2(a), the repro:**
-
-```python
-async def nxt(x):
-    return x + 1
-
-
-await Stream.iterate(1, nxt).limit(3).to_array()
-# [1, <coroutine object nxt>, <coroutine object nxt>]   -- no error raised
-```
-
-Two acceptable shapes, and the story should pick one explicitly rather than
-drift into it: dispatch `nxt` like every other user callable (making `iterate`
-consistent with the rest of the library, at the cost of an async generator
-where a sync one is used today), or reject a coroutine function up front the
-way `flat_map` already does at `stream.py:212-215`. The silent-wrong-answer
-path is the only outcome that is not acceptable.
 
 **Story 4, the measured figures.** 20,000 random floats, sync 3-way
 comparator, best of 5, Python 3.14.5:
@@ -184,6 +166,65 @@ core semantic.
   "Source acceptance does not depend on execution mode" requirement ADDED to
   `stream-execution-model` — the gap the crash fell through. See
   `openspec/changes/define-and-guard-stream-sources`.
+
+- **Settled `stream.py`'s API surface outside the chain: `iterate`, `concat`,
+  `close`** (2026-08-25). Story 2 of the 2026-08-25 batch. Three independent
+  edits, one commit each, landed in order so a bisect lands on one behaviour.
+
+  **(a)** `Stream.iterate()`'s `nxt` was the one user-supplied callable in the
+  library not routed through the `is_async_callable`/`isawaitable` dispatch
+  shape every other callable uses — an `async def nxt` silently produced a
+  stream of un-awaited coroutine objects:
+
+  ```python
+  async def nxt(x):
+      return x + 1
+
+
+  await Stream.iterate(1, nxt).limit(3).to_array()
+  # [1, <coroutine object nxt>, <coroutine object nxt>]   -- no error raised
+  ```
+
+  `_make_iterator` is now an `async def` generator carrying the same
+  `is_async`/`checked` locals as the canonical shape in
+  `callable_dispatch.py`, and `nxt`'s type moved from `Callable[[T], T]` to
+  the existing `Mapper[T, T]` — dispatched rather than pre-call-rejected
+  (the `flat_map` shape), since an async `nxt` is not structurally impossible
+  the way an async `flat_mapper` is, and rejection would still miss a
+  callable object with an async `__call__`. New capability spec
+  `stream-iterate`, covering the lazy seed/`nxt` sequence and all four
+  sync/async function/callable-object forms — nothing had specified
+  `iterate()`'s own contract before this.
+
+  **(b)** `Stream.concat(a, b)` built its result with an empty close-handler
+  list, discarding both operands' handlers. It now constructs the result with
+  `a._close_handlers + b._close_handlers` — a fresh list, so registering a
+  handler on either input after `concat()` returns does not retroactively
+  reach the result — matching Java's `Stream.concat`, whose result closes
+  both inputs. ADDED requirement on the `stream-concat` capability, a clean
+  spec gap rather than a rule change.
+
+  **(c)** `close()` collected every handler's exception but discarded every
+  one except the first. It still raises the first — that rule is unchanged,
+  pinned by the existing `test_close_with_multiple_raising_handlers_runs_all_and_raises_first`,
+  verified to pass unmodified — but now attaches the later exceptions to it
+  via `BaseException.add_note()` (Python 3.11+) in encounter order, so a
+  traceback shows all of them. On 3.10 the behaviour is exactly what shipped
+  before: first exception raised, no notes. `sys.version_info >= (3, 11)`
+  narrows for `ty` without a cast, which `hasattr(exc, "add_note")` would
+  not. MODIFIED requirement on `stream-close-handling`.
+
+  **Tripwire held exactly as scoped:** the only test files touched are
+  `tests/test_iterate.py`, `tests/test_concat.py` and `tests/test_close.py`,
+  and the pinned multi-raise test needed no edit. 561 tests green (536 + 25
+  new), `ruff`, `ruff format --check`, `ty check src` and
+  `openspec validate --strict` all pass, coverage 98.03%. No benchmark gate:
+  every site here runs once per stream, once per `concat()` call, or once
+  per `close()` call, never per element — story 4 is the batch's only
+  benchmark-gated story. README's `iterate` row now notes `nxt` may be sync
+  or async; no migration-log entry, since the only call shape whose result
+  changed was already producing garbage. See
+  `openspec/changes/settle-stream-api-outside-the-chain`.
 
 - **Took the final three-part smalls batch: `unordered()`/`on_close()`
   docstrings, the `PROCESSES` top-level export, and the dead `pylint`
