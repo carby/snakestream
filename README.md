@@ -111,7 +111,7 @@ In snakestream this has been omitted since python has generators and those can b
 |   | ~~generate(supplier: Callable[T])~~           | Stream        | static   | Not relevant. We can send in generators directly to `Stream.of()` already|
 | x | is_ordered() | bool | instance | Returns whether this stream is still considered order-dependent (i.e. `unordered()` has not been called) |
 | x | is_parallel() | bool | instance | Returns whether this stream, if a terminal operation were to be executed, would execute in parallel |
-| x | iterate(seed: T, nxt: Callable[[T], T]) | Stream | static | Returns an infinite sequential ordered Stream produced by iterative application of a function f to an initial element seed, producing a Stream consisting of seed, f(seed), f(f(seed)), etc. |
+| x | iterate(seed: T, nxt: Mapper[T, T]) | Stream | static | Returns an infinite sequential ordered Stream produced by iterative application of a function f to an initial element seed, producing a Stream consisting of seed, f(seed), f(f(seed)), etc. `nxt` may be sync or async, like every other user-supplied callable. |
 | x | iterator() | AsyncGenerator | instance | Composes the current chain and returns the resulting async generator directly, without consuming it, so the caller can drive iteration themselves |
 | x | limit(max_size: int)                    | Stream | instance | Returns a stream consisting of the elements of this stream, truncated to be no longer than max_size() in length. |
 | x | map(mapper: Mapper)                     | Stream | instance | Returns a stream consisting of the results of applying the given function to the elements of this stream. |

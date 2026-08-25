@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from inspect import iscoroutinefunction
+from inspect import isawaitable, iscoroutinefunction
 from typing import TYPE_CHECKING, Any, Generic, cast, overload
-from collections.abc import AsyncGenerator, AsyncIterable, Callable, Coroutine, Generator, Iterable
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Coroutine, Iterable
 
-from snakestream.callable_dispatch import _maybe_await
+from snakestream.callable_dispatch import _maybe_await, is_async_callable
 from snakestream.collector import Collector, StreamingCollector, _CollectorSink, to_list
 from snakestream.exception import IllegalStateException, StreamBuildException
 from snakestream.execution import PROCESSES as PROCESSES, RACING, SEQUENTIAL, Executor
@@ -212,11 +212,21 @@ class Stream(Generic[T]):
         return StreamBuilder()
 
     @staticmethod
-    def iterate(seed: T, nxt: Callable[[T], T]) -> Stream[T]:
-        def _make_iterator(seed: T, nxt: Callable[[T], T]) -> Generator[T, None, None]:
+    def iterate(seed: T, nxt: Mapper[T, T]) -> Stream[T]:
+        async def _make_iterator(seed: T, nxt: Mapper[T, T]) -> AsyncGenerator[T, None]:
+            is_async = is_async_callable(nxt)
+            checked = False
             yield seed
             while True:
-                seed = nxt(seed)
+                r = nxt(seed)
+                if is_async:
+                    r = await cast("Awaitable[T]", r)
+                elif not checked:
+                    checked = True
+                    if isawaitable(r):
+                        is_async = True
+                        r = await r
+                seed = cast(T, r)
                 yield seed
 
         return Stream.of(_make_iterator(seed, nxt))
