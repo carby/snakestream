@@ -120,6 +120,12 @@ class Stream(Generic[T]):
         self._consumed = True
         return new_stream
 
+    def _extend(self, op: Op) -> Stream[Any]:
+        """This stream's chain plus one more op, under the same executor.
+        The chain-extension rule lives here and nowhere else; _derive() runs
+        the consumed check, so this deliberately does not."""
+        return self._derive(self._chain + [op], self._executor)
+
     def _compose(self) -> AsyncGenerator[T, None]:
         """The chain as a generator, under this stream's executor."""
         return self._executor.elements(self._chain, self._source)
@@ -238,10 +244,10 @@ class Stream(Generic[T]):
 
     # Intermediaries
     def filter(self, predicate: Predicate[T]) -> Stream[T]:
-        return cast("Stream[T]", self._derive(self._chain + [_FilterOp(predicate)], self._executor))
+        return self._extend(_FilterOp(predicate))
 
     def map(self, mapper: Mapper[T, R]) -> Stream[R]:
-        return cast("Stream[R]", self._derive(self._chain + [_MapOp(mapper)], self._executor))
+        return self._extend(_MapOp(mapper))
 
     def flat_map(self, flat_mapper: FlatMapper[T, R]) -> Stream[R]:
         # Pre-call rejection, not a dispatch site: flat_mapper must return a
@@ -250,22 +256,22 @@ class Stream(Generic[T]):
         if iscoroutinefunction(flat_mapper):
             raise StreamBuildException("flat_map() does not support coroutines")
 
-        return cast("Stream[R]", self._derive(self._chain + [_FlatMapOp(flat_mapper)], self._executor))
+        return self._extend(_FlatMapOp(flat_mapper))
 
     def sorted(self, comparator: Comparator[T] | None = None, reverse=False) -> Stream[T]:
-        return cast("Stream[T]", self._derive(self._chain + [_SortedOp(comparator, reverse)], self._executor))
+        return self._extend(_SortedOp(comparator, reverse))
 
     def distinct(self) -> Stream[T]:
-        return cast("Stream[T]", self._derive(self._chain + [_DistinctOp()], self._executor))
+        return self._extend(_DistinctOp())
 
     def peek(self, consumer: Consumer[T]) -> Stream[T]:
-        return cast("Stream[T]", self._derive(self._chain + [_PeekOp(consumer)], self._executor))
+        return self._extend(_PeekOp(consumer))
 
     def limit(self, max_size: int) -> Stream[T]:
-        return cast("Stream[T]", self._derive(self._chain + [_LimitOp(max_size)], self._executor))
+        return self._extend(_LimitOp(max_size))
 
     def skip(self, n: int) -> Stream[T]:
-        return cast("Stream[T]", self._derive(self._chain + [_SkipOp(n)], self._executor))
+        return self._extend(_SkipOp(n))
 
     # Terminals
     @overload
