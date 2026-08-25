@@ -64,7 +64,10 @@ others.
 **Story 2(a), the repro:**
 
 ```python
-async def nxt(x): return x + 1
+async def nxt(x):
+    return x + 1
+
+
 await Stream.iterate(1, nxt).limit(3).to_array()
 # [1, <coroutine object nxt>, <coroutine object nxt>]   -- no error raised
 ```
