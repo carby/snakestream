@@ -1,5 +1,5 @@
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 
 if TYPE_CHECKING:
     from snakestream.stream import Stream  # pragma: no cover
@@ -7,6 +7,12 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 R = TypeVar("R")
 A = TypeVar("A")
+
+# An async source, whatever kind: the async generators source normalization
+# builds, and the bare AsyncIterables accepted untouched. Bound rather than
+# fixed to AsyncGenerator so a helper handed one kind gives that same kind
+# back, and its callers don't have to widen in sympathy.
+_Aiter = TypeVar("_Aiter", bound=AsyncIterator[Any])
 
 # Sink protocol: the state passed through begin(), keyed by the originating
 # operation object so a sink can look up its own shared state.

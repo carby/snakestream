@@ -201,3 +201,41 @@ async def test_multiple_args_stream() -> None:
     actual = await Stream.of(*arr1, *arr2).collect(to_list())
 
     assert [1, 2, 2, 3, 4] == actual
+
+
+@pytest.mark.asyncio
+async def test_single_bytearray_input() -> None:
+    # given
+    source = bytearray(b"ab")
+
+    # when
+    actual = await Stream.of(source).collect(to_list())
+
+    # then: one element, the bytearray itself, not the ints 97 and 98
+    assert [source] == actual
+    assert isinstance(actual[0], bytearray)
+
+
+@pytest.mark.asyncio
+async def test_single_memoryview_input() -> None:
+    # given
+    source = memoryview(b"ab")
+
+    # when
+    actual = await Stream.of(source).collect(to_list())
+
+    # then: one element, the memoryview itself, not the ints 97 and 98
+    assert 1 == len(actual)
+    assert actual[0] is source
+
+
+@pytest.mark.asyncio
+async def test_the_three_binary_types_agree() -> None:
+    # given: the same two bytes, immutable, mutable, and as a view
+    # when
+    as_bytes = await Stream.of(b"ab").collect(to_list())
+    as_bytearray = await Stream.of(bytearray(b"ab")).collect(to_list())
+    as_memoryview = await Stream.of(memoryview(b"ab")).collect(to_list())
+
+    # then: how the buffer is spelled does not change the element count
+    assert 1 == len(as_bytes) == len(as_bytearray) == len(as_memoryview)

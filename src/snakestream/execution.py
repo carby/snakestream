@@ -17,7 +17,7 @@ from typing import Any, ClassVar
 from collections.abc import AsyncGenerator, AsyncIterator
 
 from snakestream.sink import GeneratorBridgeSink, Op, Sink, TerminalSink
-from snakestream.type import StateMap, T
+from snakestream.type import StateMap, T, _Aiter
 
 # How many branches the racing executor fans a chain out across. Bound into
 # RACING below at import time, which is where it was always effectively bound:
@@ -25,19 +25,30 @@ from snakestream.type import StateMap, T
 PROCESSES: int = 4
 
 
+async def _maybe_aclose(thing: AsyncIterator) -> None:
+    """Close an async source, if it is one of the closeable ones — some
+    accepted sources (e.g. a bare async iterator implementing only __anext__)
+    have no aclose(). Split out of _maybe_aclosing() below so that _guarded(),
+    which has to close under a lock it cannot hold across a context manager's
+    exit, still asks the same question in the same words."""
+    # getattr rather than hasattr so the widened annotation still type-checks;
+    # narrowing to isinstance(thing, AsyncGenerator) would type-check too but
+    # would stop closing a duck-typed closeable that is not a full generator.
+    aclose = getattr(thing, "aclose", None)
+    if aclose is not None:
+        await aclose()
+
+
 @asynccontextmanager
-async def _maybe_aclosing(thing: AsyncGenerator) -> AsyncIterator[AsyncGenerator]:
+async def _maybe_aclosing(thing: _Aiter) -> AsyncIterator[_Aiter]:
     """Like contextlib.aclosing(), but a no-op on exit if the wrapped object
-    has no aclose() — some accepted sources (e.g. a bare async iterator
-    implementing only __anext__) don't. The finally is load-bearing: the
-    source must be closed on the way out of a body that raised or broke
-    early (limit, find_any, any_match), not just one that ran to
-    exhaustion."""
+    has no aclose(). The finally is load-bearing: the source must be closed on
+    the way out of a body that raised or broke early (limit, find_any,
+    any_match), not just one that ran to exhaustion."""
     try:
         yield thing
     finally:
-        if hasattr(thing, "aclose"):
-            await thing.aclose()
+        await _maybe_aclose(thing)
 
 
 def _wrap_sink(intermediaries: list[Op], terminal: Sink[Any]) -> Sink[Any]:
@@ -64,9 +75,12 @@ async def _copy_into(head: Sink[Any], src: AsyncGenerator, state_map: StateMap) 
     await head.end()
 
 
-async def _guarded(source: AsyncGenerator, lock: asyncio.Lock) -> AsyncGenerator:
+async def _guarded(source: AsyncIterator, lock: asyncio.Lock) -> AsyncGenerator:
     """One branch's view of a source shared with other branches: every pull and
-    the final close happen under the shared lock."""
+    the final close happen under the shared lock. The source is already an
+    iterator (race_through() calls aiter() once for all branches) and is only
+    closed if it is closeable, so this accepts every source the sequential path
+    does — not just the async generators _normalize() builds."""
     try:
         while True:
             async with lock:
@@ -77,7 +91,7 @@ async def _guarded(source: AsyncGenerator, lock: asyncio.Lock) -> AsyncGenerator
             yield item
     finally:
         async with lock:
-            await source.aclose()
+            await _maybe_aclose(source)
 
 
 # --- the execution primitives -------------------------------------------
@@ -130,7 +144,12 @@ async def race_through(chain: list[Op], source: AsyncGenerator, workers: int) ->
         if state is not None:
             state_map[op] = state
     lock = asyncio.Lock()
-    branches = [stream_through(chain, _guarded(source, lock), state_map) for _ in range(workers)]
+    # aiter() once, here, and not inside _guarded(): _guarded() runs once per
+    # branch, so a source whose __aiter__ hands back a fresh iterator each call
+    # would give every branch its own copy and yield the elements `workers`
+    # times over. One iterator, shared under the lock, is what racing means.
+    shared = aiter(source)
+    branches = [stream_through(chain, _guarded(shared, lock), state_map) for _ in range(workers)]
     # the in-flight __anext__() per branch, keyed by task so a completed one
     # maps back to its branch in O(1); it doubles as the waitlist and as the
     # "any branch still running" test, so nothing here is scanned or rebuilt
