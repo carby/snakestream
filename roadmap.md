@@ -16,28 +16,25 @@ value rather than a class hierarchy, `summing_int`/`summing_long` sharing a body
 
 ## Now
 
-Two stories, the remainder of the six that bundled the fourteen findings of a
+One story, the last of the six that bundled the fourteen findings of a
 legibility and stdlib-usage read of all twelve modules in `src/snakestream/`
-(2026-08-25, at `946fff0`). **Stories 1, 2, 3 and 4 are done** — see **Done**.
-The original numbering is kept for the two that remain, so the dependency notes
-and the per-story headings below still refer to the same stories they always
-did.
+(2026-08-25, at `946fff0`). **Stories 1, 2, 3, 4 and 5 are done** — see
+**Done**. The original numbering is kept for the one that remains, so the notes
+and the per-story heading below still refer to the same story they always did.
 
-They are **sequenced in dependency order**: story 5 is next, and it now has
-more to place than it did when it was written — see its row. Story 6 is
-independent of it and may be taken at any point.
+**The dependency chain is finished.** Story 6 was always independent of the
+rest and is last only because nothing else waited on it, so there is no
+sequencing left to respect — it can be taken whenever.
 
 **The benchmark gate is spent.** It applied only to story 4, which has landed
-and confirmed its figures; neither remaining story has a per-element site, so
-neither should spend a harness run. Story 6 changes observable behaviour and
-carries spec impact; story 5 is private-surface only. Read **Implementation
-notes for the 2026-08-25 batch** below the table before picking either of them
-up — it carries the repros, the anchors, the per-story tripwire and the spec
+and confirmed its figures; story 6 has no per-element site and should not spend
+a harness run. It does change observable behaviour and carries spec impact.
+Read **Implementation notes for the 2026-08-25 batch** below the table before
+picking it up — it carries the repros, the anchors, the tripwire and the spec
 impact.
 
 | # | Story | Why it sits here in the order |
 |---|---|---|
-| 5 | **`sort.py` holds two different things; name it for what is in it.** `merge_sort` is sorting, but `is_new_extremum` (`sort.py:11`) and `check_comparator_result_type` (`sort.py:6`) are comparator *semantics*, consumed by `terminals.py` and `collector.py` and never by the sort. `comparator.py` names the whole contents, and matches the `comparator-contract` spec that already governs all three functions. **Story 4 changed the count: the module now holds three things, not two** — `merge_sort` (now the async path only), the comparator semantics, and the new `sort()` dispatcher that chooses between them, plus its `_checked()` wrapper. `sort()` is the awkward one: it is neither sorting-only nor comparator-semantics-only, it is the seam between them, so `comparator.py` does not obviously name it either. Deciding where `sort()` lands is now part of this story rather than a detail of it. Story 4 also annotated `sort()`/`_checked()` and left the rest of the module bare, so the "only fully unannotated module" note below is now "mostly unannotated". The module is also the only fully unannotated one in `src/`, despite `ty` running in CI on the 3.14 leg. | **Story 4 has landed, so this is unblocked and next.** It was sequenced behind story 4 because that story rewrote `merge_sort`'s only caller and decided whether `check_comparator_result_type` still runs per comparison — it does, in `_checked()`, on the sync path. The line anchors in this row are stale as a result: `sort.py` is now ~90 lines, not ~40. Fully test-invisible: **zero references to `snakestream.sort`, `merge_sort`, `is_new_extremum` or `check_comparator_result_type` outside `src/`** (verified 2026-08-25 across `tests/`, `README.md` and `openspec/specs/`), which is unusual enough for a rename that it is worth the grep before starting rather than assuming it still holds. |
 | 6 | **Collector containers, and the duplicate-key exception** (`collector.py`, `sink.py`). **(a)** Nine hand-written `__slots__`-plus-`__init__` classes — `_SumBox`, `_AvgBox`, `_SummaryBox`, `_ExtremumBox`, `_ReduceBox`, `_ToMapBox`, `_GroupBox`, `_MappingBox`, `_CollectAndThenBox` (`collector.py:157,193,259,315,360,427,482,579,615`) — are ~90 lines of boilerplate that `@dataclass(slots=True)` generates. **(b)** `Counter` (`sink.py:36`) shadows `collections.Counter` and adds exactly one thing to `Box`: a default of `0`. **(c)** `to_map()` raises `ValueError` on a duplicate key (`collector.py:469`) where Java's `Collectors.toMap` throws `IllegalStateException` — a class this project already defines in `exception.py`. | Independent of everything above; it is last only because nothing else waits on it. **(a) must state plainly why it is not the rejected `CallSite` proposal**: those nine containers are built once per collection, never per element, so unlike wrapping per-element callables this cannot land on the hot path — attribute access after construction is byte-for-byte what it is today. **Two parts are not test-invisible and must be planned for, not discovered:** `tests/test_sink.py` imports `Counter` and constructs `Counter()`, `Counter(7)` and `Counter(10)` (lines 4, 277-278, 304, 326-327, 336), so (b) is an API change to a tested name; and `tests/test_to_map.py:47` asserts `pytest.raises(ValueError)`, so (c) is a **public breaking change** needing a `collector-to-map` spec delta and a README migration-log entry alongside the `str`/`bytes` and kwargs entries. |
 
 ### Implementation notes for the 2026-08-25 batch
@@ -48,15 +45,15 @@ durable part.
 **Tripwires.** Story
 6 legitimately touches tests, but only at the specific sites named in the
 table; a test edit anywhere else in that story is a signal the change went
-wider than the story. Story 5 must touch no test at all (see its grep) — and
-re-run that grep before starting, since story 4 has since changed `sort.py`.
-Story 4's tripwire held: every existing `sorted()` test passed unmodified, and
-the one test it added was flagged and approved rather than absorbed.
+wider than the story. Story 4's tripwire held: every existing `sorted()` test
+passed unmodified, and the one test it added was flagged and approved rather
+than absorbed. Story 5's held too, and more strictly — it touched no test at
+all, and coverage came back at the same 98.05% it started from.
 
 **Benchmark gate: spent.** It applied to story 4 only, which has landed and
 confirmed its figures (see **Done**). Every other site in this batch runs once
 per stream construction, once per composition, or once per collection. Do not
-spend a harness run on the two that remain.
+spend a harness run on the one that remains.
 
 **Story 4's figures and its settled open question** have moved to **Done** now
 that the story has landed. The open question the notes left for it — how to keep
@@ -86,6 +83,76 @@ core semantic.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should instead be documented as intentional next to the `str`/`bytes` note. Surfaced 2026-08-20 in the same code-quality read that produced **Now** items 1-4. |
 
 ## Done
+
+- **`comparator.py` split out of `sort.py`** (2026-08-25). Story 5 of the
+  2026-08-25 batch, and the last of the dependency chain — only the independent
+  story 6 remains.
+
+  `sort.py` was named for one of the three things it held.
+  `check_comparator_result_type` and `is_new_extremum` are comparator
+  *semantics*, and their consumers — `_MinMaxSink` in `terminals.py`,
+  `min_by`/`max_by` in `collector.py` — sort nothing, yet both imported them
+  from a module called `sort`. That misdirection was the whole defect.
+
+  **Two modules, not one, and that was the user's call.** The roadmap row's
+  literal reading was to fold everything into one `comparator.py`, defensible
+  since `comparator-contract` governs all five functions. Rejected because it
+  renames around the defect rather than fixing it: one big `comparator.py`
+  would leave `ops.py` importing a *sort dispatcher* from a module named
+  `comparator` — the same misdirection pointed the other way. Split, each
+  importer gets a module whose name is accurate for what it takes from it, and
+  the already one-way dependency (sorting calls semantics; never the reverse)
+  becomes a visible import edge instead of an implicit file ordering.
+
+  **The row's open question — where `sort()` lands — was answered `sort.py`,
+  on the rule that the seam belongs with the caller, not the definer.**
+  `sort()` consumes comparator semantics exactly as `_checked` and `_merge` do.
+  Putting it in `comparator.py` would have left that module owning a function
+  whose only caller is `ops.py`, and `sort.py` reduced to `_checked` plus
+  `merge_sort` with no entry point — a module nothing imports directly. The
+  confirmation is `ops.py:15`: `from snakestream.sort import sort` reads
+  correctly before and after, unchanged, and `_SortedSink.end()`'s comment
+  naming `sort.py` stayed true. The decision that required no edit at the only
+  external call site is the one that matched what was already there.
+
+  **Beyond the story as written: `type.py` gained an alias, and `ty` is what
+  forced it.** The plan said to annotate `merge_sort`/`_merge` with the
+  `Comparator` union, reasoning it was a safe supertype and that adding a
+  narrowed alias was a different story. That was wrong on a checkable fact.
+  `Comparator` is `Callable[[T, T], int | Awaitable[int]]` and `_merge` awaits
+  it unconditionally, so annotating turned the await into
+  `invalid-await: int | Awaitable[int] is not awaitable`. The union is not a
+  safe supertype where the body does something only the narrow arm supports.
+  While the functions were bare, `ty` inferred nothing and said nothing —
+  **annotating is what surfaced it**, which is the argument for closing out
+  unannotated code rather than leaving it. Nothing else in the codebase hit
+  this because every other comparator await goes through
+  `_maybe_await`/`AsyncDispatch`, which return `Any`; `_merge` is the only site
+  awaiting a `Comparator` directly. Resolved with one line in `type.py` —
+  `AsyncComparator = Callable[[T, T], Awaitable[int]]` — and
+  `cast("AsyncComparator", comparator)` at `sort()`'s two reroute sites, where
+  `is_async_callable` or the trial comparison has just *proved* the narrowing.
+  A `cast("Awaitable[int]", ...)` inside `_merge`'s loop was rejected: it
+  states the narrowing at the least informative point and puts a cast on the
+  per-comparison path. Flagged and user-approved rather than absorbed.
+
+  **The annotation strand was an assumption, and it is worth recording as
+  one.** The roadmap row named the module's bare functions, so the work was
+  taken into scope without being confirmed. It paid for itself by finding the
+  `Comparator` gap, but the precedent is the assumption, not the luck. `src/`
+  now has **no unannotated function at all** (verified by `ast`, not grep).
+
+  **A pure move, and the instruments say so.** 562 tests green with **no test
+  file modified**, and coverage back at exactly **98.05%** — a move cannot
+  shift coverage, so an unchanged number is the evidence nothing else happened.
+  The `sort.py` diff is three hunks: one added import, the two removed
+  functions, and one docstring phrase (`_checked`'s "the same trick
+  is_new_extremum uses *above*", which the split falsified). `ruff`,
+  `ruff format --check`, `ty check src` and `openspec validate --strict` all
+  pass, plus a clean-interpreter `import snakestream` to rule out a cycle
+  between the two new modules. No spec impact — `skip_specs: true`; every
+  moved function kept its name, signature and body. See
+  `openspec/changes/split-sort-into-comparator-and-sort`.
 
 - **The sync-comparator fast path** (2026-08-25). Story 4 of the 2026-08-25
   batch, and the only one in it that makes the library faster rather than
