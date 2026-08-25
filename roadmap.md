@@ -16,58 +16,28 @@ value rather than a class hierarchy, `summing_int`/`summing_long` sharing a body
 
 ## Now
 
-One story, the last of the six that bundled the fourteen findings of a
-legibility and stdlib-usage read of all twelve modules in `src/snakestream/`
-(2026-08-25, at `946fff0`). **Stories 1, 2, 3, 4 and 5 are done** — see
-**Done**. The original numbering is kept for the one that remains, so the notes
-and the per-story heading below still refer to the same story they always did.
+**Empty as of 2026-08-25.** The six-story batch that bundled the fourteen
+findings of the legibility and stdlib-usage read of all twelve modules in
+`src/snakestream/` (2026-08-25, at `946fff0`) is **closed** — stories 1
+through 6 are all in **Done**. The dependency chain finished with story 5, and
+story 6, which nothing waited on, went last.
 
-**The dependency chain is finished.** Story 6 was always independent of the
-rest and is last only because nothing else waited on it, so there is no
-sequencing left to respect — it can be taken whenever.
+The **Implementation notes for the 2026-08-25 batch** that used to sit here —
+repros, line anchors, the tripwire and the benchmark gate — have gone with the
+batch. Each story's **Done** entry carries what it actually found.
 
-**The benchmark gate is spent.** It applied only to story 4, which has landed
-and confirmed its figures; story 6 has no per-element site and should not spend
-a harness run. It does change observable behaviour and carries spec impact.
-Read **Implementation notes for the 2026-08-25 batch** below the table before
-picking it up — it carries the repros, the anchors, the tripwire and the spec
-impact.
-
-| # | Story | Why it sits here in the order |
-|---|---|---|
-| 6 | **Collector containers, and the duplicate-key exception** (`collector.py`, `sink.py`). **(a)** Nine hand-written `__slots__`-plus-`__init__` classes — `_SumBox`, `_AvgBox`, `_SummaryBox`, `_ExtremumBox`, `_ReduceBox`, `_ToMapBox`, `_GroupBox`, `_MappingBox`, `_CollectAndThenBox` (`collector.py:157,193,259,315,360,427,482,579,615`) — are ~90 lines of boilerplate that `@dataclass(slots=True)` generates. **(b)** `Counter` (`sink.py:36`) shadows `collections.Counter` and adds exactly one thing to `Box`: a default of `0`. **(c)** `to_map()` raises `ValueError` on a duplicate key (`collector.py:469`) where Java's `Collectors.toMap` throws `IllegalStateException` — a class this project already defines in `exception.py`. | Independent of everything above; it is last only because nothing else waits on it. **(a) must state plainly why it is not the rejected `CallSite` proposal**: those nine containers are built once per collection, never per element, so unlike wrapping per-element callables this cannot land on the hot path — attribute access after construction is byte-for-byte what it is today. **Two parts are not test-invisible and must be planned for, not discovered:** `tests/test_sink.py` imports `Counter` and constructs `Counter()`, `Counter(7)` and `Counter(10)` (lines 4, 277-278, 304, 326-327, 336), so (b) is an API change to a tested name; and `tests/test_to_map.py:47` asserts `pytest.raises(ValueError)`, so (c) is a **public breaking change** needing a `collector-to-map` spec delta and a README migration-log entry alongside the `str`/`bytes` and kwargs entries. |
-
-### Implementation notes for the 2026-08-25 batch
-
-Line anchors are as of `946fff0` and will drift — the symbol names are the
-durable part.
-
-**Tripwires.** Story
-6 legitimately touches tests, but only at the specific sites named in the
-table; a test edit anywhere else in that story is a signal the change went
-wider than the story. Story 4's tripwire held: every existing `sorted()` test
-passed unmodified, and the one test it added was flagged and approved rather
-than absorbed. Story 5's held too, and more strictly — it touched no test at
-all, and coverage came back at the same 98.05% it started from.
-
-**Benchmark gate: spent.** It applied to story 4 only, which has landed and
-confirmed its figures (see **Done**). Every other site in this batch runs once
-per stream construction, once per composition, or once per collection. Do not
-spend a harness run on the one that remains.
-
-**Story 4's figures and its settled open question** have moved to **Done** now
-that the story has landed. The open question the notes left for it — how to keep
-the one-time `isawaitable` safety net when `list.sort` offers no per-comparison
-`await` — was answered with a trial comparison, not the documented narrowing the
-notes floated as an alternative.
+**Now needs a refill**, and so does **Next**. **Later** is not the place to
+pull from without a decision: every entry there is parked behind an explicit
+call (real multiprocess parallelism and the two items that depend on it, Java 9
+sequencing, `Stream.of()`'s arity semantics), not behind sequencing. The
+natural next source is a fresh read, or the Java-8 parity gaps README still
+tracks as unimplemented.
 
 ## Next
 
-Empty as of 2026-08-25. **Now** holds the whole 2026-08-25 batch as a
-dependency-ordered chain, so pulling anything up from **Later** would interleave
-with it rather than follow it; **Later** also remains parked behind explicit
-decisions rather than sequencing. The next refill comes from finishing the six
-stories above.
+**Empty as of 2026-08-25.** The 2026-08-25 batch closed out of **Now** without
+refilling this, since it was the whole of both buckets. See **Now** for where
+the next items should come from.
 
 ## Later
 
@@ -84,9 +54,88 @@ core semantic.
 
 ## Done
 
+- **Collector containers, and the duplicate-key exception** (2026-08-25).
+  Story 6 of the 2026-08-25 batch — independent of the other five, and the one
+  that closed the batch. Three unrelated defects that shared a neighbourhood.
+
+  **(a) Nine hand-written containers became `@dataclass(slots=True)`.**
+  `_SumBox`, `_AvgBox`, `_SummaryBox`, `_ExtremumBox`, `_ReduceBox`,
+  `_ToMapBox`, `_GroupBox`, `_MappingBox`, `_CollectAndThenBox` each declared a
+  `__slots__` tuple and then wrote the same field list again in an `__init__`.
+  `slots=True` emits the same descriptors, so this is not the rejected
+  `CallSite` proposal wearing a new hat: those containers are built once per
+  collection by a collector's `_supply()`, never per element, and attribute
+  access inside `_accumulate` is unchanged. **Verified rather than asserted** —
+  a before/after harness compared slot names, constructed values and the
+  absence of `__dict__` across all nine and found them identical.
+
+  **The "~90 lines of boilerplate" the roadmap row claimed is not the number.**
+  The real saving is **-34 lines** (`collector.py` -25, `sink.py` -9). The ~90
+  counted the gross volume of `__slots__` tuples plus `__init__` bodies, but
+  the dataclass field declarations that replace them occupy most of that space
+  — a field is still a line. Only `_ToMapBox` is a large win (-10), because its
+  seven-field `__slots__` tuple was formatted across nine lines. The other
+  eight are -2 each. Legibility, not line count, is what this part bought:
+  the field list is now stated once.
+
+  **One field order had to change.** `_SummaryBox` took `seed` positionally but
+  declared `count` first, and a required dataclass field cannot follow
+  defaulted ones, so `total` moved to the front. Its single construction site
+  is `_SummaryBox(seed)`, so it still binds correctly — but it is a real
+  reordering, not a transcription, and it is the one place where the "change
+  nothing but the boilerplate" goal bent.
+
+  **(b) `Counter` is deleted, not renamed.** It shadowed `collections.Counter`
+  and added exactly one thing to `Box`: a default of `0`. Deleting it was the
+  user's call over a rename. The two `ops.py` `make_shared_state()` bodies
+  return `Box(0)`, and `counting()` — which had been passing the class object
+  itself as the supplier, `Collector(Counter, ...)`, relying on that default —
+  became `Collector(lambda: Box(0), ...)`. `partial(Box, 0)` was rejected as a
+  `functools` import for one call site.
+
+  **(c) `to_map` raises `IllegalStateException`, and it stays a `ValueError`
+  break.** Java's `Collectors.toMap` throws `IllegalStateException` on a
+  duplicate key, and this project already defines that class and already raises
+  it for pipeline reuse. The tempting softener — deriving `IllegalStateException`
+  from `ValueError` so existing `except ValueError` sites keep working — was
+  **rejected, and the reason is the other raise site**: the same class is what a
+  reused-stream error raises, and a stream-reuse error is not a `ValueError`
+  under any reading. Softening the break here would have mis-typed it there.
+  Loud for `except ValueError`, invisible to a bare `except`; spec delta on
+  `collector-to-map` and a README migration-log entry.
+
+  **The historical migration-log entry was deliberately left wrong.** README's
+  `redesign-collector-shape` entry illustrates interleaved downstream side
+  effects with "e.g. `to_map`'s duplicate-key `ValueError`". That was true at
+  that release. The log is read chronologically, so editing it would falsify
+  history; the new entry states the current type and the old one keeps its own.
+
+  **The tripwire held, with one honest exception.** 562 tests green,
+  `git diff --stat -- tests/` naming exactly the two files the row predicted.
+  But the row listed five `Counter` sites in `test_sink.py` and there were
+  **six** — a nested `_CountingStatefulOp` at lines 371-372 that the read
+  missed. It is in a named file and the import would not have resolved without
+  it, so it was converted rather than escalated. The lesson is about the
+  enumeration, not the tripwire: a grep would have found it and the row was
+  built from a read.
+
+  **Coverage went 98.05% -> 98.03%, and that is arithmetic, not a regression.**
+  The task list said to treat a drop as a lost test, so it was investigated:
+  missed statements (2), branches (288) and partial branches (26) are identical
+  before and after, and the uncovered set is the same two lines in
+  `_summarizing`. Total statements fell 1147 -> 1136 because the change deletes
+  eleven *covered* statements, which raises the weight of a fixed uncovered
+  remainder. **A pure-deletion change can lower a coverage percentage without
+  uncovering anything** — worth remembering the next time this gate moves.
+
+  `ruff`, `ruff format --check`, `ty check src` and
+  `openspec validate --strict` all pass, plus a clean-interpreter
+  `import snakestream` to rule out a cycle from `collector.py`'s new
+  `exception` import. See `openspec/changes/tidy-collector-containers`.
+
 - **`comparator.py` split out of `sort.py`** (2026-08-25). Story 5 of the
-  2026-08-25 batch, and the last of the dependency chain — only the independent
-  story 6 remains.
+  2026-08-25 batch, and the last of the dependency chain. (Story 6, which
+  nothing waited on, landed after it and closed the batch.)
 
   `sort.py` was named for one of the three things it held.
   `check_comparator_result_type` and `is_new_extremum` are comparator

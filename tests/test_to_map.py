@@ -3,6 +3,7 @@ import asyncio
 import pytest
 
 from snakestream.collector import to_map
+from snakestream.exception import IllegalStateException
 from snakestream.stream import Stream
 
 
@@ -42,9 +43,9 @@ async def test_to_map_async_key_mapper_and_value_mapper_are_awaited() -> None:
 
 
 @pytest.mark.asyncio
-async def test_to_map_duplicate_key_without_merge_function_raises_value_error() -> None:
+async def test_to_map_duplicate_key_without_merge_function_raises_illegal_state_exception() -> None:
     # when / then
-    with pytest.raises(ValueError):
+    with pytest.raises(IllegalStateException):
         await Stream.of(["a", "aa", "b"]).collect(to_map(len, lambda x: x))
 
 

@@ -1,7 +1,7 @@
 import pytest
 
 from snakestream.sink import (
-    Counter,
+    Box,
     GeneratorBridgeSink,
     IntermediateSink,
     Op,
@@ -274,8 +274,8 @@ class _CountingStatefulSink(StatefulSink):
 class _CountingStatefulOp(StatefulOp):
     _sink_cls = _CountingStatefulSink
 
-    def make_shared_state(self) -> Counter:
-        return Counter()
+    def make_shared_state(self) -> Box:
+        return Box(0)
 
 
 @pytest.mark.asyncio
@@ -301,7 +301,7 @@ async def test_fallback_state_comes_from_the_ops_own_factory() -> None:
 async def test_stateful_base_sink_uses_the_state_supplied_in_the_map() -> None:
     op = _CountingStatefulOp()
     sink = op.link(_RecordingTerminalSink())
-    shared = Counter(10)
+    shared = Box(10)
 
     await _drive(sink, [1, 2], {op: shared})
 
@@ -322,9 +322,9 @@ async def test_two_stateful_base_sinks_from_one_op_share_one_counter() -> None:
     assert state_map[op].value == 3
 
 
-def test_counter_starts_at_zero_and_instances_are_independent() -> None:
-    first = Counter()
-    second = Counter()
+def test_box_holds_the_value_it_is_given_and_instances_are_independent() -> None:
+    first = Box(0)
+    second = Box(0)
 
     assert first.value == 0
     assert second.value == 0
@@ -333,7 +333,7 @@ def test_counter_starts_at_zero_and_instances_are_independent() -> None:
 
     assert first.value == 1
     assert second.value == 0
-    assert Counter(7).value == 7
+    assert Box(7).value == 7
 
 
 def test_stateless_op_hands_its_args_to_its_sink() -> None:
@@ -368,8 +368,8 @@ def test_stateful_op_hands_itself_then_its_args_to_its_sink() -> None:
     class _ArgsOp(StatefulOp):
         _sink_cls = _ArgsSink
 
-        def make_shared_state(self) -> Counter:
-            return Counter()
+        def make_shared_state(self) -> Box:
+            return Box(0)
 
     op = _ArgsOp("a", 2)
     sink = op.link(_RecordingTerminalSink())

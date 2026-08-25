@@ -24,15 +24,24 @@ Function valueMapper)`.
 - **WHEN** `to_map(key_mapper, value_mapper)` is given an async `key_mapper` and/or an async `value_mapper`
 - **THEN** the result is computed correctly, with each awaited via the same dispatch used elsewhere in the library
 
-### Requirement: `to_map` raises on duplicate key with no merge function
+### Requirement: `to_map` raises `IllegalStateException` on duplicate key with no merge function
 When no `merge_function` is given and `key_mapper` produces the same key
-for two different elements, `to_map`'s collector SHALL raise `ValueError`,
-matching Java's `Collectors.toMap(keyMapper, valueMapper)` throwing
-`IllegalStateException` on a duplicate key.
+for two different elements, `to_map`'s collector SHALL raise
+`IllegalStateException` (from `snakestream.exception`), matching Java's
+`Collectors.toMap(keyMapper, valueMapper)` throwing `IllegalStateException`
+on a duplicate key. The raised exception SHALL name the colliding key.
 
-#### Scenario: duplicate key without a merge function raises ValueError
+`IllegalStateException` is a direct subclass of `Exception` and SHALL NOT be
+made a subclass of `ValueError`: a caller catching `ValueError` around a
+`to_map` collection no longer catches this.
+
+#### Scenario: duplicate key without a merge function raises IllegalStateException
 - **WHEN** `Stream.of(["a", "aa", "b"]).collect(to_map(lambda x: len(x), lambda x: x))` is called
-- **THEN** a `ValueError` is raised, since `"a"` and `"b"` both map to key `1`
+- **THEN** an `IllegalStateException` is raised, since `"a"` and `"b"` both map to key `1`
+
+#### Scenario: duplicate key is no longer a ValueError
+- **WHEN** `Stream.of(["a", "aa", "b"]).collect(to_map(lambda x: len(x), lambda x: x))` is called inside a `try` that catches only `ValueError`
+- **THEN** the `IllegalStateException` propagates uncaught, since it does not derive from `ValueError`
 
 ### Requirement: `to_map(key_mapper, value_mapper, merge_function)` resolves duplicate keys
 `collector.py` SHALL provide the 3-arg `to_map(key_mapper, value_mapper,

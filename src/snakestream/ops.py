@@ -11,7 +11,7 @@ from typing import Any, cast
 from collections.abc import Awaitable
 
 from snakestream.callable_dispatch import AsyncDispatch
-from snakestream.sink import Counter, IntermediateSink, Op, Sink, StatefulOp, StatefulSink, StatelessOp
+from snakestream.sink import Box, IntermediateSink, Op, Sink, StatefulOp, StatefulSink, StatelessOp
 from snakestream.sort import sort
 from snakestream.type import (
     T,
@@ -187,8 +187,8 @@ class _LimitSink(StatefulSink[T]):
 class _LimitOp(StatefulOp):
     _sink_cls = _LimitSink
 
-    def make_shared_state(self) -> Counter:
-        return Counter()
+    def make_shared_state(self) -> Box:
+        return Box(0)
 
 
 class _SkipSink(StatefulSink[T]):
@@ -206,5 +206,5 @@ class _SkipSink(StatefulSink[T]):
 class _SkipOp(StatefulOp):
     _sink_cls = _SkipSink
 
-    def make_shared_state(self) -> Counter:
-        return Counter()
+    def make_shared_state(self) -> Box:
+        return Box(0)

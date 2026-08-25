@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from inspect import isawaitable
 from typing import Any, Generic, NamedTuple, cast, overload
 from collections.abc import AsyncGenerator, Awaitable, Callable
@@ -7,8 +8,8 @@ from collections.abc import AsyncGenerator, Awaitable, Callable
 from snakestream.execution import _maybe_aclosing
 from snakestream.callable_dispatch import AsyncDispatch, _classify_step, _maybe_await, is_async_callable
 from snakestream.comparator import is_new_extremum
-from snakestream.exception import StreamBuildException
-from snakestream.sink import Counter, TerminalSink, _UNSET
+from snakestream.exception import IllegalStateException, StreamBuildException
+from snakestream.sink import Box, TerminalSink, _UNSET
 from snakestream.type import (
     A,
     R,
@@ -137,13 +138,13 @@ def joining(delimiter: str = "", prefix: str = "", suffix: str = "") -> Collecto
 
 
 def counting() -> Collector[Any, Any, int]:
-    def _accumulate(container: Counter, element: Any) -> None:
+    def _accumulate(container: Box, element: Any) -> None:
         container.value += 1
 
-    def _finish(container: Counter) -> int:
+    def _finish(container: Box) -> int:
         return container.value
 
-    return Collector(Counter, _accumulate, finisher=_finish)
+    return Collector(lambda: Box(0), _accumulate, finisher=_finish)
 
 
 # summing_int/summing_long and averaging_int/averaging_long/averaging_double
@@ -154,13 +155,11 @@ def counting() -> Collector[Any, Any, int]:
 # seed and coercion actually differ.
 
 
+@dataclass(slots=True)
 class _SumBox:
-    __slots__ = ("total", "is_async", "checked")
-
-    def __init__(self, seed: int | float) -> None:
-        self.total = seed
-        self.is_async = False
-        self.checked = False
+    total: int | float
+    is_async: bool = False
+    checked: bool = False
 
 
 def _summing(mapper: NumberMapper, seed: int | float, coerce: Callable[[Any], Any] | None) -> Collector[Any, _SumBox, Any]:
@@ -190,14 +189,12 @@ def _summing(mapper: NumberMapper, seed: int | float, coerce: Callable[[Any], An
     return Collector(_supply, _accumulate, finisher=_finish)
 
 
+@dataclass(slots=True)
 class _AvgBox:
-    __slots__ = ("total", "count", "is_async", "checked")
-
-    def __init__(self) -> None:
-        self.total = 0.0
-        self.count = 0
-        self.is_async = False
-        self.checked = False
+    total: float = 0.0
+    count: int = 0
+    is_async: bool = False
+    checked: bool = False
 
 
 def _averaging(mapper: NumberMapper) -> Collector[Any, _AvgBox, float]:
@@ -256,16 +253,14 @@ class SummaryStatistics(NamedTuple):
     average: float
 
 
+@dataclass(slots=True)
 class _SummaryBox:
-    __slots__ = ("count", "total", "least", "greatest", "is_async", "checked")
-
-    def __init__(self, seed: int | float) -> None:
-        self.count = 0
-        self.total = seed
-        self.least: int | float | None = None
-        self.greatest: int | float | None = None
-        self.is_async = False
-        self.checked = False
+    total: int | float
+    count: int = 0
+    least: int | float | None = None
+    greatest: int | float | None = None
+    is_async: bool = False
+    checked: bool = False
 
 
 def _summarizing(
@@ -312,13 +307,11 @@ def summarizing_double(mapper: NumberMapper) -> Collector[Any, Any, SummaryStati
     return _summarizing(mapper, 0.0, float)
 
 
+@dataclass(slots=True)
 class _ExtremumBox:
-    __slots__ = ("found", "is_async", "checked")
-
-    def __init__(self) -> None:
-        self.found: Any = _UNSET
-        self.is_async = False
-        self.checked = False
+    found: Any = _UNSET
+    is_async: bool = False
+    checked: bool = False
 
 
 def _extremum(comparator: Comparator[T], asc: bool) -> Collector[T, _ExtremumBox, T | None]:
@@ -357,15 +350,13 @@ def max_by(comparator: Comparator[T]) -> Collector[T, Any, T | None]:
     return _extremum(comparator, asc=False)
 
 
+@dataclass(slots=True)
 class _ReduceBox:
-    __slots__ = ("acc", "mapper_is_async", "mapper_checked", "op_is_async", "op_checked")
-
-    def __init__(self, identity: Any) -> None:
-        self.acc = identity
-        self.mapper_is_async = False
-        self.mapper_checked = False
-        self.op_is_async = False
-        self.op_checked = False
+    acc: Any
+    mapper_is_async: bool = False
+    mapper_checked: bool = False
+    op_is_async: bool = False
+    op_checked: bool = False
 
 
 @overload
@@ -424,25 +415,15 @@ def reducing(identity: Any = _UNSET, mapper: Any = _UNSET, binary_operator: Any 
     return Collector(_supply, _accumulate, finisher=_finish)
 
 
+@dataclass(slots=True)
 class _ToMapBox:
-    __slots__ = (
-        "result",
-        "key_is_async",
-        "key_checked",
-        "value_is_async",
-        "value_checked",
-        "merge_is_async",
-        "merge_checked",
-    )
-
-    def __init__(self) -> None:
-        self.result: dict[Any, Any] = {}
-        self.key_is_async = False
-        self.key_checked = False
-        self.value_is_async = False
-        self.value_checked = False
-        self.merge_is_async = False
-        self.merge_checked = False
+    result: dict[Any, Any] = field(default_factory=dict)
+    key_is_async: bool = False
+    key_checked: bool = False
+    value_is_async: bool = False
+    value_checked: bool = False
+    merge_is_async: bool = False
+    merge_checked: bool = False
 
 
 def to_map(
@@ -466,7 +447,7 @@ def to_map(
             value = await value
         if key in container.result:
             if merge_function is None:
-                raise ValueError(f"Duplicate key: {key!r}")
+                raise IllegalStateException(f"Duplicate key: {key!r}")
             merged, container.merge_is_async, container.merge_checked = _classify_step(
                 merge_function, container.merge_is_async, container.merge_checked, container.result[key], value
             )
@@ -479,15 +460,13 @@ def to_map(
     return Collector(_supply, _accumulate, finisher=_finish)
 
 
+@dataclass(slots=True)
 class _GroupBox:
-    __slots__ = ("groups", "key_is_async", "key_checked", "acc_is_async", "acc_checked")
-
-    def __init__(self, initial: dict[Any, Any]) -> None:
-        self.groups = initial
-        self.key_is_async = False
-        self.key_checked = False
-        self.acc_is_async = False
-        self.acc_checked = False
+    groups: dict[Any, Any]
+    key_is_async: bool = False
+    key_checked: bool = False
+    acc_is_async: bool = False
+    acc_checked: bool = False
 
 
 async def _group_into(
@@ -576,15 +555,13 @@ def partitioning_by(
     return Collector(_supply, _accumulate, finisher=_finish)
 
 
+@dataclass(slots=True)
 class _MappingBox:
-    __slots__ = ("container", "mapper_is_async", "mapper_checked", "acc_is_async", "acc_checked")
-
-    def __init__(self, container: Any) -> None:
-        self.container = container
-        self.mapper_is_async = False
-        self.mapper_checked = False
-        self.acc_is_async = False
-        self.acc_checked = False
+    container: Any
+    mapper_is_async: bool = False
+    mapper_checked: bool = False
+    acc_is_async: bool = False
+    acc_checked: bool = False
 
 
 def mapping(mapper: Mapper[T, R], downstream: Collector[R, Any, Any]) -> Collector[T, Any, Any]:
@@ -612,13 +589,11 @@ def mapping(mapper: Mapper[T, R], downstream: Collector[R, Any, Any]) -> Collect
     return Collector(_supply, _accumulate, finisher=_finish)
 
 
+@dataclass(slots=True)
 class _CollectAndThenBox:
-    __slots__ = ("container", "acc_is_async", "acc_checked")
-
-    def __init__(self, container: Any) -> None:
-        self.container = container
-        self.acc_is_async = False
-        self.acc_checked = False
+    container: Any
+    acc_is_async: bool = False
+    acc_checked: bool = False
 
 
 async def _finish_collecting_and_then(
