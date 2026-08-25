@@ -129,3 +129,13 @@ async def test_sorted_rejects_async_bool_comparator() -> None:
     # when / then
     with pytest.raises(TypeError):
         await Stream.of(outset).sorted(comparator=async_compare).collect(to_list())
+
+
+@pytest.mark.asyncio
+async def test_sorted_rejects_non_int_on_a_later_comparison() -> None:
+    # the int contract holds for every comparison, not just the first: this
+    # comparator returns int for (3, 1) and float once 2.5 is involved
+    outset = [3, 1, 2.5]
+    # when / then
+    with pytest.raises(TypeError):
+        await Stream.of(outset).sorted(comparator=lambda a, b: a - b).collect(to_list())

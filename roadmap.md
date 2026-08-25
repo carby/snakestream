@@ -16,28 +16,28 @@ value rather than a class hierarchy, `summing_int`/`summing_long` sharing a body
 
 ## Now
 
-Three stories, the remainder of the six that bundled the fourteen findings of a
+Two stories, the remainder of the six that bundled the fourteen findings of a
 legibility and stdlib-usage read of all twelve modules in `src/snakestream/`
-(2026-08-25, at `946fff0`). **Stories 1, 2 and 3 are done** — see **Done**. The
-original numbering is kept for the three that remain, so the dependency notes
+(2026-08-25, at `946fff0`). **Stories 1, 2, 3 and 4 are done** — see **Done**.
+The original numbering is kept for the two that remain, so the dependency notes
 and the per-story headings below still refer to the same stories they always
 did.
 
-They are **sequenced in dependency order**: story 4 is next; story 5 renames
-the file story 4 rewrites; and story 6 is independent of both and may be taken
-at any point.
+They are **sequenced in dependency order**: story 5 is next, and it now has
+more to place than it did when it was written — see its row. Story 6 is
+independent of it and may be taken at any point.
 
-Only story 4 faces the benchmark gate; its figures are already measured and
-recorded below, so the gate is a confirmation run rather than an open question.
-Story 6 changes observable behaviour and carries spec impact; stories 4 and 5
-are private-surface only. Read **Implementation notes for the
-2026-08-25 batch** below the table before picking any of them up — it carries
-the repros, the anchors, the per-story tripwire and the spec impact.
+**The benchmark gate is spent.** It applied only to story 4, which has landed
+and confirmed its figures; neither remaining story has a per-element site, so
+neither should spend a harness run. Story 6 changes observable behaviour and
+carries spec impact; story 5 is private-surface only. Read **Implementation
+notes for the 2026-08-25 batch** below the table before picking either of them
+up — it carries the repros, the anchors, the per-story tripwire and the spec
+impact.
 
 | # | Story | Why it sits here in the order |
 |---|---|---|
-| 4 | **The sync-comparator fast path: `functools.cmp_to_key` in `_SortedSink`** (`ops.py:91-108`, `sort.py:33`). `_SortedSink.end()` always calls `merge_sort`, and its own comment states the cost as if unavoidable — "Trades away Timsort's speed for sync comparators". It is avoidable: `sort.py` already classifies comparators with `is_async_callable`, so the sync case can take `cache.sort(key=cmp_to_key(comparator))` and leave `merge_sort` for the async case only. **Measured 2.2x** with the spec-required `bool` rejection preserved, 3.6x without it (table below). | Independent of stories 1-3, and **the largest measured win in the batch by a wide margin** — the only story here that makes the library faster rather than easier to read. It sits after them only because they are cheaper and carry crashes; a reader with time for one story should consider taking this one first. It is the single benchmark-gated story, and the gate is already half-run: the figures below establish the win, so the confirmation run only has to show the async path unchanged. `comparator-contract` spec's "Comparators must not return bool" requirement is the constraint that decides the shape — see the notes. |
-| 5 | **`sort.py` holds two different things; name it for what is in it.** `merge_sort` is sorting, but `is_new_extremum` (`sort.py:11`) and `check_comparator_result_type` (`sort.py:6`) are comparator *semantics*, consumed by `terminals.py` and `collector.py` and never by the sort. `comparator.py` names the whole contents, and matches the `comparator-contract` spec that already governs all three functions. The module is also the only fully unannotated one in `src/`, despite `ty` running in CI on the 3.14 leg. | **Strictly after story 4**, which rewrites `merge_sort`'s only caller and decides whether `check_comparator_result_type` still runs per comparison — renaming a file that is about to be substantially rewritten puts the churn in the wrong commit and makes story 4's diff unreadable. Fully test-invisible: **zero references to `snakestream.sort`, `merge_sort`, `is_new_extremum` or `check_comparator_result_type` outside `src/`** (verified 2026-08-25 across `tests/`, `README.md` and `openspec/specs/`), which is unusual enough for a rename that it is worth the grep before starting rather than assuming it still holds. |
+| 5 | **`sort.py` holds two different things; name it for what is in it.** `merge_sort` is sorting, but `is_new_extremum` (`sort.py:11`) and `check_comparator_result_type` (`sort.py:6`) are comparator *semantics*, consumed by `terminals.py` and `collector.py` and never by the sort. `comparator.py` names the whole contents, and matches the `comparator-contract` spec that already governs all three functions. **Story 4 changed the count: the module now holds three things, not two** — `merge_sort` (now the async path only), the comparator semantics, and the new `sort()` dispatcher that chooses between them, plus its `_checked()` wrapper. `sort()` is the awkward one: it is neither sorting-only nor comparator-semantics-only, it is the seam between them, so `comparator.py` does not obviously name it either. Deciding where `sort()` lands is now part of this story rather than a detail of it. Story 4 also annotated `sort()`/`_checked()` and left the rest of the module bare, so the "only fully unannotated module" note below is now "mostly unannotated". The module is also the only fully unannotated one in `src/`, despite `ty` running in CI on the 3.14 leg. | **Story 4 has landed, so this is unblocked and next.** It was sequenced behind story 4 because that story rewrote `merge_sort`'s only caller and decided whether `check_comparator_result_type` still runs per comparison — it does, in `_checked()`, on the sync path. The line anchors in this row are stale as a result: `sort.py` is now ~90 lines, not ~40. Fully test-invisible: **zero references to `snakestream.sort`, `merge_sort`, `is_new_extremum` or `check_comparator_result_type` outside `src/`** (verified 2026-08-25 across `tests/`, `README.md` and `openspec/specs/`), which is unusual enough for a rename that it is worth the grep before starting rather than assuming it still holds. |
 | 6 | **Collector containers, and the duplicate-key exception** (`collector.py`, `sink.py`). **(a)** Nine hand-written `__slots__`-plus-`__init__` classes — `_SumBox`, `_AvgBox`, `_SummaryBox`, `_ExtremumBox`, `_ReduceBox`, `_ToMapBox`, `_GroupBox`, `_MappingBox`, `_CollectAndThenBox` (`collector.py:157,193,259,315,360,427,482,579,615`) — are ~90 lines of boilerplate that `@dataclass(slots=True)` generates. **(b)** `Counter` (`sink.py:36`) shadows `collections.Counter` and adds exactly one thing to `Box`: a default of `0`. **(c)** `to_map()` raises `ValueError` on a duplicate key (`collector.py:469`) where Java's `Collectors.toMap` throws `IllegalStateException` — a class this project already defines in `exception.py`. | Independent of everything above; it is last only because nothing else waits on it. **(a) must state plainly why it is not the rejected `CallSite` proposal**: those nine containers are built once per collection, never per element, so unlike wrapping per-element callables this cannot land on the hot path — attribute access after construction is byte-for-byte what it is today. **Two parts are not test-invisible and must be planned for, not discovered:** `tests/test_sink.py` imports `Counter` and constructs `Counter()`, `Counter(7)` and `Counter(10)` (lines 4, 277-278, 304, 326-327, 336), so (b) is an API change to a tested name; and `tests/test_to_map.py:47` asserts `pytest.raises(ValueError)`, so (c) is a **public breaking change** needing a `collector-to-map` spec delta and a README migration-log entry alongside the `str`/`bytes` and kwargs entries. |
 
 ### Implementation notes for the 2026-08-25 batch
@@ -48,36 +48,21 @@ durable part.
 **Tripwires.** Story
 6 legitimately touches tests, but only at the specific sites named in the
 table; a test edit anywhere else in that story is a signal the change went
-wider than the story. Story 5 must touch no test at all (see its grep).
-Story 4 must leave every existing `sorted()` test passing unmodified, including
-the async-comparator and bool-rejection cases.
+wider than the story. Story 5 must touch no test at all (see its grep) — and
+re-run that grep before starting, since story 4 has since changed `sort.py`.
+Story 4's tripwire held: every existing `sorted()` test passed unmodified, and
+the one test it added was flagged and approved rather than absorbed.
 
-**Benchmark gate: story 4 only.** Every other site in this batch runs once per
-stream construction, once per composition, or once per collection. The one
-per-element site was story 3(d)'s `ensure_future` -> `create_task`, a spelling
-change on the same object graph, and it is now landed. Do not spend a harness
-run on the others.
+**Benchmark gate: spent.** It applied to story 4 only, which has landed and
+confirmed its figures (see **Done**). Every other site in this batch runs once
+per stream construction, once per composition, or once per collection. Do not
+spend a harness run on the two that remain.
 
-**Story 4, the measured figures.** 20,000 random floats, sync 3-way
-comparator, best of 5, Python 3.14.5:
-
-| Variant | time | vs. shipped |
-|---|---|---|
-| `merge_sort` (as shipped) | 54.7 ms | 1.00x |
-| `list.sort(key=cmp_to_key(cmp))` | 15.3 ms | **3.57x** |
-| `list.sort(key=cmp_to_key(checked(cmp)))` | 24.8 ms | **2.21x** |
-
-The third row is the one that matters. `comparator-contract` spec's
-"Comparators must not return bool" requirement makes `sorted()` responsible for
-raising `TypeError` on a `bool` result, which `cmp_to_key` calling the raw
-comparator would skip — so the shipped shape has to keep a per-comparison
-check, which is what `checked()` above measures. **2.2x with the contract
-intact is the number to design against; 3.6x is not available.** The remaining
-open question for the proposal is the one-time `isawaitable` safety net: a
-comparator classified sync that returns an awaitable is currently caught on its
-first comparison, and under `list.sort` there is no per-comparison `await` to
-catch it in — so it has to be settled before the sort (one trial comparison, or
-a documented narrowing of the safety net for `sorted()` alone).
+**Story 4's figures and its settled open question** have moved to **Done** now
+that the story has landed. The open question the notes left for it — how to keep
+the one-time `isawaitable` safety net when `list.sort` offers no per-comparison
+`await` — was answered with a trial comparison, not the documented narrowing the
+notes floated as an alternative.
 
 ## Next
 
@@ -101,6 +86,82 @@ core semantic.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should instead be documented as intentional next to the `str`/`bytes` note. Surfaced 2026-08-20 in the same code-quality read that produced **Now** items 1-4. |
 
 ## Done
+
+- **The sync-comparator fast path** (2026-08-25). Story 4 of the 2026-08-25
+  batch, and the only one in it that makes the library faster rather than
+  easier to read.
+
+  `_SortedSink.end()` routed every comparator-based sort through `merge_sort`,
+  and its own comment stated the cost as if unavoidable — *"Trades away
+  Timsort's speed for sync comparators"*. Only the async case actually needs a
+  hand-written merge with an `await` in its inner loop. `sort.py` gained one
+  entry point, `sort(arr, comparator)`, which owns the choice: sync comparators
+  now go to `list.sort(key=cmp_to_key(...))`, async ones to `merge_sort`.
+  `_SortedSink.end()` calls `sort()` and says so in two lines instead of five.
+
+  **Confirmed figures**, 20,000 random floats, sync 3-way comparator, best of
+  9, Python 3.14.5: **69.4 ms -> 38.7 ms end-to-end through `sorted()`
+  (1.8x)**, and **58.4 ms -> 27.5 ms measuring the sort alone (2.1x)**. The
+  end-to-end number is the smaller one because the pipeline's own per-element
+  cost is unchanged and now dominates a larger share. The async path is
+  unaffected: 6.7 ms -> 6.8 ms on a 2,000-element async-comparator sort, within
+  noise.
+
+  **The 3.6x the proposal's table showed is not available, and the reason is a
+  spec.** `comparator-contract`'s "Comparators must not return bool" makes
+  `sorted()` responsible for raising `TypeError` on a `bool` result. A `bool`
+  compares perfectly well under `cmp_to_key` — it is an `int` — so handing it
+  the raw comparator would silently produce a wrong order instead of raising.
+  `_checked()` keeps a per-comparison type test, inlined with a call-out only
+  on the raising path, the same trick `is_new_extremum` already uses one
+  function up. **1.3x is the price of the contract; the contract wins.**
+
+  **The open question the roadmap left for this story — the one-time
+  `isawaitable` safety net — was answered with a trial comparison.** A
+  comparator with a plain `def __call__` returning a coroutine classifies as
+  sync, and `list.sort` is sync all the way down, so a coroutine seen mid-sort
+  cannot be awaited from inside the key function. `sort()` therefore makes one
+  trial `comparator(arr[0], arr[1])` before the sort when classification says
+  sync and the buffer holds two or more elements; an awaitable result is
+  awaited (so nothing is left un-awaited) and the whole sort reroutes to
+  `merge_sort`. The alternative the notes floated — documenting a narrowing for
+  `sorted()` alone — was **rejected**: it would break `callable-dispatch`'s
+  "Sync-signatured callable that returns a coroutine" scenario, which names no
+  operation and so covers `sorted()`, and the
+  `test_sorted_sync_call_returning_coroutine_comparator` test that pins it.
+  The cost is one extra comparator invocation per comparator sort of two or
+  more elements; nothing constrains the invocation count, and nothing could,
+  since Timsort and merge sort make different numbers of comparisons on the
+  same input anyway.
+
+  **Beyond the story as written: `merge_sort` lost its `state` list, and
+  branch coverage is what found it.** The plan said to leave `merge_sort`
+  byte-for-byte alone. That could not hold — once `sort()` settles asyncness
+  ahead of the call, *every* comparator reaching `merge_sort` returns
+  awaitables, either because `is_async_callable` said so or because the trial
+  proved it, so `_merge`'s `elif not state[1]` ladder can never fire. The
+  suite stayed green and said nothing; the `branch-coverage-gate` at 98% is
+  what caught it, as two unreachable arms dropping the total to 97.79%. The
+  ladder and the `state` list are gone, `merge_sort` recurses into itself
+  rather than into a `_merge_sort` that existed only to thread state, and
+  `_merge` does a plain `await comparator(...)`. Ten lines lighter, and it now
+  says what is true — *this function is the async path* — where the surviving
+  ladder said the opposite. Same removal this batch made to
+  `_ForEachSink._finish`.
+
+  **One test added, no test modified.** Both bool-rejection tests now raise
+  from the trial comparison, one comparison earlier, which left `_checked()`'s
+  own `TypeError` line uncovered. `test_sorted_rejects_non_int_on_a_later_comparison`
+  sorts `[3, 1, 2.5]` with `lambda a, b: a - b` — `int` for the trial pair
+  `(3, 1)`, `float` once `2.5` is involved — covering the line and pinning a
+  contract requirement the suite never asserted: the `int` contract holds for
+  *every* comparison, not just the first.
+
+  562 tests green, 98.05% coverage. `ruff`, `ruff format --check`,
+  `ty check src` and `openspec validate --strict` all pass. No spec impact —
+  `skip_specs: true`, since `sorted()`'s results, stability, `reverse`
+  handling, `bool` rejection and async support are all unchanged. See
+  `openspec/changes/sort-with-cmp-to-key`.
 
 - **Chain-building and dead-code smalls** (2026-08-25). Story 3 of the
   2026-08-25 batch, and the last of its three `stream.py` stories. Four
