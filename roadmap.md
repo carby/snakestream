@@ -16,62 +16,56 @@ value rather than a class hierarchy, `summing_int`/`summing_long` sharing a body
 
 ## Now
 
-**Four changes are proposed, committed, and waiting to be applied — and the
-order they land in matters.** Opened 2026-08-26. All four edit `stream.py`; two
-of them rewrite the same nine lines, and two of them change `sorted()`. The
-order below is the recommendation, and what each one owes the next is recorded
-underneath it. The precedent for sequencing a mechanical change ahead of the
-work that overlaps it is the second 2026-08-25 batch, whose story 1 moved four
-fifths of `collector.py` before story 2 went looking for findings in the lines
-that moved.
+**Three of the four queued changes remain — and the order they land in still
+matters.** Opened 2026-08-26; item 1 of the original four,
+`collapse-derive-wrappers`, landed the same day and is in **Done**. The three
+below all edit `stream.py` and two of them change `sorted()`. The order is the
+recommendation, and what each one owes the next is recorded underneath it.
 
 | # | Change | What it is | Why in this position |
 |---|---|---|---|
-| 1 | `collapse-derive-wrappers` | Pure refactor. `_extend(op)` and `_derive_executor(executor)` collapse into one `_derive(op: Op \| None = None)`; the mode switch assigns `_executor` in `sequential()`/`parallel()` themselves. `skip_specs: true`. | Smallest and the only one with no behavioural surface, **and it rewrites the nine intermediate-op call sites that items 2 and 4 also edit**. Landing it first makes the bigger changes rebase onto the final shape once, instead of the refactor rebasing onto both of them. |
-| 2 | `order-stateful-ops-under-racing` | The correctness item written up immediately below: `limit`/`skip`/`distinct`/`sorted` give **wrong answers**, not slower ones, on an ordered pipeline under `RACING`. Carries the test debt on (a). | Correctness outranks everything after it. Held behind item 1 only because item 1 is hours of mechanical work against lines this change also touches — not because anything in it is blocked. |
-| 3 | `collapse-compose-into-iterator` | Deletes `Stream._compose()`, routing its four callers through `iterator()`, which is the same call plus the `_check_not_consumed()` it currently skips. Closes a hole reachable from user code via `Stream.concat()` and a `flat_map()` mapper's return value. | **Not ready to apply.** Proposal only — no design, specs or tasks — and it fails `openspec validate --strict` with "must have at least one delta". Its break is behavioural and currently unspecified, so it wants real deltas rather than `skip_specs: true`. Positioned after item 2 because item 2 works inside two of the four call sites. |
-| 4 | `add-comparator-comparing` | Ports Java's `Comparator.comparing()` key extractors. Measured 6.8-8.8x on sync comparators, 4.8-5.4x on async, where it also collapses O(n log n) interleaved awaits into O(n) gathered up front. | New public API and a performance win, so it yields to the correctness item that redesigns the op it sorts through. Nothing in it is blocked; it is last on value ordering, not on dependency. |
+| 1 | `order-stateful-ops-under-racing` | The correctness item written up immediately below: `limit`/`skip`/`distinct`/`sorted` give **wrong answers**, not slower ones, on an ordered pipeline under `RACING`. Carries the test debt on (a). | Correctness outranks everything after it, and the mechanical refactor it was held behind has landed. Nothing blocks it now. |
+| 2 | `collapse-compose-into-iterator` | Deletes `Stream._compose()`, routing its four callers through `iterator()`, which is the same call plus the `_check_not_consumed()` it currently skips. Closes a hole reachable from user code via `Stream.concat()` and a `flat_map()` mapper's return value. | **Not ready to apply.** Proposal only — no design, specs or tasks — and it fails `openspec validate --strict` with "must have at least one delta". Its break is behavioural and currently unspecified, so it wants real deltas rather than `skip_specs: true`. Positioned after item 1 because item 1 works inside two of the four call sites. |
+| 3 | `add-comparator-comparing` | Ports Java's `Comparator.comparing()` key extractors. Measured 6.8-8.8x on sync comparators, 4.8-5.4x on async, where it also collapses O(n log n) interleaved awaits into O(n) gathered up front. | New public API and a performance win, so it yields to the correctness item that redesigns the op it sorts through. Nothing in it is blocked; it is last on value ordering, not on dependency. |
 
 **What to keep track of between them.**
 
-- **Items 1, 2 and 4 collide on the nine intermediate-op call sites.** Item 1
-  rewrites every `self._extend(_SomeOp(...))` into `self._derive(_SomeOp(...))`;
-  item 2 edits the `limit`/`skip`/`distinct`/`sorted` lines among them, and item
-  4 changes `sorted()`'s signature. This is the whole reason item 1 is first, and
-  it is a textual conflict rather than a semantic one — cheap to resolve, but
-  only if it happens once.
-- **Items 2 and 4 both change `sorted()`, and the seam between them is worth
-  keeping clean.** Item 2 decides *where* a sort runs — whether `_SortedOp` stops
+- **Both remaining `stream.py` items now rebase onto the collapsed copier.**
+  The nine intermediate ops read `self._derive(_SomeOp(...))` as of
+  `collapse-derive-wrappers`; item 1 edits the `limit`/`skip`/`distinct`/`sorted`
+  lines among them and item 3 changes `sorted()`'s signature. Landing the
+  refactor first is what reduced that to one textual rebase instead of two —
+  the sequencing worked, and it is the reason to keep doing it.
+- **Items 1 and 3 both change `sorted()`, and the seam between them is worth
+  keeping clean.** Item 1 decides *where* a sort runs — whether `_SortedOp` stops
   being a `StatelessOp` and forces a single flight the way `for_each_ordered()`
-  does. Item 4 decides *how* a comparison is made — key extraction reaching
+  does. Item 3 decides *how* a comparison is made — key extraction reaching
   `list.sort` versus `cmp_to_key`, and which of those the hand-rolled
   `merge_sort` in `sort.py` is still needed for. Whichever lands second must not
-  re-litigate the other's half. If the order is ever swapped, item 2's
+  re-litigate the other's half. If the order is ever swapped, item 1's
   single-flight decision has to cover the key-extractor path as well as the
   comparator one.
-- **Items 2 and 3 meet in `_FlatMapSink.accept()` and `_concat()`**, two of
-  `_compose()`'s four callers. If item 2 introduces any new composition point,
-  it goes through `iterator()` once item 3 lands — and if item 3 lands first,
-  item 2 inherits the consumed check at those positions.
-- **Items 1 and 3 both restructure `stream.py`'s private surface without
-  conflicting.** Item 1 leaves `_compose()` untouched; item 3 deletes it. They
-  overlap only in prose: both edit `CLAUDE.md`'s architecture section (item 1 at
-  line 61, item 3 in the composition paragraphs).
-- **Whoever lands second re-checks the other's documentation tasks.** Each of
+- **Items 1 and 2 meet in `_FlatMapSink.accept()` and `_concat()`**, two of
+  `_compose()`'s four callers. If item 1 introduces any new composition point,
+  it goes through `iterator()` once item 2 lands — and if item 2 lands first,
+  item 1 inherits the consumed check at those positions.
+- **Whoever lands next re-checks the other's documentation tasks.** Each of
   these changes carries tasks that correct `CLAUDE.md` and annotate **Done**
-  entries here. Stale prose is not cosmetic in this repo: `_derive_executor()`
-  was resurrected in the first place because `CLAUDE.md` described a method that
-  did not exist, which is exactly what item 1 exists to undo.
-- **Item 2 depends on `_is_ordered()` staying a fold over the chain**, which is
-  what `make-ordering-a-chain-characteristic` made it. None of items 1, 3 or 4
-  touches it; item 1 explicitly preserves it, since the chain carrying over
-  unchanged through a mode switch is what carries the characteristic.
+  entries here. Stale prose is not cosmetic in this repo, and
+  `collapse-derive-wrappers` is the demonstration: it found three stale spots
+  its own tasks had not named, because the line numbers those tasks cited had
+  drifted. Cite the sentence, not the line.
+- **Item 1 depends on `_is_ordered()` staying a fold over the chain**, which is
+  what `make-ordering-a-chain-characteristic` made it. Neither item 2 nor item 3
+  touches it, and `collapse-derive-wrappers` explicitly preserved it: the chain
+  carrying over unchanged through a mode switch is what carries the
+  characteristic.
 
 **Three stateful ops do not honour encounter order under `RACING`** — opened
 2026-08-26 out of `make-ordering-a-chain-characteristic`, which deliberately
 scoped them out but is what makes them specifiable: `_is_ordered()` now gives a
 reliable, positional answer for an op to branch on, which it could not before.
-Proposed as `order-stateful-ops-under-racing` (item 2 of the queue above).
+Proposed as `order-stateful-ops-under-racing` (item 1 of the queue above).
 
 All three are **wrong answers on an ordered stream, not missed optimisations**,
 and the design doc for that change stated the direction backwards — it recorded
@@ -208,6 +202,76 @@ core semantic.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should instead be documented as intentional next to the `str`/`bytes` note. Surfaced 2026-08-20 in the same code-quality read that produced **Now** items 1-4. |
 
 ## Done
+
+- **Collapsed the derive wrappers into one copier** (2026-08-26). `_extend(op)`
+  and `_derive_executor(executor)` were one-expression wrappers over
+  `_derive(chain, executor)`, each passing one axis through unchanged while the
+  call site wrote the other as noise. There is now one
+  `_derive(self, op: Op | None = None) -> Stream[Any]`: the chain-extension rule
+  lives in its body, and `sequential()`/`parallel()` derive with no op and
+  assign `_executor` themselves. See
+  `openspec/changes/archive/2026-08-26-collapse-derive-wrappers`.
+
+  **This is the third pass over the same cluster, and what matters is why it is
+  not a revert of the first.** The 2026-08-24 merge landed the same one-copier
+  shape and was undone in two steps — `_extend` on 2026-08-25, then
+  `_derive_executor()` re-added on 2026-08-26 — because it paid two costs, and
+  both are avoidable independently of the layer count:
+
+  - *The copier took a pre-built chain*, so each of the nine op methods spelled
+    out `[*self._chain, op], self._executor` and the `Op` the method is *about*
+    became the least visible part of the line. Taking the `Op` instead puts the
+    rule in the callee: `return self._derive(_MapOp(mapper))`, which is
+    `_extend`'s ergonomics exactly. That property is what had to survive, and it
+    did.
+  - *The docstring was copied verbatim onto both public methods.* It now sits on
+    `sequential()` alone, at full length, with `parallel()` pointing at it —
+    because the new body is a working template for the move
+    `pipeline-immutability` forbids: delete one line and
+    `derived._executor = RACING` becomes `self._executor = RACING; return self`.
+    The warning moved to where the temptation now is rather than staying where
+    it happened to be.
+
+  `op is not None`, not `if op`: every `Op` is truthy today, but `_UnorderedOp`
+  carries no state, and an `Op` that later grew `__bool__`/`__len__` would be
+  silently dropped from the chain by a truthiness test. **Accepted knowingly:**
+  `_executor` is no longer assigned exactly once per instance — the copier sets
+  it and the mode method overwrites it. Unobservable today (no `await` between
+  the two statements, the instance has not escaped), and recorded so that adding
+  an `await` to `_derive()` is recognised as breaking it.
+
+  **`_derive()` stays a method on `Stream`**, explicitly rather than by default.
+  Moving it beside `execution.py`'s `_wrap_sink`/`_copy_into`/`stream_through`
+  fails that family's own membership rule — none of them needs a stream
+  instance, and `_derive()` *is* the thing. The `self._consumed = True` it
+  performs is the `pipeline-immutability` invariant, and an invariant enforced
+  from outside the class is one every future call site can route around. Checked
+  against the roadmap rather than assumed: neither a third `Executor` nor
+  `spliterator()` constructs a `Stream`, so neither creates the payoff a
+  module-level version would need.
+
+  **583 tests green with no test file edited** — the tripwire, since
+  `pipeline-immutability`, `pipeline-composition` and `stream-execution-model`
+  already pin every contract touched, including that a queued chain survives a
+  mode switch. `ruff`, `ruff format --check`, `ty check src`,
+  `--cov-fail-under=98` (98.06%) and `openspec validate --strict` all pass.
+  `skip_specs: true`: no observable behaviour changed. Off the per-element path
+  (chain-building and mode-switch code, run once per composition), so no
+  benchmark gate applied. The dead `cast()` went in a separate first commit —
+  `_derive()` returns `Stream[Any]` and `Any` is assignable to `Stream[T]`, the
+  same finding the 2026-08-25 batch made for the eight intermediate ops, which
+  never reached these two methods because they called `_derive()` directly then.
+
+  **The prose sweep found more than the tasks named, and that is the reusable
+  lesson.** Five stale references were annotated, not three: the tasks cited
+  `roadmap.md:1195` and `727-745`, both of which had drifted, and the sharpest
+  one they missed was the 2026-08-26 entry claiming "`_derive_executor()` now
+  exists and owns the shared explanation". History entries are annotated as
+  superseded, never rewritten to pretend the prior shape never existed. This is
+  not tidiness — `_derive_executor()` was resurrected in the first place
+  *because* `CLAUDE.md` described a method that did not exist, and leaving the
+  Done entries stale would arm the same mechanism again. Cite the sentence in a
+  documentation task, not the line number.
 
 - **`is_ordered()` left the public API** (2026-08-26). Renamed to
   `_is_ordered()`. Java has no such accessor to be at parity with: `BaseStream`
