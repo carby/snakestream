@@ -168,8 +168,8 @@ them in opposite directions:
 
   ```python
   derived = self._derive()
-  derived._executor = RACING     # delete two chars and a line, and this is
-  return derived                 # self._executor = RACING; return self
+  derived._executor = RACING  # delete two chars and a line, and this is
+  return derived  # self._executor = RACING; return self
   ```
 
   It is kept at full length and moves onto `sequential()`, where the temptation
