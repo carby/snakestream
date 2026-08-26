@@ -293,7 +293,8 @@ core semantic.
   **`is_ordered()` folds the chain and stores nothing.** 311 ns over a
   five-op chain, called at most once per terminal. **The O(1) alternative was
   measured and rejected, and should not be re-proposed**: updating a cached
-  `_ordered` incrementally in `_extend()` from the op being appended is exactly
+  `_ordered` incrementally in `_extend()` (`_derive(op)` since 2026-08-26) from
+  the op being appended is exactly
   equivalent (the chain only ever grows by append) and saves those 311 ns, but
   reinstates a denormalised copy of a chain property that every future derive
   path must remember to maintain — which is the precise failure mode this
@@ -426,7 +427,8 @@ core semantic.
   finisher now returns `dict(groups)` outright, and the finishing arm is one
   async dict comprehension. `_supply` builds its two-key dict directly.
 
-  **(c)** `[*self._chain, op]` in `_extend`. **(e)** `dist_name` joins the
+  **(c)** `[*self._chain, op]` in `_extend` (that line lives in `_derive()`
+  since 2026-08-26). **(e)** `dist_name` joins the
   `finally: del`; `snakestream.dist_name` is gone (verified importable before,
   absent after) and `__version__` still resolves.
 
@@ -513,7 +515,13 @@ core semantic.
   same twelve-line docstring verbatim, which was the row's finding (b). The
   fix made the code match the documentation rather than the other way round:
   `_derive_executor()` now exists and owns the shared explanation, and both
-  public methods are one-liners.
+  public methods are one-liners. **Superseded 2026-08-26 by
+  `collapse-derive-wrappers`**, which read this entry the other way round: the
+  duplicated docstring was the real finding, and a wrapper method is not the
+  only way to hold it. `_derive_executor()` is gone again; `sequential()` owns
+  the explanation and `parallel()` points at it, so there is still exactly one
+  copy of it — and `CLAUDE.md` was corrected in the same change, which is the
+  half of this entry that still stands.
 
   **The `TerminalSink` contract was documented, not changed.** The row was
   explicit that the three dependents must not gain defensive `await`s, and
@@ -794,6 +802,15 @@ core semantic.
   pass `self._chain` **unchanged** under a different executor, the opposite of
   what `_extend` does, and folding both into one helper would re-couple what
   the batch's earlier stories separated.
+
+  **Superseded 2026-08-26 by `collapse-derive-wrappers`:** `_extend` is gone,
+  and so is `_derive_executor()`; there is one `_derive(op: Op | None = None)`.
+  The ergonomic win described above survives intact — the call site is now
+  `return self._derive(_MapOp(mapper))`, the chain-extension rule still lives
+  in exactly one body, and the built-`Op`-not-class argument is unchanged and
+  for the same reason. What changed is where the rule lives: in the copier
+  itself rather than a wrapper over it, which is what let the executor axis
+  leave the copier's signature instead of being passed through as noise.
 
   **Beyond the story as written: the eight `cast()` wrappers went too, and
   that is most of the win.** The `cast` was never necessary — `_derive()`
@@ -1134,6 +1151,15 @@ core semantic.
   and `ty check src` all pass. A grep for `_derive_executor` across `src/` and
   `openspec/specs/` after the edit returns nothing. `skip_specs: true`: no
   spec-level behavior changed, only where the copy-constructor logic lives.
+
+  **Superseded 2026-08-26 by `collapse-derive-wrappers`.** This merge was
+  reverted on 2026-08-25/26 and has now been redone in a different shape, so
+  read the two costs it paid rather than the signature it landed. The copier
+  takes the `Op`, not a pre-built chain — `_derive(op: Op | None = None)` —
+  which is what keeps the nine call sites one-liners instead of spelling the
+  chain-extension rule out nine times, the cost that brought `_extend` back.
+  And the docstring is not copied onto both public methods, which is the cost
+  that brought `_derive_executor()` back: it sits on `sequential()` alone.
   Off the per-element path (chain-building/mode-switch code, run once per
   composition), so no benchmark gate applied. See
   `openspec/changes/unify-derive-copier`.
@@ -1248,7 +1274,12 @@ core semantic.
   which is true, but the semantics it changes *to* are Java's. What survived
   from that warning is the immutability half: the switch must still return a new
   instance and consume the receiver, so it is `_derive_executor()`, never
-  `self._executor = X; return self`.
+  `self._executor = X; return self`. **Superseded 2026-08-26 by
+  `collapse-derive-wrappers`:** `_derive_executor()` no longer exists.
+  `sequential()`/`parallel()` now derive with no op and assign `_executor`
+  themselves, and the immutability rule this entry states is unchanged — it
+  lives on `sequential()`'s docstring, at full length precisely because that
+  body is one line away from the forbidden in-place flip.
 
   **Racing was kept deliberately, not by omission.** Partition-plus-combine
   (spliterator splits, per-partition pipelines, a `combiner` merge) was explored

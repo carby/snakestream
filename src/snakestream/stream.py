@@ -112,19 +112,17 @@ class Stream(Generic[T]):
         if self._consumed:
             raise IllegalStateException("this stream has already been extended into a new instance")
 
-    def _derive(self, chain: list[Op], executor: Executor) -> Stream[Any]:
+    def _derive(self, op: Op | None = None) -> Stream[Any]:
+        """A new stream over the same source, carrying this stream's chain plus
+        `op`, under the same executor, consuming this one. The
+        chain-extension rule lives here and nowhere else. Called with no op it
+        is a plain copy, which is what a mode switch derives from."""
         self._check_not_consumed()
         new_stream = type(self)(self._source, self._close_handlers)
-        new_stream._chain = chain
-        new_stream._executor = executor
+        new_stream._chain = [*self._chain, op] if op is not None else self._chain
+        new_stream._executor = self._executor
         self._consumed = True
         return new_stream
-
-    def _extend(self, op: Op) -> Stream[Any]:
-        """This stream's chain plus one more op, under the same executor.
-        The chain-extension rule lives here and nowhere else; _derive() runs
-        the consumed check, so this deliberately does not."""
-        return self._derive([*self._chain, op], self._executor)
 
     def _compose(self) -> AsyncGenerator[T, None]:
         """The chain as a generator, under this stream's executor."""
@@ -137,30 +135,33 @@ class Stream(Generic[T]):
         self._check_not_consumed()
         return await (executor or self._executor).value(self._chain, self._source, terminal)
 
-    def _derive_executor(self, executor: Executor) -> Stream[T]:
-        """A mode switch: a new stream over the SAME source and the SAME queued
-        chain, differing only in its executor, consuming this one. The chain
-        carrying over unchanged is also what carries the ordering
+    def sequential(self) -> Stream[T]:
+        """This pipeline under SEQUENTIAL: a new stream over the SAME source and
+        the SAME queued chain, differing only in its executor, consuming this
+        one. The chain carrying over unchanged is also what carries the ordering
         characteristic over - _is_ordered() folds it from there, so there is no
         ordering state for this to copy.
 
-        It must not compose. Composing here is what made `.parallel()`
-        position-dependent — ops queued before the switch were frozen under the
-        old mode — where Java's `parallel()` sets a flag on the source stage and
-        so governs the whole pipeline wherever it appears.
+        A mode switch must not compose - _derive() does not, and composing here
+        is what made `.parallel()` position-dependent, freezing ops queued
+        before the switch under the old mode, where Java's `parallel()` sets a
+        flag on the source stage and so governs the whole pipeline wherever it
+        appears.
 
-        It must not assign onto self and return self either, however tempting:
+        It must not assign onto self and return self either, however tempting -
+        and the body below is one line away from doing exactly that:
         pipeline-immutability requires the receiver be invalidated, and an
         in-place flip would leave it usable."""
-        return self._derive(self._chain, executor)
-
-    def sequential(self) -> Stream[T]:
-        """This pipeline under SEQUENTIAL; see _derive_executor()."""
-        return self._derive_executor(SEQUENTIAL)
+        derived = self._derive()
+        derived._executor = SEQUENTIAL
+        return derived
 
     def parallel(self) -> Stream[T]:
-        """This pipeline under RACING; see _derive_executor()."""
-        return self._derive_executor(RACING)
+        """This pipeline under RACING; see sequential(), which carries the rules
+        both mode switches obey."""
+        derived = self._derive()
+        derived._executor = RACING
+        return derived
 
     def iterator(self) -> AsyncGenerator[T, None]:
         self._check_not_consumed()
@@ -172,7 +173,7 @@ class Stream(Generic[T]):
         Being an op is what makes this positional: Java's unordered() is a
         pipeline stage for the same reason, the deliberate opposite of its
         parallel(), which sets a flag on the source stage so as *not* to be."""
-        return self._extend(_UnorderedOp())
+        return self._derive(_UnorderedOp())
 
     def _is_ordered(self) -> bool:
         """Folded from the chain, never stored. Java's combineOpFlags() folds
@@ -265,10 +266,10 @@ class Stream(Generic[T]):
 
     # Intermediaries
     def filter(self, predicate: Predicate[T]) -> Stream[T]:
-        return self._extend(_FilterOp(predicate))
+        return self._derive(_FilterOp(predicate))
 
     def map(self, mapper: Mapper[T, R]) -> Stream[R]:
-        return self._extend(_MapOp(mapper))
+        return self._derive(_MapOp(mapper))
 
     def flat_map(self, flat_mapper: FlatMapper[T, R]) -> Stream[R]:
         # Pre-call rejection, not a dispatch site: flat_mapper must return a
@@ -277,22 +278,22 @@ class Stream(Generic[T]):
         if iscoroutinefunction(flat_mapper):
             raise StreamBuildException("flat_map() does not support coroutines")
 
-        return self._extend(_FlatMapOp(flat_mapper))
+        return self._derive(_FlatMapOp(flat_mapper))
 
     def sorted(self, comparator: Comparator[T] | None = None, reverse: bool = False) -> Stream[T]:
-        return self._extend(_SortedOp(comparator, reverse))
+        return self._derive(_SortedOp(comparator, reverse))
 
     def distinct(self) -> Stream[T]:
-        return self._extend(_DistinctOp())
+        return self._derive(_DistinctOp())
 
     def peek(self, consumer: Consumer[T]) -> Stream[T]:
-        return self._extend(_PeekOp(consumer))
+        return self._derive(_PeekOp(consumer))
 
     def limit(self, max_size: int) -> Stream[T]:
-        return self._extend(_LimitOp(max_size))
+        return self._derive(_LimitOp(max_size))
 
     def skip(self, n: int) -> Stream[T]:
-        return self._extend(_SkipOp(n))
+        return self._derive(_SkipOp(n))
 
     # Terminals
     @overload
