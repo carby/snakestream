@@ -9,6 +9,7 @@ intermediate operation on top of them."""
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from enum import Enum, auto
 from dataclasses import dataclass
 from typing import Any, ClassVar, Generic
 from collections.abc import Callable
@@ -49,16 +50,45 @@ class Sink(ABC, Generic[T]):
         return False
 
 
+class Ordering(Enum):
+    """What an op does to the pipeline's encounter-order characteristic — the
+    three things Java's StreamOpFlag can say about a flag at a given stage:
+    PRESERVE it from upstream, CLEAR it, or SET it.
+
+    Java encodes this as two bits per flag in a packed int, folded down the
+    stage list by combineOpFlags(). We port the meaning, not the encoding: it
+    packs bits because it carries five characteristics (ORDERED, SIZED, SORTED,
+    DISTINCT, SHORT_CIRCUIT) through a fold that runs on every stage, and we
+    carry one. A three-member enum says what a two-bit field says, and says it
+    in words."""
+
+    PRESERVE = auto()
+    CLEAR = auto()
+    SET = auto()
+
+
 class Op(ABC):
     """The op half of the op/sink pair: an intermediate operation as held in a
     stream's chain. It carries the arguments the user passed and builds the
     Sink that does the per-element work, once per sink chain it is linked into.
 
+    Two pieces of protocol beyond link(), each with a default that most ops
+    take unchanged:
+
     make_shared_state() returns one fresh instance of the state this op's sinks
     share when several chains are built from the same op list (see
     RACING), or None for a stateless op. None means "no shared state",
     so an op that does need state returns a container — a set, a list, a
-    counter object — never None."""
+    counter object — never None.
+
+    ordering declares what this op does to encounter order. PRESERVE is right
+    for every op that neither reorders nor imposes an order — filter, map,
+    flat_map, peek, distinct, limit, skip — which is why it is the default and
+    why only _UnorderedOp and _SortedOp state it. It is a ClassVar because it
+    is a property of the operation, not of the arguments the user passed to it:
+    every sort sets ordering, whatever comparator it was given."""
+
+    ordering: ClassVar[Ordering] = Ordering.PRESERVE
 
     @abstractmethod
     def link(self, downstream: Sink[Any]) -> Sink[Any]: ...

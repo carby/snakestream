@@ -263,13 +263,13 @@ async def test_ordered_parallel_find_first_returns_the_true_first_element() -> N
 
 
 @pytest.mark.asyncio
-async def test_unordered_parallel_find_first_races() -> None:
+async def test_unordered_parallel_find_first_still_returns_the_true_first() -> None:
     # when
     it = await Stream.of(values).parallel().unordered().map(_delay_by_position).find_first()
 
-    # then: whatever arrives first, but not the longest-delayed first element
-    assert it in values
-    assert it != values[0]
+    # then: unordered() does not relax find_first()'s guarantee - it drives
+    # SEQUENTIAL either way. find_any() is the racing terminal.
+    assert it == values[0]
 
 
 # --- terminals on a ParallelStream -----------------------------------------

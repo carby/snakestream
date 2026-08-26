@@ -1,52 +1,4 @@
-## Purpose
-
-Defines the contract for `Stream`'s ordered/unordered bookkeeping: how the
-encounter-order characteristic is derived, `unordered()`, `sorted()`'s
-restoration of it, and `is_ordered()`, mirroring Java's `BaseStream.unordered()`
-and `StreamOpFlag.ORDERED`. Ordering is a **positional characteristic of the
-queued chain**, not per-instance state: an operation clears it, sets it, or
-preserves what came before, and `is_ordered()` reports the fold of those
-answers. That is what makes it the deliberate opposite of
-`sequential()`/`parallel()`, which are position-independent because they select
-an executor for the whole pipeline rather than occupying a position in it.
-Order-sensitive operations built on top of it — `for_each_ordered()` — consult
-the folded answer, so it must be tracked correctly and survive
-`sequential()`/`parallel()` mode switches.
-
-## Requirements
-
-### Requirement: The ordering flag survives sequential()/parallel() mode switches
-`Stream.sequential()` and `Stream.parallel()` SHALL leave the ordering
-characteristic of the pipeline unchanged. Because a mode switch carries the
-receiver's queued chain onto the new instance without composing it, and because
-ordering is derived from that chain, the characteristic survives a mode switch
-without being copied as separate state.
-
-The two concerns SHALL remain independent: the executor determines *how* a
-pipeline runs, the ordering characteristic determines *whether the caller
-requires encounter order*.
-
-#### Scenario: unordered() survives a parallel() switch
-- **WHEN** `.unordered()` is called on a sequential stream, followed by
-  `.parallel()`
-- **THEN** the resulting stream's `.is_ordered()` returns `False`
-
-#### Scenario: unordered() survives a sequential() switch
-- **WHEN** `.unordered()` is called on a parallel stream, followed by
-  `.sequential()`
-- **THEN** the resulting stream's `.is_ordered()` returns `False`
-
-#### Scenario: An ordered stream stays ordered across a mode switch
-- **WHEN** `.parallel()` (or `.sequential()`) is called on a stream on which
-  `.unordered()` was never called
-- **THEN** the resulting instance's `.is_ordered()` still returns `True`
-
-#### Scenario: A mode switch is position-independent where unordered() is not
-- **WHEN** `.parallel()` is declared before an operation and, in a second
-  pipeline, after that same operation
-- **THEN** both pipelines run that operation under the racing executor, whereas
-  moving `.unordered()` across an operation does change which side of the
-  ordering boundary that operation falls on
+## ADDED Requirements
 
 ### Requirement: Ordering is derived from the stream's queued operations
 A stream's ordered/unordered characteristic SHALL be derived from the
@@ -134,3 +86,65 @@ subsequent sort.
   `.find_first()` is awaited
 - **THEN** the smallest element under `c` is returned, not an element that
   merely arrived early
+
+## MODIFIED Requirements
+
+### Requirement: The ordering flag survives sequential()/parallel() mode switches
+`Stream.sequential()` and `Stream.parallel()` SHALL leave the ordering
+characteristic of the pipeline unchanged. Because a mode switch carries the
+receiver's queued chain onto the new instance without composing it, and because
+ordering is derived from that chain, the characteristic survives a mode switch
+without being copied as separate state.
+
+The two concerns SHALL remain independent: the executor determines *how* a
+pipeline runs, the ordering characteristic determines *whether the caller
+requires encounter order*.
+
+#### Scenario: unordered() survives a parallel() switch
+- **WHEN** `.unordered()` is called on a sequential stream, followed by
+  `.parallel()`
+- **THEN** the resulting stream's `.is_ordered()` returns `False`
+
+#### Scenario: unordered() survives a sequential() switch
+- **WHEN** `.unordered()` is called on a parallel stream, followed by
+  `.sequential()`
+- **THEN** the resulting stream's `.is_ordered()` returns `False`
+
+#### Scenario: An ordered stream stays ordered across a mode switch
+- **WHEN** `.parallel()` (or `.sequential()`) is called on a stream on which
+  `.unordered()` was never called
+- **THEN** the resulting instance's `.is_ordered()` still returns `True`
+
+#### Scenario: A mode switch is position-independent where unordered() is not
+- **WHEN** `.parallel()` is declared before an operation and, in a second
+  pipeline, after that same operation
+- **THEN** both pipelines run that operation under the racing executor, whereas
+  moving `.unordered()` across an operation does change which side of the
+  ordering boundary that operation falls on
+
+## REMOVED Requirements
+
+### Requirement: Stream tracks an ordered/unordered flag defaulting to ordered
+**Reason**: The requirement mandated per-instance state (a flag carried on the
+`Stream` object and defaulting to `True` at construction), which is precisely
+what made ordering apply to the whole pipeline regardless of where
+`unordered()` was written. Ordering is now derived from the queued chain.
+
+**Migration**: `is_ordered()` is unchanged as public API and still returns
+`True` for a freshly constructed stream; that guarantee now lives in the
+"Ordering is derived from the stream's queued operations" requirement above.
+No caller of `is_ordered()` needs to change.
+
+### Requirement: unordered() marks the stream as not order-dependent
+**Reason**: The requirement mandated the mutate-and-return-`self` convention
+("SHALL set the instance's ordering flag to `False` and return `self`"), which
+only made sense while ordering was per-instance state with no chain element to
+append. Now that `unordered()` queues an operation, it is an ordinary
+intermediate operation and derives-and-consumes like the other eight.
+
+**Migration**: The fluent form `Stream.of(x).unordered().filter(...)` is
+unaffected. A caller that bound the receiver to a name and reused it after
+calling `.unordered()` on it SHALL use the returned instance instead; the
+superseded reference now raises `IllegalStateException`, as it already does for
+every other intermediate operation. Replaced by the "unordered() queues an
+ordering-clearing operation" requirement above.

@@ -19,8 +19,9 @@ from snakestream.ops import (
     _PeekOp,
     _SkipOp,
     _SortedOp,
+    _UnorderedOp,
 )
-from snakestream.sink import _UNSET, Op, TerminalSink
+from snakestream.sink import _UNSET, Op, Ordering, TerminalSink
 from snakestream.terminals import (
     _CountSink,
     _FindSink,
@@ -104,7 +105,6 @@ class Stream(Generic[T]):
         self._source: AsyncGenerator[T, None] = _accept(source) or _normalize(source)
         self._chain: list[Op] = []
         self._close_handlers: list[CloseHandler] = [] if close_handlers is None else close_handlers
-        self._ordered: bool = True
         self._consumed: bool = False
         self._executor: Executor = SEQUENTIAL
 
@@ -116,7 +116,6 @@ class Stream(Generic[T]):
         self._check_not_consumed()
         new_stream = type(self)(self._source, self._close_handlers)
         new_stream._chain = chain
-        new_stream._ordered = self._ordered
         new_stream._executor = executor
         self._consumed = True
         return new_stream
@@ -140,7 +139,10 @@ class Stream(Generic[T]):
 
     def _derive_executor(self, executor: Executor) -> Stream[T]:
         """A mode switch: a new stream over the SAME source and the SAME queued
-        chain, differing only in its executor, consuming this one.
+        chain, differing only in its executor, consuming this one. The chain
+        carrying over unchanged is also what carries the ordering
+        characteristic over - is_ordered() folds it from there, so there is no
+        ordering state for this to copy.
 
         It must not compose. Composing here is what made `.parallel()`
         position-dependent — ops queued before the switch were frozen under the
@@ -165,13 +167,28 @@ class Stream(Generic[T]):
         return self._compose()
 
     def unordered(self) -> Stream[T]:
-        """Mutates and returns self, unlike the eight derive-and-consume
-        intermediate ops - deliberate, per the stream-ordering spec."""
-        self._ordered = False
-        return self
+        """Queues an op that clears encounter order for everything after it,
+        and nothing else - see _UnorderedOp, which links to no sink at all.
+        Being an op is what makes this positional: Java's unordered() is a
+        pipeline stage for the same reason, the deliberate opposite of its
+        parallel(), which sets a flag on the source stage so as *not* to be."""
+        return self._extend(_UnorderedOp())
 
     def is_ordered(self) -> bool:
-        return self._ordered
+        """Folded from the chain, never stored. Java's combineOpFlags() folds
+        the same three-valued answer down its stage list; here the fold is the
+        whole of it, because there is one characteristic rather than five.
+
+        Deliberately not cached onto the instance as _derive() copies it
+        forward: a denormalised copy of a chain property is exactly what let
+        unordered() apply to a whole pipeline regardless of where it was
+        written. Chains are single digits long and this runs at most once per
+        terminal."""
+        ordered = True
+        for op in self._chain:
+            if op.ordering is not Ordering.PRESERVE:
+                ordered = op.ordering is Ordering.SET
+        return ordered
 
     def on_close(self, close_handler: CloseHandler) -> Stream[T]:
         """Mutates and returns self, unlike the eight derive-and-consume
@@ -330,17 +347,28 @@ class Stream(Generic[T]):
         return await self._evaluate(_ForEachSink(consumer))
 
     async def for_each_ordered(self, consumer: Consumer[T]) -> None:
-        return await self._evaluate(_ForEachSink(consumer), SEQUENTIAL)
+        """Encounter order costs the racing executor, so it is only paid when
+        the pipeline is ordered; an unordered one runs under whatever executor
+        the stream carries and is then just for_each(). Java splits the same
+        way - ForEachOps.OfRef.evaluateParallel() picks ForEachOrderedTask or
+        plain ForEachTask on whether ORDERED is known upstream - and it is what
+        the javadoc's "if the stream has a defined encounter order" means."""
+        executor = SEQUENTIAL if self.is_ordered() else None
+        return await self._evaluate(_ForEachSink(consumer), executor)
 
     async def to_array(self) -> list[T]:
         # collect() runs _check_not_consumed() itself
         return await self.collect(to_list())
 
     async def find_first(self) -> T | None:
-        # ordered means encounter order regardless of executor, so this one
-        # names SEQUENTIAL itself instead of following self._executor
-        if not self.is_ordered():
-            return await self.find_any()
+        # encounter order regardless of executor *and* regardless of ordering,
+        # so this one names SEQUENTIAL itself instead of following
+        # self._executor, and does not branch. Java does not relax findFirst()
+        # on an unordered stream either: FindOp.mustFindFirst is fixed when the
+        # op is constructed and FindTask does its leftmost scan whenever it is
+        # set, never consulting upstream ORDERED. The javadoc permits returning
+        # any element there; the implementation declines to. find_any() is
+        # where a caller who wants the race goes.
         return await self._evaluate(_FindSink(), SEQUENTIAL)
 
     async def find_any(self) -> T | None:
