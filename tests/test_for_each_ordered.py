@@ -102,12 +102,39 @@ async def test_for_each_ordered_on_unordered_sequential_stream_still_delivers_in
 
 
 @pytest.mark.asyncio
-async def test_sorted_after_unordered_restores_the_for_each_ordered_guarantee() -> None:
-    # given
+async def test_for_each_ordered_on_unordered_parallel_stream_does_not_deliver_in_order() -> None:
+    # given the same unordered pipeline as above. The test above pins that
+    # every element arrives; this one pins that the relaxation actually
+    # happened - without it, for_each_ordered() would forfeit the concurrency
+    # and deliver in source order, and nothing else in the suite would notice
     seen: list[int] = []
 
     # when
-    await Stream.of(values).parallel().unordered().sorted(lambda a, b: a - b).for_each_ordered(seen.append)
+    await Stream.of(values).parallel().unordered().map(_delay_by_position).for_each_ordered(seen.append)
+
+    # then the positional delay decided the order, not the source
+    assert sorted(seen) == sorted(values)
+    assert seen != values
+
+
+@pytest.mark.asyncio
+async def test_sorted_after_unordered_restores_the_for_each_ordered_guarantee() -> None:
+    # given the positional delay queued *before* the sort, so the racing
+    # branches really do split the source between them. Without it a sort that
+    # had stopped restoring the characteristic would still be indistinguishable
+    # here: the pipeline would run unordered under RACING with no barrier, and
+    # this would only catch it if the branches had each sorted a subset
+    seen: list[int] = []
+
+    # when
+    await (
+        Stream.of(values)
+        .parallel()
+        .unordered()
+        .map(_delay_by_position)
+        .sorted(lambda a, b: a - b)
+        .for_each_ordered(seen.append)
+    )
 
     # then: sorted() set the ordering characteristic again, so the encounter
     # order for_each_ordered() honours is the sorted one

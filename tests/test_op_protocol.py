@@ -1,7 +1,7 @@
 import pytest
 
 from snakestream.collectors import to_list
-from snakestream.sink import GeneratorBridgeSink, Op, Sink
+from snakestream.sink import GeneratorBridgeSink, Op, Ordering, Sink
 from snakestream.ops import (
     _DistinctOp,
     _FilterOp,
@@ -11,6 +11,7 @@ from snakestream.ops import (
     _PeekOp,
     _SkipOp,
     _SortedOp,
+    _UnorderedOp,
 )
 from snakestream.stream import Stream
 
@@ -103,3 +104,36 @@ async def test_shared_state_still_reaches_the_sinks_of_a_parallel_chain() -> Non
     it = await Stream.of([1, 1, 2, 2, 3, 3]).parallel().distinct().collect(to_list())
     # then every duplicate was seen by whichever branch pulled it
     assert sorted(it) == [1, 2, 3]
+
+
+_ORDER_SENSITIVE_OPS = [_LimitOp, _SkipOp, _DistinctOp]
+
+
+def test_a_minimal_op_is_not_order_sensitive() -> None:
+    # given an op that implements only link()
+    class _LinkOnlyOp(Op):
+        def link(self, downstream: Sink) -> Sink:
+            return downstream
+
+    # then order-sensitivity is opt-in, like ordering
+    assert _LinkOnlyOp.order_sensitive is False
+
+
+@pytest.mark.parametrize("op_cls", _ORDER_SENSITIVE_OPS)
+def test_the_three_position_dependent_ops_declare_order_sensitivity(op_cls) -> None:
+    # then limit/skip/distinct select on position, so they say so
+    assert op_cls.order_sensitive is True
+
+
+@pytest.mark.parametrize("op_cls", [c for c in [*_SHIPPED_OPS, _UnorderedOp] if c not in _ORDER_SENSITIVE_OPS])
+def test_no_other_shipped_op_declares_order_sensitivity(op_cls) -> None:
+    # then - sorted() included: it declares Ordering.SET instead, which is the
+    # first clause of the split rule and needs no second flag
+    assert op_cls.order_sensitive is False
+
+
+def test_sorted_declares_ordering_set_rather_than_order_sensitivity() -> None:
+    # then the two declarations say different things and sorted() uses the
+    # other one: what it does *to* the characteristic, not what it reads from it
+    assert _SortedOp.ordering is Ordering.SET
+    assert _SortedOp.order_sensitive is False

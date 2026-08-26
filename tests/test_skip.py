@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 from snakestream.collectors import to_list
 from snakestream.stream import Stream
@@ -79,3 +80,33 @@ async def test_skip_state_fresh_on_second_composition() -> None:
     # source is exhausted after the first run, but a second composition must
     # not raise or silently reuse the first run's skipped counter
     assert second == []
+
+
+# --- under the racing executor ----------------------------------------------
+#
+# The roadmap's reproduction: a source of twelve whose first five elements are
+# the expensive ones, so arrival order and encounter order disagree. The
+# mechanism that keeps them apart is in tests/test_racing_encounter_order.py;
+# these two are here so the op's own file says what the op selects.
+
+
+async def _slow_head(n: int) -> int:
+    await asyncio.sleep(0.05 if n < 5 else 0.001)
+    return n
+
+
+@pytest.mark.asyncio
+async def test_parallel_skip_drops_the_first_n_in_encounter_order() -> None:
+    # when
+    lst = await Stream.of(list(range(12))).parallel().map(_slow_head).skip(5).collect(to_list())
+    # then 0..4 are the ones dropped, as they are sequentially
+    assert lst == [5, 6, 7, 8, 9, 10, 11]
+
+
+@pytest.mark.asyncio
+async def test_parallel_unordered_skip_drops_the_first_n_to_arrive() -> None:
+    # when
+    lst = await Stream.of(list(range(12))).parallel().unordered().map(_slow_head).skip(5).collect(to_list())
+    # then exactly five dropped, but not 0..4
+    assert len(lst) == 7
+    assert sorted(lst) != [5, 6, 7, 8, 9, 10, 11]

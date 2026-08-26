@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 from snakestream.collectors import to_list
 from snakestream.stream import Stream
@@ -178,3 +179,34 @@ async def test_limit_zero_terminal_still_returns_its_empty_result() -> None:
     # then
     assert total == 0
     assert found is None
+
+
+# --- under the racing executor ----------------------------------------------
+#
+# The roadmap's reproduction: a source of twelve whose first five elements are
+# the expensive ones, so arrival order and encounter order disagree. The
+# mechanism that keeps them apart is in tests/test_racing_encounter_order.py;
+# these two are here so the op's own file says what the op selects.
+
+
+async def _slow_head(n: int) -> int:
+    await asyncio.sleep(0.05 if n < 5 else 0.001)
+    return n
+
+
+@pytest.mark.asyncio
+async def test_parallel_limit_selects_the_first_n_in_encounter_order() -> None:
+    # when
+    lst = await Stream.of(list(range(12))).parallel().map(_slow_head).limit(5).collect(to_list())
+    # then the same five the sequential pipeline picks, not the five that
+    # finished first
+    assert lst == [0, 1, 2, 3, 4]
+
+
+@pytest.mark.asyncio
+async def test_parallel_unordered_limit_selects_the_first_n_to_arrive() -> None:
+    # when the caller has said any n will do
+    lst = await Stream.of(list(range(12))).parallel().unordered().map(_slow_head).limit(5).collect(to_list())
+    # then still exactly five, chosen by the race
+    assert len(lst) == 5
+    assert lst != [0, 1, 2, 3, 4]

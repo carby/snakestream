@@ -21,7 +21,7 @@ from snakestream.ops import (
     _SortedOp,
     _UnorderedOp,
 )
-from snakestream.sink import _UNSET, Op, Ordering, TerminalSink
+from snakestream.sink import _UNSET, Op, TerminalSink, is_ordered
 from snakestream.terminals import (
     _CountSink,
     _FindSink,
@@ -185,16 +185,9 @@ class Stream(Generic[T]):
         StreamOpFlag. A caller influences ordering through unordered() and
         sorted(), and observes it through what the order-sensitive terminals do.
 
-        Deliberately not cached onto the instance as _derive() copies it
-        forward: a denormalised copy of a chain property is exactly what let
-        unordered() apply to a whole pipeline regardless of where it was
-        written. Chains are single digits long and this runs at most once per
-        terminal."""
-        ordered = True
-        for op in self._chain:
-            if op.ordering is not Ordering.PRESERVE:
-                ordered = op.ordering is Ordering.SET
-        return ordered
+        The fold itself lives in sink.py, where execution.py can reach it too;
+        this method is what keeps the characteristic off the public surface."""
+        return is_ordered(self._chain)
 
     def on_close(self, close_handler: CloseHandler) -> Stream[T]:
         """Mutates and returns self, unlike the eight derive-and-consume

@@ -163,50 +163,68 @@ async def test_unordered_position_does_not_change_the_elements_produced() -> Non
 
 # --- sorted() restores encounter order --------------------------------------
 #
-# This whole section asserts on the internal accessor rather than on behaviour,
-# and unlike the mode-switch tests below the reason is temporary rather than
-# structural: observing the rule needs a sort running under RACING, and that
-# path produces a wrong answer in its own right today. _SortedOp is a
-# StatelessOp, so over a list source one branch takes everything and emits it
-# sorted whatever the characteristic says, while over an async source the
-# branches each sort their own subset and the merged output is not sorted at
-# all. A behavioural assertion would therefore pin a defect rather than the
-# rule - verified, not assumed: with _SortedOp.ordering flipped to PRESERVE so
-# that sorted() no longer restores ordering, behavioural forms of all four of
-# these still passed. Restate them behaviourally once ordered sorted() under
-# RACING lands; it is the first item in the roadmap's Now bucket.
+# Behavioural, like everything above them. They could not be until the racing
+# executor honoured encounter order: a sort was order-blind there, so a sort
+# under RACING was indistinguishable from an unordered one and a behavioural
+# assertion would have pinned the defect rather than the rule. What each one
+# reads the characteristic through is what an order-sensitive op queued after
+# the sort selects - limit(3) taking the three smallest under the comparator is
+# something it can only do on a stream that arrived sorted.
 
 
 @pytest.mark.asyncio
 async def test_sorted_after_unordered_is_ordered_again() -> None:
     # when: a sort imposes an encounter order whether or not its input had one
-    res = Stream.of(values).parallel().unordered().sorted(_asc)._is_ordered()
-    # then
-    assert res is True
+    res = await Stream.of(values).parallel().unordered().map(_delay_by_position).sorted(_asc).limit(3).collect(to_list())
+    # then the limit selected on the sorted encounter order
+    assert res == [1, 2, 3]
 
 
 @pytest.mark.asyncio
 async def test_unordered_after_sorted_is_unordered() -> None:
-    # when
-    res = Stream.of(values).parallel().sorted(_asc).unordered()._is_ordered()
-    # then
-    assert res is False
+    # given a positional delay after the sort, so the branches finish the
+    # sorted stream out of order
+    seen = await _drain_ordered(Stream.of(values).parallel().sorted(_asc).unordered())
+    # then the pipeline took the order-blind path downstream of the
+    # unordered(), keeping the concurrency rather than delivering in sorted
+    # order
+    assert sorted(seen) == sorted(values)
+    assert seen != sorted(values)
 
 
 @pytest.mark.asyncio
 async def test_unordered_between_two_sorts_is_ordered() -> None:
     # when: the fold is left to right, so the last op to speak wins
-    res = Stream.of(values).parallel().sorted(_asc).unordered().sorted(_asc)._is_ordered()
+    res = (
+        await Stream.of(values)
+        .parallel()
+        .sorted(_asc)
+        .unordered()
+        .map(_delay_by_position)
+        .sorted(_asc)
+        .limit(3)
+        .collect(to_list())
+    )
     # then
-    assert res is True
+    assert res == [1, 2, 3]
 
 
 @pytest.mark.asyncio
 async def test_ops_after_a_sort_preserve_the_restored_ordering() -> None:
-    # when
-    res = Stream.of(values).parallel().unordered().sorted(_asc).map(lambda x: x)._is_ordered()
-    # then
-    assert res is True
+    # when: an order-preserving op sits between the sort and the op that reads
+    # the characteristic
+    res = (
+        await Stream.of(values)
+        .parallel()
+        .unordered()
+        .map(_delay_by_position)
+        .sorted(_asc)
+        .map(lambda x: x * 10)
+        .limit(3)
+        .collect(to_list())
+    )
+    # then the restored characteristic survived the intervening map
+    assert res == [10, 20, 30]
 
 
 # --- mode switches ----------------------------------------------------------

@@ -137,3 +137,40 @@ async def test_sorted_rejects_non_int_on_a_later_comparison() -> None:
     # when / then
     with pytest.raises(TypeError):
         await Stream.of(outset).sorted(comparator=lambda a, b: a - b).collect(to_list())
+
+
+# --- under the racing executor ----------------------------------------------
+
+
+def _asc(a: int, b: int) -> int:
+    return a - b
+
+
+@pytest.mark.asyncio
+async def test_parallel_sorted_sorts_the_whole_stream_over_an_async_source() -> None:
+    # given an async source, where every racing branch really does take a
+    # share - a sort per branch's subset would merge to something unsorted
+    async def descending():
+        for i in range(12, 0, -1):
+            await asyncio.sleep(0)
+            yield i
+
+    # when
+    actual = await Stream.of(descending()).parallel().sorted(_asc).collect(to_list())
+
+    # then
+    assert actual == list(range(1, 13))
+
+
+@pytest.mark.asyncio
+async def test_parallel_sorted_sorts_the_whole_stream_over_a_sync_source() -> None:
+    # given the same pipeline over a list, with a peek recording what the
+    # branches' heads saw - so this passing is the ordering requirement being
+    # honoured, not one branch happening to take every element
+    seen: list[int] = []
+
+    actual = await Stream.of(list(range(12, 0, -1))).parallel().peek(seen.append).sorted(_asc).collect(to_list())
+
+    # then
+    assert actual == list(range(1, 13))
+    assert sorted(seen) == list(range(1, 13))
