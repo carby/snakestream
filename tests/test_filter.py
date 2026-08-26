@@ -21,7 +21,7 @@ async def test_filter_multiple() -> None:
     except StopAsyncIteration:
         pass
     else:
-        assert False
+        pytest.fail("stream should be exhausted")
 
 
 @pytest.mark.asyncio
@@ -80,4 +80,4 @@ async def test_filter_async_function() -> None:
     except StopAsyncIteration:
         pass
     else:
-        assert False
+        pytest.fail("stream should be exhausted")

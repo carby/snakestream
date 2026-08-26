@@ -29,7 +29,7 @@ async def test_close_simple(mocker, int_2_letter) -> None:
     mock_callback1.assert_called_once()
     mock_callback2.assert_called_once()
 
-    assert 4 == len(it)
+    assert len(it) == 4
     assert "a" in it
     assert "b" in it
     assert "c" in it
@@ -203,4 +203,4 @@ async def test_autoclose_simple(mocker, monkeypatch, int_2_letter):
 
     # then
     close_mock.assert_called_once()
-    assert 4 == len(it)
+    assert len(it) == 4

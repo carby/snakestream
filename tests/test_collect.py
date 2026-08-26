@@ -34,7 +34,7 @@ async def test_to_list_simple() -> None:
     # when
     actual = await Stream.of(async_generator()).collect(to_list())
     # then
-    assert [1, 2, 3, 4, 5] == actual
+    assert actual == [1, 2, 3, 4, 5]
 
 
 @pytest.mark.asyncio

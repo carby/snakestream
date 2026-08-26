@@ -22,7 +22,7 @@ async def test_map(int_2_letter) -> None:
     except StopAsyncIteration:
         pass
     else:
-        assert False
+        pytest.fail("stream should be exhausted")
 
 
 @pytest.mark.asyncio
@@ -40,7 +40,7 @@ async def test_map_async_function(async_int_to_letter) -> None:
     except StopAsyncIteration:
         pass
     else:
-        assert False
+        pytest.fail("stream should be exhausted")
 
 
 @pytest.mark.asyncio
@@ -63,7 +63,7 @@ async def test_map_matches_builtin_map(values: list[int]) -> None:
     actual = await Stream.of(values).map(lambda x: x * 2).collect(to_list())
 
     # then
-    assert actual == list(map(lambda x: x * 2, values))
+    assert actual == [x * 2 for x in values]
 
 
 @given(values=st.lists(st.integers()))
@@ -76,4 +76,4 @@ async def test_map_async_mapper_matches_builtin_map(values: list[int]) -> None:
     actual = await Stream.of(values).map(async_double).collect(to_list())
 
     # then
-    assert actual == list(map(lambda x: x * 2, values))
+    assert actual == [x * 2 for x in values]

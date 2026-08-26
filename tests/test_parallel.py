@@ -11,7 +11,7 @@ async def test_parallel_simple(int_2_letter) -> None:
     # when
     it = await Stream.of([1, 2, 3, 4, 1, 2, 3, 4]).parallel().map(lambda x: int_2_letter[x]).distinct().collect(to_list())
     # then
-    assert 4 == len(it)
+    assert len(it) == 4
     assert "a" in it
     assert "b" in it
     assert "c" in it
@@ -179,7 +179,7 @@ async def test_parallel_declared_late_still_produces_every_element(int_2_letter)
     # so distinct() has to stay globally correct across branches
     it = await Stream.of([1, 2, 3, 4, 1, 2, 3, 4]).map(lambda x: int_2_letter[x]).distinct().parallel().collect(to_list())
     # then
-    assert 4 == len(it)
+    assert len(it) == 4
     assert "a" in it
     assert "b" in it
     assert "c" in it

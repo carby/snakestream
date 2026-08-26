@@ -38,10 +38,9 @@ async def test_sorted_comparator() -> None:
     def compare(a, b):
         if a["x"] > b["x"]:
             return 1
-        elif a["x"] < b["x"]:
+        if a["x"] < b["x"]:
             return -1
-        else:
-            return 0
+        return 0
 
     actual = await Stream.of(outset).sorted(comparator=compare).collect(to_list())
 
@@ -60,10 +59,9 @@ async def test_sorted_async_comparator_and_reverse() -> None:
         await asyncio.sleep(0.01)
         if a["x"] == b["x"]:
             return 0
-        elif a["x"] > b["x"]:
+        if a["x"] > b["x"]:
             return 1
-        else:
-            return -1
+        return -1
 
     actual = await Stream.of(outset).sorted(comparator=compare_async, reverse=True).collect(to_list())
 

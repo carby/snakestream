@@ -40,7 +40,6 @@ async def test_ok_async_function() -> None:
     async def some_func(x: MyObject) -> None:
         await asyncio.sleep(0.01)
         names.append(x.name)
-        return
 
     # when
     it = await Stream.of(input_list).peek(some_func).collect(to_list())

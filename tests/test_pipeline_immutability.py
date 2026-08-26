@@ -12,7 +12,7 @@ def _fresh_stream() -> Stream:
 INTERMEDIATE_OPS = [
     ("filter", lambda s: s.filter(lambda x: True)),
     ("map", lambda s: s.map(lambda x: x)),
-    ("flat_map", lambda s: s.flat_map(lambda x: Stream.of(x))),
+    ("flat_map", lambda s: s.flat_map(Stream.of)),
     ("sorted", lambda s: s.sorted()),
     ("distinct", lambda s: s.distinct()),
     ("peek", lambda s: s.peek(lambda x: None)),
@@ -38,14 +38,14 @@ TERMINAL_OPS = [
 ]
 
 
-@pytest.mark.parametrize("name, op", INTERMEDIATE_OPS, ids=[n for n, _ in INTERMEDIATE_OPS])
+@pytest.mark.parametrize(("name", "op"), INTERMEDIATE_OPS, ids=[n for n, _ in INTERMEDIATE_OPS])
 def test_intermediate_op_returns_new_instance(name, op) -> None:
     s = _fresh_stream()
     s2 = op(s)
     assert s2 is not s
 
 
-@pytest.mark.parametrize("name, op", INTERMEDIATE_OPS, ids=[n for n, _ in INTERMEDIATE_OPS])
+@pytest.mark.parametrize(("name", "op"), INTERMEDIATE_OPS, ids=[n for n, _ in INTERMEDIATE_OPS])
 def test_intermediate_op_twice_on_same_reference_raises(name, op) -> None:
     s = _fresh_stream()
     op(s)
@@ -55,7 +55,7 @@ def test_intermediate_op_twice_on_same_reference_raises(name, op) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("name, op", TERMINAL_OPS, ids=[n for n, _ in TERMINAL_OPS])
+@pytest.mark.parametrize(("name", "op"), TERMINAL_OPS, ids=[n for n, _ in TERMINAL_OPS])
 async def test_terminal_op_on_already_extended_reference_raises(name, op) -> None:
     s = _fresh_stream()
     s.map(lambda x: x)  # extends s into a new instance, invalidating s

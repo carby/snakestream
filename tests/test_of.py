@@ -49,7 +49,7 @@ async def test_input_list() -> None:
     except StopAsyncIteration:
         pass
     else:
-        assert False
+        pytest.fail("stream should be exhausted")
 
 
 @pytest.mark.asyncio
@@ -68,7 +68,7 @@ async def test_input_async_generator() -> None:
     except StopAsyncIteration:
         pass
     else:
-        assert False
+        pytest.fail("stream should be exhausted")
 
 
 @pytest.mark.asyncio
@@ -87,28 +87,28 @@ async def test_input_async_iterator() -> None:
     except StopAsyncIteration:
         pass
     else:
-        assert False
+        pytest.fail("stream should be exhausted")
 
 
 @pytest.mark.asyncio
 async def test_null_input() -> None:
     # when
     it = await Stream.of(None).collect(to_list())
-    assert [None] == it
+    assert it == [None]
 
 
 @pytest.mark.asyncio
 async def test_single_var_input() -> None:
     # when
     it = await Stream.of(1).collect(to_list())
-    assert [1] == it
+    assert it == [1]
 
 
 @pytest.mark.asyncio
 async def test_single_generator_input() -> None:
     # when
     it = await Stream.of(generator()).collect(to_list())
-    assert [1, 2, 3, 4, 5] == it
+    assert it == [1, 2, 3, 4, 5]
 
 
 @pytest.mark.asyncio
@@ -116,7 +116,7 @@ async def test_single_empty_stream_no_ref() -> None:
     # when
     actual = await Stream.of().collect(to_list())
 
-    assert [] == actual
+    assert actual == []
 
 
 @pytest.mark.asyncio
@@ -124,7 +124,7 @@ async def test_single_empty_list() -> None:
     # when
     actual = await Stream.of([]).collect(to_list())
 
-    assert [] == actual
+    assert actual == []
 
 
 @pytest.mark.asyncio
@@ -132,7 +132,7 @@ async def test_single_empty_dict() -> None:
     # when
     actual = await Stream.of({}).collect(to_list())
 
-    assert [{}] == actual
+    assert actual == [{}]
 
 
 def test_kwargs_rejected() -> None:
@@ -146,7 +146,7 @@ async def test_single_str_input() -> None:
     # when
     actual = await Stream.of("abc").collect(to_list())
 
-    assert ["abc"] == actual
+    assert actual == ["abc"]
 
 
 @pytest.mark.asyncio
@@ -154,7 +154,7 @@ async def test_single_bytes_input() -> None:
     # when
     actual = await Stream.of(b"ab").collect(to_list())
 
-    assert [b"ab"] == actual
+    assert actual == [b"ab"]
 
 
 @pytest.mark.asyncio
@@ -162,7 +162,7 @@ async def test_single_populated_dict() -> None:
     # when
     actual = await Stream.of({"a": 1, "b": 2}).collect(to_list())
 
-    assert [{"a": 1, "b": 2}] == actual
+    assert actual == [{"a": 1, "b": 2}]
 
 
 @pytest.mark.asyncio
@@ -170,7 +170,7 @@ async def test_populated_dict_and_some_other_literals() -> None:
     # when
     actual = await Stream.of({"a": 1, "b": 2}, {}, [], [1, 2]).collect(to_list())
 
-    assert [{"a": 1, "b": 2}, {}, [], [1, 2]] == actual
+    assert actual == [{"a": 1, "b": 2}, {}, [], [1, 2]]
 
 
 @pytest.mark.asyncio
@@ -178,21 +178,21 @@ async def test_double_empty_lists() -> None:
     # when
     actual = await Stream.of([], []).collect(to_list())
 
-    assert [[], []] == actual
+    assert actual == [[], []]
 
 
 @pytest.mark.asyncio
 async def test_dual_list_stream() -> None:
     actual = await Stream.of([1, 2], [2, 3, 4]).collect(to_list())
 
-    assert [[1, 2], [2, 3, 4]] == actual
+    assert actual == [[1, 2], [2, 3, 4]]
 
 
 @pytest.mark.asyncio
 async def test_single_args_stream() -> None:
     actual = await Stream.of(1, 2, 2, 3, 4).collect(to_list())
 
-    assert [1, 2, 2, 3, 4] == actual
+    assert actual == [1, 2, 2, 3, 4]
 
 
 @pytest.mark.asyncio
@@ -201,7 +201,7 @@ async def test_multiple_args_stream() -> None:
     arr2 = [3, 4]
     actual = await Stream.of(*arr1, *arr2).collect(to_list())
 
-    assert [1, 2, 2, 3, 4] == actual
+    assert actual == [1, 2, 2, 3, 4]
 
 
 @pytest.mark.asyncio
@@ -226,7 +226,7 @@ async def test_single_memoryview_input() -> None:
     actual = await Stream.of(source).collect(to_list())
 
     # then: one element, the memoryview itself, not the ints 97 and 98
-    assert 1 == len(actual)
+    assert len(actual) == 1
     assert actual[0] is source
 
 

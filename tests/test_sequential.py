@@ -15,7 +15,7 @@ async def test_sequential_simple(int_2_letter) -> None:
     # when
     it = await Stream.of([1, 2, 3, 4, 1, 2, 3, 4]).sequential().map(lambda x: int_2_letter[x]).distinct().collect(to_list())
     # then
-    assert 4 == len(it)
+    assert len(it) == 4
     assert "a" in it
     assert "b" in it
     assert "c" in it
@@ -75,7 +75,7 @@ async def test_sequential_declared_late_still_produces_every_element(int_2_lette
         .collect(to_list())
     )
     # then
-    assert 4 == len(it)
+    assert len(it) == 4
     assert "a" in it
     assert "b" in it
     assert "c" in it

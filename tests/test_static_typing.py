@@ -12,6 +12,7 @@ def _check(filename: str) -> subprocess.CompletedProcess[str]:
         [TY, "check", str(TYPING_DIR / filename)],
         capture_output=True,
         text=True,
+        check=False,  # callers assert on returncode; a non-zero exit is the expected result
     )
 
 

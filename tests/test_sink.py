@@ -104,7 +104,7 @@ class _TallyingSink(IntermediateSink):
         self._state: list | None = None
 
     async def begin(self, state_map) -> None:
-        self._state = state_map[self._op] if self._op in state_map else [0]
+        self._state = state_map.get(self._op, [0])
         await super().begin(state_map)
 
     async def accept(self, element) -> None:
