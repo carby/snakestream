@@ -1,6 +1,6 @@
 import pytest
 
-from snakestream.collector import counting
+from snakestream.collectors import counting
 from snakestream.stream import Stream
 
 

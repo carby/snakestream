@@ -1,6 +1,6 @@
 import pytest
 
-from snakestream.collector import averaging_double, averaging_int, averaging_long
+from snakestream.collectors import averaging_double, averaging_int, averaging_long
 from snakestream.stream import Stream
 
 

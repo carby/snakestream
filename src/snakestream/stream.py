@@ -6,7 +6,8 @@ from typing import TYPE_CHECKING, Any, Generic, cast, overload
 from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Coroutine, Iterable
 
 from snakestream.callable_dispatch import _maybe_await, is_async_callable
-from snakestream.collector import Collector, StreamingCollector, _CollectorSink, to_list
+from snakestream.collector import Collector, StreamingCollector, _CollectorSink
+from snakestream.collectors import to_list
 from snakestream.exception import IllegalStateException, StreamBuildException
 from snakestream.execution import PROCESSES as PROCESSES, RACING, SEQUENTIAL, Executor
 from snakestream.ops import (
@@ -137,7 +138,7 @@ class Stream(Generic[T]):
         self._check_not_consumed()
         return await (executor or self._executor).value(self._chain, self._source, terminal)
 
-    def sequential(self) -> Stream[T]:
+    def _derive_executor(self, executor: Executor) -> Stream[T]:
         """A mode switch: a new stream over the SAME source and the SAME queued
         chain, differing only in its executor, consuming this one.
 
@@ -149,21 +150,15 @@ class Stream(Generic[T]):
         It must not assign onto self and return self either, however tempting:
         pipeline-immutability requires the receiver be invalidated, and an
         in-place flip would leave it usable."""
-        return cast("Stream[T]", self._derive(self._chain, SEQUENTIAL))
+        return cast("Stream[T]", self._derive(self._chain, executor))
+
+    def sequential(self) -> Stream[T]:
+        """This pipeline under SEQUENTIAL; see _derive_executor()."""
+        return self._derive_executor(SEQUENTIAL)
 
     def parallel(self) -> Stream[T]:
-        """A mode switch: a new stream over the SAME source and the SAME queued
-        chain, differing only in its executor, consuming this one.
-
-        It must not compose. Composing here is what made `.parallel()`
-        position-dependent — ops queued before the switch were frozen under the
-        old mode — where Java's `parallel()` sets a flag on the source stage and
-        so governs the whole pipeline wherever it appears.
-
-        It must not assign onto self and return self either, however tempting:
-        pipeline-immutability requires the receiver be invalidated, and an
-        in-place flip would leave it usable."""
-        return cast("Stream[T]", self._derive(self._chain, RACING))
+        """This pipeline under RACING; see _derive_executor()."""
+        return self._derive_executor(RACING)
 
     def iterator(self) -> AsyncGenerator[T, None]:
         self._check_not_consumed()

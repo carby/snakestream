@@ -65,13 +65,19 @@ A stream consults its executor in exactly two places: `_compose()` (`self._execu
 `collect(collector)` (a terminal op) takes a `Collector` — Java's
 `Collector<T,A,R>`: a `supplier`/`accumulator`/`combiner`/`finisher` quadruple,
 each part sync or async — and drives the composed chain into a `_CollectorSink`
-built from it. Every collector in `collector.py` (`to_list()`, `to_set()`,
-`counting()`, `grouping_by()`, ...) is a **factory** returning a `Collector`;
-there are no bare instances. The one exception is `to_generator`, a
-`StreamingCollector` wrapping a `(composition) -> AsyncGenerator` callable: it
-is composed through the generator bridge instead of driven into a sink, and
-`collect(to_generator)` returns an `AsyncGenerator` directly rather than
-something to await. Passing anything else raises `StreamBuildException`.
+built from it. The two halves live in two modules, on Java's own naming:
+`collector.py` holds the *protocol* (`Collector`, `_CollectorSink`,
+`StreamingCollector`, `to_generator`), and `collectors.py` holds the ~20
+*factories* (`to_list()`, `to_set()`, `counting()`, `grouping_by()`, ...).
+The import edge runs one way, `collectors` -> `collector`, never back. Every
+collector in `collectors.py` is a **factory** returning a `Collector`; there
+are no bare instances. The one exception is `to_generator`, a
+`StreamingCollector` wrapping a `(composition) -> AsyncGenerator` callable,
+which is why it sits in `collector.py` beside the type rather than with the
+factories: it is composed through the generator bridge instead of driven into
+a sink, and `collect(to_generator)` returns an `AsyncGenerator` directly
+rather than something to await. Passing anything else raises
+`StreamBuildException`.
 
 ### Type aliases
 

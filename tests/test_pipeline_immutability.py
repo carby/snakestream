@@ -1,6 +1,6 @@
 import pytest
 
-from snakestream.collector import to_list
+from snakestream.collectors import to_list
 from snakestream.exception import IllegalStateException
 from snakestream.stream import Stream
 

@@ -599,7 +599,7 @@ async def test_a_chain_cancelled_at_begin_is_given_no_elements_but_still_ends() 
 async def test_real_driving_loop_honours_cancellation_reported_at_begin() -> None:
     # given: the same shape driven by the real _copy_into() rather than by
     # this module's test double
-    from snakestream.collector import to_list
+    from snakestream.collectors import to_list
     from snakestream.stream import Stream
 
     pulled = []

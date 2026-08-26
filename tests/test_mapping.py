@@ -1,6 +1,6 @@
 import pytest
 
-from snakestream.collector import counting, mapping, summing_int, to_list
+from snakestream.collectors import counting, mapping, summing_int, to_list
 from snakestream.exception import StreamBuildException
 from snakestream.stream import Stream
 

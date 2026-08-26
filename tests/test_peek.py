@@ -4,7 +4,7 @@ import pytest
 
 from conftest import MyObject
 from snakestream import Stream
-from snakestream.collector import to_list
+from snakestream.collectors import to_list
 
 obj1 = MyObject(1, "Object1")
 obj2 = MyObject(2, "Object2")

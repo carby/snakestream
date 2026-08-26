@@ -6,7 +6,7 @@
 import pytest
 
 from snakestream import Stream
-from snakestream.collector import to_list
+from snakestream.collectors import to_list
 
 
 class NextOnlyIterator:

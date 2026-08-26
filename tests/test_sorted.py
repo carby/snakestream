@@ -6,7 +6,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from snakestream import Stream
-from snakestream.collector import to_list
+from snakestream.collectors import to_list
 
 
 @pytest.mark.asyncio

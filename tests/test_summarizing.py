@@ -1,6 +1,6 @@
 import pytest
 
-from snakestream.collector import summarizing_double, summarizing_int, summarizing_long
+from snakestream.collectors import summarizing_double, summarizing_int, summarizing_long
 from snakestream.stream import Stream
 
 

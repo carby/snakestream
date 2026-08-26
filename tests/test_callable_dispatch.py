@@ -5,7 +5,7 @@ import pytest
 
 from snakestream import Stream
 from snakestream.callable_dispatch import _maybe_await, is_async_callable
-from snakestream.collector import (
+from snakestream.collectors import (
     to_list,
     summing_int,
     summing_long,
