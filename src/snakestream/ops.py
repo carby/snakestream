@@ -177,6 +177,7 @@ class _DistinctSink(StatefulSink[T]):
 
 class _DistinctOp(StatefulOp):
     _sink_cls = _DistinctSink
+    order_sensitive = True
 
     def make_shared_state(self) -> set:
         return set()
@@ -215,6 +216,7 @@ class _LimitSink(StatefulSink[T]):
 
 class _LimitOp(StatefulOp):
     _sink_cls = _LimitSink
+    order_sensitive = True
 
     def make_shared_state(self) -> Box:
         return Box(0)
@@ -234,6 +236,7 @@ class _SkipSink(StatefulSink[T]):
 
 class _SkipOp(StatefulOp):
     _sink_cls = _SkipSink
+    order_sensitive = True
 
     def make_shared_state(self) -> Box:
         return Box(0)

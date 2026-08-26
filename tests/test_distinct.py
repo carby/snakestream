@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
@@ -88,3 +89,46 @@ async def test_distinct_state_fresh_on_second_composition() -> None:
     # source is exhausted after the first run, but a second composition must
     # not raise or silently reuse the first run's `seen` set
     assert second == []
+
+
+# --- under the racing executor ----------------------------------------------
+
+
+class _Equal:
+    """Equal and equally hashed, but distinguishable - so which member of an
+    equal group survived is observable."""
+
+    def __init__(self, key: int, tag: int) -> None:
+        self.key = key
+        self.tag = tag
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _Equal) and self.key == other.key
+
+    def __hash__(self) -> int:
+        return hash(self.key)
+
+
+@pytest.mark.asyncio
+async def test_parallel_distinct_keeps_the_earliest_in_encounter_order() -> None:
+    # given two equal groups, tagged by source position, with the early
+    # members made the expensive ones so arrival order disagrees
+    source = [_Equal(key, tag) for tag, key in enumerate([0, 1, 0, 1, 0, 1, 0, 1])]
+
+    async def slow_head(e: _Equal) -> _Equal:
+        await asyncio.sleep(0.05 if e.tag < 4 else 0.001)
+        return e
+
+    # when
+    res = await Stream.of(source).parallel().map(slow_head).distinct().collect(to_list())
+
+    # then the survivor of each group is the earliest, as it is sequentially
+    assert [e.tag for e in res] == [0, 1]
+
+
+@pytest.mark.asyncio
+async def test_parallel_unordered_distinct_keeps_an_arbitrary_representative() -> None:
+    # when
+    res = await Stream.of([1, 1, 2, 2, 3, 3]).parallel().unordered().distinct().collect(to_list())
+    # then the cardinality guarantee holds; which member survived does not
+    assert sorted(res) == [1, 2, 3]

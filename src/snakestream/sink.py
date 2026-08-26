@@ -86,15 +86,51 @@ class Op(ABC):
     flat_map, peek, distinct, limit, skip — which is why it is the default and
     why only _UnorderedOp and _SortedOp state it. It is a ClassVar because it
     is a property of the operation, not of the arguments the user passed to it:
-    every sort sets ordering, whatever comparator it was given."""
+    every sort sets ordering, whatever comparator it was given.
+
+    order_sensitive declares whether this op's *result* depends on where an
+    element sits in the stream, where ordering says what the op does *to* the
+    characteristic. limit, skip and distinct are the three that set it: which
+    elements they select is a question about position, so on an ordered
+    pipeline they cannot be answered by a racing branch that sees only its own
+    share of the source. A sort needs no flag — it already declares
+    Ordering.SET, and setting an order is itself a claim over the whole
+    stream. Also a ClassVar, and for the same reason as ordering."""
 
     ordering: ClassVar[Ordering] = Ordering.PRESERVE
+    order_sensitive: ClassVar[bool] = False
 
     @abstractmethod
     def link(self, downstream: Sink[Any]) -> Sink[Any]: ...
 
     def make_shared_state(self) -> Any:
         return None
+
+
+def is_ordered(chain: list[Op], upto: int | None = None) -> bool:
+    """Whether the pipeline carries an encounter-order requirement at position
+    `upto` (the end of the chain when omitted): the three-valued fold over the
+    ops before it. Java's combineOpFlags() folds the same answer down its stage
+    list; here the fold is the whole of it, because there is one characteristic
+    rather than five.
+
+    Never cached onto anything. A denormalised copy of a chain property is
+    exactly what let unordered() apply to a whole pipeline regardless of where
+    it was written. Chains are single digits long, and this runs at most once
+    per terminal plus once per composition under the racing executor.
+
+    The `upto` form is what the racing executor's split search needs: an op is a
+    split point only if the pipeline is ordered *at its own position*, which is
+    the fold over everything queued before it.
+
+    Lives here rather than on Stream because execution.py needs it and may not
+    import stream.py; the fold is a property of a list of Ops, and Op and
+    Ordering both live here already."""
+    ordered = True
+    for op in chain[:upto] if upto is not None else chain:
+        if op.ordering is not Ordering.PRESERVE:
+            ordered = op.ordering is Ordering.SET
+    return ordered
 
 
 class _ArgsOp(Op):
