@@ -152,7 +152,7 @@ class Stream(Generic[T]):
         It must not assign onto self and return self either, however tempting:
         pipeline-immutability requires the receiver be invalidated, and an
         in-place flip would leave it usable."""
-        return cast("Stream[T]", self._derive(self._chain, executor))
+        return self._derive(self._chain, executor)
 
     def sequential(self) -> Stream[T]:
         """This pipeline under SEQUENTIAL; see _derive_executor()."""
