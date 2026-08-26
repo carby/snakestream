@@ -70,5 +70,17 @@ line-length = 127
 target-version = "py310"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "C90", "UP"]
+# Widened from E,F,W,C90,UP on 2026-08-26. The added families were trialled
+# over src/ first: nine findings total, all either fixed in the same change or
+# suppressed at their site with the reason. ASYNC found nothing, which is the
+# point of enabling it -- it costs no cleanup and guards the one thing this
+# library is entirely made of.
+select = ["E", "F", "W", "C90", "UP", "ASYNC", "B", "SIM", "RUF", "PERF", "C4", "RET", "PIE", "FURB", "PLR", "PLW"]
 mccabe = { max-complexity = 10 }
+
+# The widened families are enforced over src/ only. The same trial over tests/
+# found 61, dominated by style (22 SIM300 yoda conditions, 11 B011/PT015
+# `assert False` pairs) -- a separate story if it is wanted at all, and not one
+# to smuggle in here. E,F,W,C90,UP still apply everywhere, as before.
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ASYNC", "B", "SIM", "RUF", "PERF", "C4", "RET", "PIE", "FURB", "PLR", "PLW"]

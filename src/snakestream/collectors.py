@@ -37,6 +37,15 @@ def to_list() -> Collector[T, list[T], list[T]]:
     return Collector(list, list.append)
 
 
+# The default downstream for grouping_by()/partitioning_by(), named here rather
+# than called in their signatures. A Collector is four callables and no
+# per-collection state -- every group's list comes from the supplier, not from
+# the Collector -- so one shared value is safe, and saying so at the default
+# site spares the reader a trip to Collector's docstring to rule out the
+# mutable-default bug (B008).
+_TO_LIST: Collector[Any, list[Any], list[Any]] = to_list()
+
+
 def to_set() -> Collector[T, set[T], set[T]]:
     return Collector(set, set.add)
 
@@ -414,10 +423,11 @@ async def _group_into(
 
 async def _finish_groups(downstream: Collector[Any, Any, Any], groups: dict[Any, Any]) -> dict[Any, Any]:
     finisher = downstream.finisher
-    result = {}
-    for key, sub in groups.items():
-        result[key] = await _maybe_await(finisher, sub) if finisher is not None else sub
-    return result
+    # the finisher is fixed for the whole collection, so the test belongs
+    # outside the loop rather than once per group.
+    if finisher is None:
+        return dict(groups)
+    return {key: await _maybe_await(finisher, sub) for key, sub in groups.items()}
 
 
 def _check_downstream(downstream: Collector[Any, Any, Any]) -> None:
@@ -427,7 +437,7 @@ def _check_downstream(downstream: Collector[Any, Any, Any]) -> None:
 
 def grouping_by(
     classifier: Mapper[T, R],
-    downstream: Collector[T, Any, Any] = to_list(),
+    downstream: Collector[T, Any, Any] = _TO_LIST,
 ) -> Collector[T, Any, dict[R, Any]]:
     _check_downstream(downstream)
 
@@ -445,15 +455,14 @@ def grouping_by(
 
 def partitioning_by(
     predicate: Predicate[T],
-    downstream: Collector[T, Any, Any] = to_list(),
+    downstream: Collector[T, Any, Any] = _TO_LIST,
 ) -> Collector[T, Any, dict[bool, Any]]:
     _check_downstream(downstream)
 
     async def _supply() -> _GroupBox:
-        groups: dict[Any, Any] = {}
-        for key in (True, False):
-            groups[key] = await _maybe_await(downstream.supplier)
-        return _GroupBox(groups)
+        # both buckets exist before any element arrives, so partitioning_by
+        # always yields a two-key dict even over an empty stream.
+        return _GroupBox({True: await _maybe_await(downstream.supplier), False: await _maybe_await(downstream.supplier)})
 
     async def _accumulate(container: _GroupBox, element: T) -> None:
         # bool() as coerce_key, not as a wrapper round the predicate: a truthy

@@ -16,109 +16,48 @@ value rather than a class hierarchy, `summing_int`/`summing_long` sharing a body
 
 ## Now
 
-**One story left of the two opened 2026-08-25.** Story 1 landed 2026-08-26 and
-is written up in **Done**; story 2 is below, unchanged in scope but with its
-line anchors refreshed against the post-split layout.
+**Empty as of 2026-08-26.** Both stories of the second 2026-08-25 batch have
+landed; each is written up in **Done**. The pair bundled the thirteen findings
+of a second legibility, structure and stdlib-usage read of all twelve modules
+in `src/snakestream/` (2026-08-25, at `651f734`), and the sequencing paid out
+as intended — story 1 moved roughly four fifths of `collector.py` into
+`collectors.py`, and three of story 2's findings sat in the lines that moved.
 
-The pair bundled the thirteen findings of a second legibility, structure and
-stdlib-usage read of all twelve modules in `src/snakestream/` (2026-08-25, at
-`651f734`). The read deliberately started from the **Done** rejection log, so
-nothing here re-proposes the three measured rejections — the `CallSite`
+The read deliberately started from the **Done** rejection log, so nothing in
+either story re-proposed the three measured rejections — the `CallSite`
 dispatch wrapper, collapsing `min`/`max`/`count`/`reduce` onto their
 collectors, or deduplicating the bridge-buffer flush.
 
-They were **sequenced**, and that sequencing has now paid out: story 1 moved
-roughly four fifths of `collector.py` into `collectors.py`, and three of story
-2's findings sat in the lines that moved. Those anchors are updated below.
-
-**Story 2 does not face the benchmark gate.** Every site runs once per module
-import, once per stream construction, once per composition or once per
-collection — the one per-element neighbourhood it touches is `_finish_groups`,
-which runs once per collection at `end()`. Do not spend a harness run on it;
-if a diff reaches a per-element path, that is the signal it went wider than
-the story.
-
-| # | Story | Why it is still here |
-|---|---|---|
-| 2 | **Built-ins, stdlib and the lint gate.** **(a)** `execution.py` calls `source.__anext__()` (`:88`, in `_guarded`) and `branch.__anext__()` (`:159`, `:172`, in `race_through`) directly, the latter two within twenty lines of `aiter(source)` at `:151` — `anext()` is a builtin as of 3.10, the same floor that made `aiter()` available. **(b)** `_finish_groups` (`collectors.py:415-420`) is an async dict comprehension written longhand, with a loop-invariant `finisher is not None` test inside the loop; `partitioning_by._supply` (`collectors.py:452-456`) builds a two-key dict with a `for` over a literal tuple. **(c)** `RUF005` at `stream.py:128`: `self._chain + [op]` -> `[*self._chain, op]`, on the chain-extension path. **(d)** `RUF036` — `None` sits mid-union in three aliases (`type.py:24`, `:30`, `:37`); `Mapper`'s is the interesting one, since `Callable[[T], R \| None \| Awaitable[R \| None]]` widens every `.map()` result to optional and nothing documents why. **(e)** `__init__.py:11`'s `finally: del version, PackageNotFoundError` misses `dist_name`, which it created at `:6` — `snakestream.dist_name` is importable today (verified 2026-08-25). **(f)** Widen the ruff selection past `E,F,W,C90,UP` — see the notes for what the trial run actually found. | It waited on story 1: (b) and (d)'s `Mapper` question sat inside that move, and (f) is better turned on after it, so the new rules judge the module layout the batch settled on rather than the one it was leaving. Story 1 is done, so this is now unblocked. **Nothing in (a)-(e) changes behaviour**, so the whole story rides one tripwire: the suite passes with no test file edited, `snakestream.dist_name` excepted — (e) removes a name, and nothing in `tests/` references it (verified 2026-08-25). **(f) is the only part with judgement in it**: it is a config change whose cost lands on future diffs, not this one, and the two `noqa`s it requires are both genuine false positives, so it needs the reasoning below rather than a bare `--select` edit. |
-
-### Implementation notes for the second 2026-08-25 batch
-
-Line anchors below are refreshed to the post-split layout (2026-08-26); the
-symbol names remain the durable part. Story 1's notes were removed when it
-landed — see its **Done** entry for how each of its five parts resolved.
-
-**Story 2(f), the trial run.** Ruff currently selects `E,F,W,C90,UP` with
-`mccabe.max-complexity = 10`. Trialling `ASYNC,B,SIM,RUF,PERF,C4,RET,PIE,FURB,PLR,PLW`
-over `src/` on 2026-08-25 produced **nine findings total**, which is the whole
-argument for turning them on — the cleanup cost is already paid:
-
-| Rule | Count | Disposition |
-|---|---|---|
-| `RUF036` | 3 | Story 2(d) |
-| `B008` | 2 | `collectors.py:430,448` — see below |
-| `B004` | 1 | **False positive**, `noqa` |
-| `PERF203` | 1 | **False positive**, `noqa` |
-| `RUF005` | 1 | Story 2(c) |
-| `RUF023` | 1 | `Collector.__slots__` unsorted — auto-fixable, cosmetic |
-
-**`ASYNC` (flake8-async) found nothing**, which is the single best reason to
-enable it: it costs no cleanup today and it guards the one thing this library
-is entirely made of.
-
-The two false positives must be `noqa`'d with a reason rather than fixed.
-`B004` on `callable_dispatch.py:14` wants `callable(fn)` in place of
-`getattr(type(fn), "__call__", None)` — but that line is not testing whether
-`fn` is callable, it is reaching for the class-level `__call__` to ask whether
-*it* is a coroutine function, which is the only reason `is_async_callable`
-classifies an object with an `async def __call__` correctly where
-`inspect.iscoroutinefunction` does not (verified 2026-08-25 on 3.14.5:
-`inspect.iscoroutinefunction` already handles `functools.partial` and
-`inspect.markcoroutinefunction`, but returns `False` for an async-`__call__`
-instance). `PERF203` on `stream.py:192` is the close-handler loop, whose entire
-contract is to catch per handler and keep going.
-
-`B008` on `grouping_by`/`partitioning_by`'s `downstream: Collector = to_list()`
-is **not** the classic mutable-default bug — `Collector` holds only four
-callables and no per-collection state, as its docstring argues — but that
-argument lives in a different class in a different part of the file, and a
-reader has to find it to rule the bug out. A module-level `_TO_LIST = to_list()`
-says it where the default is written. Either that or a `noqa` with the reason
-inline; what should not happen is the rule being left off to avoid the question.
-
-**Story 2, the `tests/` half is deliberately excluded.** The same trial over
-`tests/` with `ASYNC,B,SIM,RUF,PERF,C4,PT` found **61**, dominated by style:
-22 `SIM300` yoda conditions and 11 `B011`/`PT015` `assert False` pairs, 27 of
-them auto-fixable. That is a separate story if it is wanted at all, and it
-should not be smuggled into this one — but **`PT011` (3 sites) is worth a look
-on its own merits**, since a `pytest.raises(Exception)` in a library that
-defines `StreamBuildException` and `IllegalStateException` will pass on the
-wrong error, and story 1 has now shipped `StreamException` — so those three
-sites have a precise base to name.
-
-**Deferred, needs an explicit call: `ExceptionGroup` in `Stream.close()`.**
-Raised by the same read and deliberately **not** made a story. `close()`
-(`stream.py:187-199`) collects every handler exception, raises the first, and
-attaches the rest via `add_note()` on 3.11+. `ExceptionGroup` is the built-in
-for exactly this and would make the other failures programmatically catchable
-rather than merely readable. It is parked because it re-opens a decision taken
-hours earlier in story 2(c) of the previous batch, and because the rule it
-would change is pinned in two places: the `stream-close-handling` spec
+**Still open, and still needing an explicit call: `ExceptionGroup` in
+`Stream.close()`.** Raised by the same read and deliberately not made a story.
+`close()` collects every handler exception, raises the first, and attaches the
+rest via `add_note()` on 3.11+. `ExceptionGroup` is the built-in for exactly
+this and would make the other failures programmatically catchable rather than
+merely readable. It is parked because it re-opens a decision taken hours
+earlier in story 2(c) of the previous batch, and because the rule it would
+change is pinned in two places: the `stream-close-handling` spec
 ("Requirement: `close()` invokes every registered close handler", spec line 23)
 and `tests/test_close.py`'s
 `test_close_with_multiple_raising_handlers_runs_all_and_raises_first`. It would
-also need the same `sys.version_info >= (3, 11)` fork, since 3.10 is the floor
-and has no `ExceptionGroup`. This belongs in **Later** if the answer is "not
-now"; it is recorded here rather than there only because it is one line of
-code behind a question that has already been answered once.
+also need a `sys.version_info >= (3, 11)` fork, since 3.10 is the floor and has
+no `ExceptionGroup`. Story 2 has now added a third pin: that loop carries a
+`noqa: PERF203` whose stated reason is the run-every-handler contract. Belongs
+in **Later** if the answer is "not now".
+
 
 ## Next
 
-**Empty as of 2026-08-25.** The second 2026-08-25 batch went entirely into
-**Now** as two stories; nothing was held back for this bucket. Refill it from
-whatever the two stories surface, from the deferred `ExceptionGroup` question
-in **Now**'s notes if it gets a yes, or from the Java-8 parity gaps README
-still tracks as unimplemented.
+**Refilled 2026-08-26 by story 2's lint trial**, which measured `tests/` and
+then deliberately left it out of scope.
+
+| Item | Why next |
+|---|---|
+| **`PT011`: three `pytest.raises(Exception)` sites in `tests/`.** A bare `Exception` in a library that defines `StreamBuildException`, `IllegalStateException` and now `StreamException` will pass on the wrong error — the test cannot distinguish the failure it means from any other. Story 1 shipped `StreamException`, so all three sites have a precise base to name. | Worth doing on its own merits rather than as style cleanup: it is the one part of the `tests/` trial that is about test *rigor* and not formatting. Small — three sites — and it does not depend on the rest of the `tests/` question below. |
+| **The rest of the `tests/` lint families, if wanted at all.** The `ASYNC,B,SIM,RUF,PERF,C4,PT` trial over `tests/` (2026-08-25) found **61**, dominated by style: 22 `SIM300` yoda conditions and 11 `B011`/`PT015` `assert False` pairs, 27 auto-fixable. Story 2 scoped the widened families to `src/` via `per-file-ignores` precisely so this stayed a separate decision. | Needs a call on whether it is worth 61 diffs' worth of churn across the suite for style the tests do not currently suffer from. Unlike `src/`, there is no cleanup already paid for here. If the answer is yes, the `per-file-ignores` entry in `pyproject.toml` is the single line to delete. |
+
+Otherwise refill from the deferred `ExceptionGroup` question in **Now**'s notes
+if it gets a yes, or from the Java-8 parity gaps README still tracks as
+unimplemented.
 
 ## Later
 
@@ -134,6 +73,62 @@ core semantic.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should instead be documented as intentional next to the `str`/`bytes` note. Surfaced 2026-08-20 in the same code-quality read that produced **Now** items 1-4. |
 
 ## Done
+
+- **Built-ins, stdlib and the lint gate** (2026-08-26). Story 2 of the second
+  2026-08-25 batch, and the one that waited on story 1. Six findings, one
+  change: `openspec/changes/builtins-stdlib-and-lint-gate`.
+
+  **The tripwire held.** 567 tests pass with **no test file edited**, coverage
+  98.04% against the 98% gate, `ty check src` clean, and the diff touches
+  exactly eight files — the seven modules named in the story plus
+  `pyproject.toml`.
+
+  **(a) `anext()` at all three sites**, `_guarded`'s and both of
+  `race_through`'s. **The roadmap was wrong that this story faces no
+  per-element code**: all three of these run once per element, not once per
+  composition, and the "do not spend a harness run on it" note applied to
+  everything in the story except exactly this part. Measured rather than
+  asserted, 300k elements, five reps, both orderings: `anext(it)` **69ms**
+  best / 70ms median against `it.__anext__()` **79ms** best / 81ms median —
+  about **13% faster**, ~35ns per element, the builtin's type-level lookup
+  beating the instance attribute lookup. So the per-element hunk is a small
+  improvement. The `aiter()` comment at `:151` was left alone (it explains
+  arity, not the builtin); the adjacent `:153` comment was refreshed to name
+  the call the next line makes.
+
+  **(b) `_finish_groups` and `partitioning_by._supply`.** The invariant left
+  the loop rather than the comprehension merely wrapping the branch: no
+  finisher now returns `dict(groups)` outright, and the finishing arm is one
+  async dict comprehension. `_supply` builds its two-key dict directly.
+
+  **(c)** `[*self._chain, op]` in `_extend`. **(e)** `dist_name` joins the
+  `finally: del`; `snakestream.dist_name` is gone (verified importable before,
+  absent after) and `__version__` still resolves.
+
+  **(d) `Mapper` lost its `None` arm entirely** rather than taking `RUF036`'s
+  reordering. The user's call, put before the specs were written. The union
+  widened every `.map()` result to optional for nothing — a mapper returning
+  `None` is already `R = None` — and `ty` confirms the fix: `.map(to_str)` now
+  reveals `Stream[str]` where it read `Stream[str | None]`, and a `str | None`
+  mapper still binds `R` to `str | None`. No internal site was leaning on the
+  optional. `Consumer` and `BiConsumer` took the plain reorder, `None` to the
+  tail. Recorded as a delta on the `generic-stream-typing` spec, since a typed
+  `map()` result is externally visible.
+
+  **(f) The selection widened to
+  `E,F,W,C90,UP,ASYNC,B,SIM,RUF,PERF,C4,RET,PIE,FURB,PLR,PLW`** — exactly the
+  trialled set, no family added unmeasured. **The trial was over `src/` and the
+  gate is not**: `ruff check .` immediately turned up 262 findings in `tests/`,
+  which the story excluded. Resolved with a `per-file-ignores` entry dropping
+  the new families for `tests/**` while `E,F,W,C90,UP` still apply everywhere,
+  so the scope the story decided is the scope the config enforces. `src/` is
+  clean. `B008` took the `_TO_LIST` module-level default over a `noqa`, so the
+  statelessness argument sits where the default is written; `RUF023` sorted
+  `Collector.__slots__`; and both false positives carry a rule-scoped `noqa`
+  with its reason inline — `B004` on `callable_dispatch.py`'s class-level
+  `__call__` lookup, `PERF203` on the close-handler loop. Neither is a
+  file-level ignore. **`ASYNC` still finds nothing**, which was the argument
+  for it.
 
 - **`collectors.py` split out of `collector.py`, and four legibility gaps**
   (2026-08-26). Story 1 of the second 2026-08-25 batch, and the one the other
