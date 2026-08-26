@@ -18,7 +18,7 @@ value rather than a class hierarchy, `summing_int`/`summing_long` sharing a body
 
 **Three stateful ops do not honour encounter order under `RACING`** — opened
 2026-08-26 out of `make-ordering-a-chain-characteristic`, which deliberately
-scoped them out but is what makes them specifiable: `is_ordered()` now gives a
+scoped them out but is what makes them specifiable: `_is_ordered()` now gives a
 reliable, positional answer for an op to branch on, which it could not before.
 
 All three are **wrong answers on an ordered stream, not missed optimisations**,
@@ -55,13 +55,52 @@ the first *n* in encounter order. With a uniform-cost chain the shared source
 lock keeps pull order and the selection is right, which is why this is invisible
 until an op ahead of the limit has real per-element variance. Java's `SliceOps`
 picks `SliceTask` on `ORDERED` for precisely this and takes the cheap path only
-when unordered — with `is_ordered()` now positional, that branch is finally
+when unordered — with `_is_ordered()` now positional, that branch is finally
 expressible here.
 
 **(c) `distinct()` keeps an arbitrary representative.** Same shared-state
 mechanism, lowest stakes: the survivors are `==`-equal, so it only matters for
 objects that are equal but distinguishable (identity, attached payload). Worth
 deciding alongside (b) rather than on its own.
+
+**Test debt on (a): the suite cannot currently see it, and one test is named
+for a guarantee it does not check.** Not a fourth op — the coverage consequence
+of (a), and the reason it should be fixed with (a) rather than separately. Found
+2026-08-26 while implementing `make-is-ordered-internal`, by mutation: invert an
+ordering rule in `src/`, run
+the suite, and see which tests notice. Three inversions, against `main` plus
+that change's tests:
+
+| Inversion | Rule it breaks | Tests that catch it |
+|---|---|---|
+| `_is_ordered()` returns `True` always | `unordered()` clears the characteristic | 4, all in `test_unordered.py` |
+| `_is_ordered()` returns `False` always | a fresh pipeline is ordered | 11, of which 3 outside `test_unordered.py` |
+| `_SortedOp.ordering` = `PRESERVE` | `sorted()` restores the characteristic | **3, all in `test_unordered.py`, and all three assert on the accessor** |
+
+The third row is the finding. Nothing behavioural anywhere in the suite notices
+that `sorted()` stopped restoring encounter order, **because (a) makes a sort
+under `RACING` indistinguishable from an unordered one**: over a list source one
+branch takes everything and emits it sorted whatever the characteristic says.
+Two concrete consequences:
+
+- `tests/test_for_each_ordered.py::test_sorted_after_unordered_restores_the_for_each_ordered_guarantee`
+  passes with `sorted()` no longer restoring anything. It is a **pre-existing
+  weak test**, predating `make-is-ordered-internal`, and its name claims more
+  than it checks. Fixing it is blocked on (a), not on the test.
+- `make-is-ordered-internal` initially rewrote that requirement's four tests
+  behaviourally, to avoid asserting on a now-private accessor; all four silently
+  stopped pinning anything, and the mutation check is what caught it. They were
+  reverted to `_is_ordered()` assertions, with the reason recorded in
+  `tests/test_unordered.py` and in the `stream-ordering` spec.
+
+**So (a) owes a test debt as well as a fix.** Whoever lands ordered `sorted()`
+under `RACING` should, in the same change: restate those four tests
+behaviourally and delete their "restate once (a) lands" notes, repair the
+`test_for_each_ordered.py` test above, and re-run the three inversions to
+confirm each is caught behaviourally. Worth noting the second inversion's
+figures too — the `unordered()` relaxation of `for_each_ordered()` is pinned
+only inside `test_unordered.py`; no test in `test_for_each_ordered.py` notices
+when it stops happening.
 
 **Also still open, and still needing an explicit call: `ExceptionGroup` in
 `Stream.close()`** — see the note below, unchanged.
@@ -97,10 +136,11 @@ in **Later** if the answer is "not now".
 
 ## Next
 
-**Empty as of 2026-08-26.** Both items opened here earlier the same day landed
-together in `extend-lint-gate-to-tests`; see **Done**. Refill from the deferred
-`ExceptionGroup` question in **Now**'s notes if it gets a yes, or from the
-Java-8 parity gaps README still tracks as unimplemented.
+**Empty as of 2026-08-26.** Its one item — removing `is_ordered()` from the
+public API — was promoted to **Now** the same day and landed the same day; see
+**Done**. Refill from the deferred `ExceptionGroup` question in **Now**'s notes
+if it gets a yes, or the Java-8 parity gaps README still tracks as
+unimplemented.
 
 ## Later
 
@@ -116,6 +156,41 @@ core semantic.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should instead be documented as intentional next to the `str`/`bytes` note. Surfaced 2026-08-20 in the same code-quality read that produced **Now** items 1-4. |
 
 ## Done
+
+- **`is_ordered()` left the public API** (2026-08-26). Renamed to
+  `_is_ordered()`. Java has no such accessor to be at parity with: `BaseStream`
+  exposes exactly one piece of pipeline introspection, `isParallel()`, while the
+  ordering characteristic lives in the package-private `StreamOpFlag.ORDERED`
+  and is never readable by a caller. The question that surfaced it was "where is
+  `Stream.ordered()`?" — and the answer is that Java has no `ordered()` either,
+  because ordering is a spliterator characteristic contributed by the source,
+  only ever cleared by `unordered()` or re-imposed by `sorted()`. Both are now
+  struck-through rows in README's parity table. See
+  `openspec/changes/archive/2026-08-26-make-is-ordered-internal`.
+
+  **Renamed, not deleted, and not inlined** — the second half was the live
+  question, since the fold turned out to have exactly one caller
+  (`for_each_ordered()`; `find_first()` stopped consulting it in
+  `make-ordering-a-chain-characteristic`, and `CLAUDE.md` had been stale about
+  that ever since, now fixed). Inlining five lines into a single caller is the
+  ordinary call and was still rejected: three mode-switch scenarios have no
+  behavioural observable and pin their rule through the accessor, so inlining
+  collapses into dropping them — and it is the rule whose earlier violation
+  produced a wrong answer. The docstring also records *why* the fold is not
+  cached onto the instance, which is reasoning nobody finds inside a method
+  about consuming elements.
+
+  **The rewrite of the tests is what this change actually cost.** Replacing
+  accessor assertions with behavioural ones silently weakened them, and a
+  mutation check caught it: with `_SortedOp` altered to preserve rather than set
+  the characteristic, all four rewritten `sorted()`-restores tests still passed.
+  They were reverted to `_is_ordered()` assertions, and the reason — that (a) in
+  **Now** makes a sort under `RACING` indistinguishable from an unordered one —
+  is recorded in the spec, in `tests/test_unordered.py`, and as test debt on (a)
+  itself, along with a pre-existing weak test the same sweep found in
+  `tests/test_for_each_ordered.py`. **The lesson generalises: "assert on
+  behaviour, not on internals" is right until the behaviour is broken, and a
+  test rewrite is not verified by the suite going green afterwards.**
 
 - **Ordering became a chain characteristic instead of an instance flag**
   (2026-08-26). `unordered()` set `self._ordered = False`, so it applied to the

@@ -1,23 +1,29 @@
-## Purpose
+## ADDED Requirements
 
-Defines the contract for `Stream`'s ordered/unordered bookkeeping: how the
-encounter-order characteristic is derived, `unordered()` and `sorted()`'s
-restoration of it, mirroring Java's `BaseStream.unordered()` and
-`StreamOpFlag.ORDERED`. Ordering is a **positional characteristic of the queued
-chain**, not per-instance state: an operation clears it, sets it, or preserves
-what came before, and the characteristic is the fold of those answers. That is
-what makes it the deliberate opposite of `sequential()`/`parallel()`, which are
-position-independent because they select an executor for the whole pipeline
-rather than occupying a position in it.
+### Requirement: The ordering characteristic is not part of the public API
+A `Stream` SHALL NOT expose the ordering characteristic as public API. Java's
+`BaseStream` exposes exactly one piece of pipeline introspection, `isParallel()`;
+the ordering characteristic lives in the package-private `StreamOpFlag.ORDERED`
+and is never readable by a caller. The public surface here SHALL match: a caller
+influences ordering through `unordered()` and `sorted()`, and observes it only
+through what order-sensitive operations do.
 
-The characteristic is **not public API**, matching Java, which exposes
-`isParallel()` and keeps `ORDERED` in the package-private `StreamOpFlag`. A
-caller influences it through `unordered()` and `sorted()`, and observes it
-through what the order-sensitive operations built on it — `for_each_ordered()` —
-do. It must therefore be tracked correctly and survive `sequential()`/
-`parallel()` mode switches.
+The characteristic SHALL remain readable internally, under a name marked private
+by the leading-underscore convention, because the operations that honour
+encounter order need to branch on it.
 
-## Requirements
+#### Scenario: The public accessor is gone
+- **WHEN** a caller accesses `.is_ordered` on any `Stream`
+- **THEN** `AttributeError` is raised, on the same rule that makes any other
+  undefined attribute an error
+
+#### Scenario: The characteristic is still derivable internally
+- **WHEN** the internal accessor is called on a pipeline with an
+  ordering-clearing operation queued and no later ordering-setting operation
+- **THEN** it reports the pipeline as unordered, unchanged in every respect
+  except its name
+
+## MODIFIED Requirements
 
 ### Requirement: The ordering flag survives sequential()/parallel() mode switches
 `Stream.sequential()` and `Stream.parallel()` SHALL leave the ordering
@@ -108,6 +114,12 @@ The queued operation SHALL be an identity operation: it SHALL NOT observe,
 transform, reorder, drop or duplicate any element, and its only effect SHALL be
 on the ordering characteristic.
 
+#### Scenario: unordered() flips is_ordered() to False
+- **WHEN** `.unordered()` is called on a stream
+- **THEN** the internal accessor reports the returned stream unordered. (Scenario
+  name retained from the pre-rename spec for delta continuity; the accessor it
+  names is now internal, and the name is swept at archive time.)
+
 #### Scenario: unordered() clears the encounter-order requirement
 - **WHEN** `.unordered()` is called on a stream and a terminal that relaxes
   under an unordered pipeline is awaited
@@ -170,26 +182,3 @@ behaviourally once ordered `sorted()` under the racing executor lands.
 - **WHEN** `.unordered()` is queued on a stream, followed by `.sorted(c)` and
   then an order-preserving operation
 - **THEN** the internal accessor reports the pipeline ordered
-
-### Requirement: The ordering characteristic is not part of the public API
-A `Stream` SHALL NOT expose the ordering characteristic as public API. Java's
-`BaseStream` exposes exactly one piece of pipeline introspection, `isParallel()`;
-the ordering characteristic lives in the package-private `StreamOpFlag.ORDERED`
-and is never readable by a caller. The public surface here SHALL match: a caller
-influences ordering through `unordered()` and `sorted()`, and observes it only
-through what order-sensitive operations do.
-
-The characteristic SHALL remain readable internally, under a name marked private
-by the leading-underscore convention, because the operations that honour
-encounter order need to branch on it.
-
-#### Scenario: The public accessor is gone
-- **WHEN** a caller accesses `.is_ordered` on any `Stream`
-- **THEN** `AttributeError` is raised, on the same rule that makes any other
-  undefined attribute an error
-
-#### Scenario: The characteristic is still derivable internally
-- **WHEN** the internal accessor is called on a pipeline with an
-  ordering-clearing operation queued and no later ordering-setting operation
-- **THEN** it reports the pipeline as unordered, unchanged in every respect
-  except its name
