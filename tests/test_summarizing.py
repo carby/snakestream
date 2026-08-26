@@ -37,9 +37,12 @@ async def test_summarizing_double_coerces_to_float() -> None:
     result = await Stream.of([1, 2, 3]).collect(summarizing_double(lambda x: x))
 
     # then
-    assert result.sum == 6.0 and isinstance(result.sum, float)
-    assert result.min == 1.0 and isinstance(result.min, float)
-    assert result.max == 3.0 and isinstance(result.max, float)
+    assert result.sum == 6.0
+    assert isinstance(result.sum, float)
+    assert result.min == 1.0
+    assert isinstance(result.min, float)
+    assert result.max == 3.0
+    assert isinstance(result.max, float)
 
 
 @pytest.mark.asyncio

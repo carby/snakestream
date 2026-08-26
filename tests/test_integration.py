@@ -17,4 +17,4 @@ async def test_mixed_chain(int_2_letter) -> None:
     except StopAsyncIteration:
         pass
     else:
-        assert False
+        pytest.fail("stream should be exhausted")

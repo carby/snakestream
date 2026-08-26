@@ -78,13 +78,7 @@ async def test_limit_parallel_shared_close_across_branches() -> None:
 @pytest.mark.asyncio
 async def test_limit_multiple() -> None:
     # when
-    lst = (
-        await Stream.of([[0, 1, 2], [3, 4], [5, 6, 7], [8, 9]])
-        .limit(3)
-        .flat_map(lambda x: Stream.of(x))
-        .limit(6)
-        .collect(to_list())
-    )
+    lst = await Stream.of([[0, 1, 2], [3, 4], [5, 6, 7], [8, 9]]).limit(3).flat_map(Stream.of).limit(6).collect(to_list())
 
     # then
     assert lst == [0, 1, 2, 3, 4, 5]

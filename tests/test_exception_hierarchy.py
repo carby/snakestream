@@ -25,7 +25,10 @@ async def test_existing_leaf_catch_still_works() -> None:
 
 
 def test_base_is_not_a_value_error() -> None:
-    with pytest.raises(StreamException):
+    # PT012 wants one simple statement inside the block, but the try/except IS
+    # the demonstration here: the except clause must not match, which is what
+    # proves StreamException does not derive from ValueError.
+    with pytest.raises(StreamException):  # noqa: PT012
         try:
             raise StreamException("not a ValueError")
         except ValueError:  # pragma: no cover - the point is that this never matches

@@ -47,17 +47,10 @@ in **Later** if the answer is "not now".
 
 ## Next
 
-**Refilled 2026-08-26 by story 2's lint trial**, which measured `tests/` and
-then deliberately left it out of scope.
-
-| Item | Why next |
-|---|---|
-| **`PT011`: three `pytest.raises(Exception)` sites in `tests/`.** A bare `Exception` in a library that defines `StreamBuildException`, `IllegalStateException` and now `StreamException` will pass on the wrong error — the test cannot distinguish the failure it means from any other. Story 1 shipped `StreamException`, so all three sites have a precise base to name. | Worth doing on its own merits rather than as style cleanup: it is the one part of the `tests/` trial that is about test *rigor* and not formatting. Small — three sites — and it does not depend on the rest of the `tests/` question below. |
-| **The rest of the `tests/` lint families, if wanted at all.** The `ASYNC,B,SIM,RUF,PERF,C4,PT` trial over `tests/` (2026-08-25) found **61**, dominated by style: 22 `SIM300` yoda conditions and 11 `B011`/`PT015` `assert False` pairs, 27 auto-fixable. Story 2 scoped the widened families to `src/` via `per-file-ignores` precisely so this stayed a separate decision. | Needs a call on whether it is worth 61 diffs' worth of churn across the suite for style the tests do not currently suffer from. Unlike `src/`, there is no cleanup already paid for here. If the answer is yes, the `per-file-ignores` entry in `pyproject.toml` is the single line to delete. |
-
-Otherwise refill from the deferred `ExceptionGroup` question in **Now**'s notes
-if it gets a yes, or from the Java-8 parity gaps README still tracks as
-unimplemented.
+**Empty as of 2026-08-26.** Both items opened here earlier the same day landed
+together in `extend-lint-gate-to-tests`; see **Done**. Refill from the deferred
+`ExceptionGroup` question in **Now**'s notes if it gets a yes, or from the
+Java-8 parity gaps README still tracks as unimplemented.
 
 ## Later
 
@@ -73,6 +66,65 @@ core semantic.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should instead be documented as intentional next to the `str`/`bytes` note. Surfaced 2026-08-20 in the same code-quality read that produced **Now** items 1-4. |
 
 ## Done
+
+- **The lint gate extended to `tests/`** (2026-08-26). Both **Next** items at
+  once, because they were one edit: `PT011` could not be fixed without enabling
+  `PT`, which was the `tests/` question.
+  `openspec/changes/extend-lint-gate-to-tests`.
+
+  **Both of this roadmap's figures for the item were wrong, and measuring
+  before planning changed the change.** The recorded **61** was a trial set
+  that omitted `PLR`, `PLW`, `RET`, `PIE` and `FURB`; the real total under the
+  selection actually in `pyproject.toml`, plus `PT`, was **283**. Of those,
+  **218 were `PLR2004`** alone — magic-value-comparison, firing on
+  `lambda x: x > 5` and `assert largest == 7`, which in a test is the data and
+  the expected value. Exempted for `tests/` and only there, by **rule and not
+  by family**, so the rest of `PLR` still applies to tests and `PLR2004` still
+  applies to `src/`. That distinction earned a spec requirement of its own: the
+  previous change's entry switched off eleven whole families, and the
+  difference between the two is the whole quality of the gate. The remaining
+  **65** findings (~54 sites, since `B011` and `PT015` flag the same eleven)
+  were all fixed; `ruff check .` is now clean over the whole tree.
+
+  **The roadmap also had `PT011` backwards, and the correction is the more
+  useful record.** It described three `pytest.raises(Exception)` sites to be
+  narrowed to `StreamException` now that story 1 had shipped it. They are
+  `pytest.raises(ValueError)` in `test_exception.py`, and the
+  `ValueError("boom")` is raised by a **user callback** the test installs, to
+  prove a user exception propagates out through `map()`/`filter()` sequentially
+  and in parallel. Naming a library base would have asserted the opposite of
+  the test's purpose. `match="boom"` was the fix that fits.
+
+  **The `assert False` claim needed correcting too, mid-apply.** The change was
+  planned on the premise that `python -O` strips those eleven guards outright,
+  making them silently pass — a live correctness bug. That is false for this
+  suite: pytest rewrites assertions inside test modules at import time, so
+  `assert False` fires under `-O` as it should. What the rewrite actually buys
+  was then measured against a baseline worktree at HEAD, under
+  `-O --assert=plain`: **before, 37 passed; after, 10 failed** reading
+  `Failed: stream should be exhausted`. Those 37 were vacuous — these tests
+  advance the stream *inside* their assertions, so with assertions stripped the
+  stream is never consumed, the guard's `try` succeeds, and the old
+  `assert False` in the `else:` was stripped as well. The rewrite does not make
+  that configuration work; it makes it say so instead of reporting green. Plus
+  the plain win: `pytest.fail(msg)` names what did not happen where
+  `assert False` said nothing.
+
+  The rest: 22 `SIM300` yoda conditions, 3 `PT006`, 3 `PT018` composite
+  assertions split so a failure names which half broke, 4 `PLW0108`, 2 `C417`,
+  2 `RET505`, 1 each of `SIM401`, `PLR1711`, `PLW1510` (explicit `check=False`
+  — callers assert on `returncode`, so only the implicitness was the finding).
+  One inline suppression, `PT012` on `test_base_is_not_a_value_error`, where
+  the `try`/`except ValueError` inside `pytest.raises(StreamException)` is the
+  mechanism the test exists to demonstrate. 25 of the fixes were taken with
+  `ruff check --fix`; `--unsafe-fixes` was deliberately not used, since its
+  extra fixes reach into assertions.
+
+  **The tripwire was inverted from the previous change and held.** That one
+  required no test file be touched; this one is 18 test files and 69 changed
+  lines, so the rule was the count — **567 passed**, unchanged — plus a read of
+  every hunk confirming each is the same assertion restated or a strictly
+  stronger one. No `src/` file was touched, coverage held at 98.04%, `ty` clean.
 
 - **Built-ins, stdlib and the lint gate** (2026-08-26). Story 2 of the second
   2026-08-25 batch, and the one that waited on story 1. Six findings, one
