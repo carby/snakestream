@@ -1,6 +1,7 @@
 import asyncio
 
 import pytest
+from collections.abc import AsyncGenerator
 
 from snakestream import Stream
 
@@ -72,9 +73,22 @@ async def test_find_first_on_ordered_parallel_stream_empty_source() -> None:
 
 
 @pytest.mark.asyncio
-async def test_find_first_on_unordered_parallel_stream_races() -> None:
-    # given: an unordered ParallelStream with the same reordering-pressure
-    # chain as the ordered test above
+async def test_find_first_on_unordered_parallel_stream_still_finds_the_first() -> None:
+    # given: the same reordering-pressure chain as the ordered test above, on
+    # a stream declared unordered
+    # when
+    it = await Stream.of(values).parallel().unordered().map(_delay_by_position).find_first()
+
+    # then: unordered() does not relax find_first(). Java's findFirst() finds
+    # the leftmost element on an unordered parallel stream too - the javadoc
+    # permits returning any element, the implementation declines to. A caller
+    # who wants the race uses find_any().
+    assert it == values[0]
+
+
+@pytest.mark.asyncio
+async def test_find_any_remains_the_unordered_alternative() -> None:
+    # given
     seen = set()
 
     async def track_and_delay(n: int) -> int:
@@ -82,9 +96,28 @@ async def test_find_first_on_unordered_parallel_stream_races() -> None:
         return await _delay_by_position(n)
 
     # when
-    it = await Stream.of(values).parallel().unordered().map(track_and_delay).find_first()
+    it = await Stream.of(values).parallel().map(track_and_delay).find_any()
 
-    # then: a match was found without waiting for a strictly ordered pull
-    # through the whole source - not every element was necessarily visited
+    # then: find_any() still returns without a strictly ordered pull through
+    # the whole source - not every element was necessarily visited
     assert it in values
     assert len(seen) < len(values)
+
+
+@pytest.mark.asyncio
+async def test_find_first_after_unordered_and_sorted_returns_the_smallest() -> None:
+    # given: a source whose smallest element arrives last, so a racing drive
+    # would surface a branch-local minimum instead. This is the regression
+    # that motivated making ordering positional - before it, unordered() was
+    # pipeline-wide, sorted() could not restore encounter order, and this
+    # returned an arbitrary element.
+    async def descending() -> AsyncGenerator[int, None]:
+        for i in range(200, 0, -1):
+            await asyncio.sleep(0)
+            yield i
+
+    # when: run repeatedly - the wrong answer was nondeterministic
+    results = [await Stream.of(descending()).parallel().unordered().sorted(lambda a, b: a - b).find_first() for _ in range(10)]
+
+    # then
+    assert results == [1] * 10

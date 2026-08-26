@@ -1,7 +1,7 @@
 """One Op plus one Sink per intermediate operation - filter, map, peek,
-sorted, flat_map, distinct, limit, skip - built on the Op/Sink protocol
-sink.py defines. No execution logic lives here: how a chain of these gets
-driven, sequentially or racing, is execution.py's job."""
+sorted, flat_map, distinct, limit, skip, unordered - built on the Op/Sink
+protocol sink.py defines. No execution logic lives here: how a chain of these
+gets driven, sequentially or racing, is execution.py's job."""
 
 from __future__ import annotations
 
@@ -11,7 +11,16 @@ from typing import Any, cast
 from collections.abc import Awaitable
 
 from snakestream.callable_dispatch import AsyncDispatch
-from snakestream.sink import Box, IntermediateSink, Op, Sink, StatefulOp, StatefulSink, StatelessOp
+from snakestream.sink import (
+    Box,
+    IntermediateSink,
+    Op,
+    Ordering,
+    Sink,
+    StatefulOp,
+    StatefulSink,
+    StatelessOp,
+)
 from snakestream.sort import sort
 from snakestream.type import (
     T,
@@ -119,6 +128,26 @@ class _SortedSink(IntermediateSink[T]):
 
 class _SortedOp(StatelessOp):
     _sink_cls = _SortedSink
+    # a sort imposes an encounter order on its output whether or not its input
+    # had one, so ordering is restored downstream of it - Java's SortedOps
+    # contributes IS_ORDERED for the same reason
+    ordering = Ordering.SET
+
+
+class _UnorderedOp(Op):
+    """The one op with no sink: link() hands back the downstream untouched, so
+    an _UnorderedOp in a chain costs nothing per element and cannot observe,
+    transform, reorder, drop or duplicate anything. Java's unordered() is the
+    same shape - a StatelessOp whose opWrapSink(flags, sink) returns sink.
+
+    It exists purely to occupy a position in the chain and declare a
+    characteristic there, which is what makes ordering positional: everything
+    queued before it is unaffected, everything after it is not."""
+
+    ordering = Ordering.CLEAR
+
+    def link(self, downstream: Sink[Any]) -> Sink[Any]:
+        return downstream
 
 
 class _FlatMapSink(IntermediateSink[T]):

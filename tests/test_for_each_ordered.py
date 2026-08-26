@@ -71,3 +71,44 @@ async def test_for_each_ordered_preserves_encounter_order_on_parallel_stream() -
     # then: for_each_ordered still reports elements in source encounter
     # order despite being called on a ParallelStream with the same chain
     assert seen == values
+
+
+@pytest.mark.asyncio
+async def test_for_each_ordered_on_unordered_parallel_stream_delivers_every_element() -> None:
+    # given: an unordered pipeline releases for_each_ordered() from the
+    # encounter-order guarantee, so it runs under the stream's own executor
+    # rather than forfeiting the concurrency the caller asked for - the same
+    # split Java's ForEachOps makes between ForEachOrderedTask and ForEachTask
+    seen: list[int] = []
+
+    # when
+    await Stream.of(values).parallel().unordered().map(_delay_by_position).for_each_ordered(seen.append)
+
+    # then: every element exactly once, order unconstrained
+    assert sorted(seen) == sorted(values)
+
+
+@pytest.mark.asyncio
+async def test_for_each_ordered_on_unordered_sequential_stream_still_delivers_in_order() -> None:
+    # given: releasing the guarantee is not the same as scrambling - a
+    # SEQUENTIAL stream has one worker, so it comes out in source order anyway
+    seen: list[int] = []
+
+    # when
+    await Stream.of(values).unordered().for_each_ordered(seen.append)
+
+    # then
+    assert seen == values
+
+
+@pytest.mark.asyncio
+async def test_sorted_after_unordered_restores_the_for_each_ordered_guarantee() -> None:
+    # given
+    seen: list[int] = []
+
+    # when
+    await Stream.of(values).parallel().unordered().sorted(lambda a, b: a - b).for_each_ordered(seen.append)
+
+    # then: sorted() set the ordering characteristic again, so the encounter
+    # order for_each_ordered() honours is the sorted one
+    assert seen == sorted(values)

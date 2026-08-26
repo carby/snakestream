@@ -18,6 +18,7 @@ INTERMEDIATE_OPS = [
     ("peek", lambda s: s.peek(lambda x: None)),
     ("limit", lambda s: s.limit(2)),
     ("skip", lambda s: s.skip(1)),
+    ("unordered", lambda s: s.unordered()),
 ]
 
 TERMINAL_OPS = [

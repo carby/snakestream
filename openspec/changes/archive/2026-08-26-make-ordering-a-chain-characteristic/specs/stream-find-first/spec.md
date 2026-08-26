@@ -1,34 +1,4 @@
-## Purpose
-
-Defines `find_first()`'s contract on `Stream`, matching Java's
-`Stream.findFirst()`: the first element in encounter order, whatever executor
-the stream carries and whether or not the pipeline is ordered. It names the
-sequential executor for its own drive rather than following the stream's mode,
-and — like Java, whose `findFirst()` finds the leftmost element on an unordered
-parallel stream too — it does not consult the ordering characteristic at all.
-`find_any()` is the operation that opts out of the guarantee.
-
-## Requirements
-
-### Requirement: Stream.find_first() returns the first element in encounter order
-`Stream.find_first()` SHALL return the first element pulled through the
-composed chain, or `None` if the stream is empty, matching Java's
-`Stream.findFirst()`.
-
-#### Scenario: Non-empty stream returns its first element
-- **WHEN** `.find_first()` is called on a `Stream` built from a non-empty
-  source
-- **THEN** the first element in the source's encounter order is returned
-
-#### Scenario: Empty stream returns None
-- **WHEN** `.find_first()` is called on a `Stream` built from an empty
-  source
-- **THEN** `None` is returned
-
-#### Scenario: find_first() does not consume the rest of the stream
-- **WHEN** `.find_first()` is called on a stream with more than one element
-- **THEN** only the first element is pulled from upstream before the method
-  returns
+## ADDED Requirements
 
 ### Requirement: find_first() preserves encounter order regardless of the ordering characteristic
 `Stream.find_first()` SHALL return the first element in the stream's encounter
@@ -75,3 +45,18 @@ the stream's type, executor or ordering characteristic.
 - **WHEN** `.find_any()` is called on a parallel stream
 - **THEN** its existing racing behaviour is unchanged by this requirement — it
   is the operation a caller uses to opt out of the encounter-order guarantee
+
+## REMOVED Requirements
+
+### Requirement: find_first() preserves encounter order on a parallel stream when ordered
+**Reason**: The requirement made the encounter-order guarantee conditional on
+`is_ordered()`, degrading `find_first()` to `find_any()` on an unordered
+stream. Java does not do this — `findFirst()` finds the leftmost element even
+on an unordered parallel stream — and the degradation produced observably wrong
+answers, most sharply on `.parallel().unordered().sorted(c).find_first()`,
+which returned an arbitrary element rather than the smallest.
+
+**Migration**: `find_first()` on an unordered parallel stream now returns the
+true first element instead of racing. Callers who relied on the racing
+behaviour SHALL use `find_any()`, which is unchanged and is what Java directs
+such callers to as well.
