@@ -71,7 +71,7 @@
 - [x] 5.4 `grep -rn "_derive_executor\|_extend" --include=*.md .` — every
   surviving hit is either an annotated history entry or an archived change under
   `openspec/changes/archive/` (archived changes are records and are left alone).
-- [ ] 5.5 Add the **Done** entry when archiving, and make it state explicitly
+- [x] 5.5 Add the **Done** entry when archiving, and make it state explicitly
   what was different from the 2026-08-24 merge — otherwise the next reader has a
   Done entry describing a shape that no longer exists, which is exactly how
   `_derive_executor()` came back the first time.
