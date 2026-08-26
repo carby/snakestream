@@ -46,6 +46,7 @@ Execution mode is a **value, not a type**. There is no `ParallelStream` class. `
 
 ```
 stream_through(chain, src)          -> AsyncGenerator   one worker, elements out lazily
+group_through(chain, src, state)    -> AsyncGenerator   one worker, (index, outputs) per source element
 race_through(chain, src, workers)   -> AsyncGenerator   N branches racing one shared source
 feed_through(chain, src, terminal)  -> value            fused push, nothing buffered
 drain(elements, terminal)           -> value            any generator into a terminal
@@ -58,7 +59,19 @@ RACING.elements     = race_through        RACING.value     = inherited generic
 
 A stream consults its executor in exactly two places: `_compose()` (`self._executor.elements(...)`) and `_evaluate()` (`self._executor.value(...)`). A terminal that needs encounter order regardless of the stream's mode names `SEQUENTIAL` explicitly at its own call site: `find_first()` always and unconditionally, and `for_each_ordered()` when `_is_ordered()` — the private fold over the chain's ordering characteristic, whose sole caller that is. That is why `find_first` has one implementation rather than a per-mode pair. `_is_ordered()` is deliberately not public: Java exposes only `isParallel()` and keeps `ORDERED` in the package-private `StreamOpFlag`.
 
-`.parallel()` / `.sequential()` each derive with no op — `_derive()` with its `op` argument omitted — and assign `_executor` on the result: a new stream over the **same source and same chain**, differing only in its executor, with the receiver consumed. `sequential()`'s docstring carries the rules both obey and `parallel()` points at it. They deliberately do **not** compose — that is what makes them position-independent, matching Java, where `parallel()` sets a flag on the source stage. The last mode switch before a terminal governs the whole pipeline. Racing does not preserve ordering.
+`.parallel()` / `.sequential()` each derive with no op — `_derive()` with its `op` argument omitted — and assign `_executor` on the result: a new stream over the **same source and same chain**, differing only in its executor, with the receiver consumed. `sequential()`'s docstring carries the rules both obey and `parallel()` points at it. They deliberately do **not** compose — that is what makes them position-independent, matching Java, where `parallel()` sets a flag on the source stage. The last mode switch before a terminal governs the whole pipeline.
+
+### The ordering barrier
+
+Racing destroys encounter order at the `FIRST_COMPLETED` merge, so an operation whose answer depends on an element's *position* — `sorted()`, `limit()`, `skip()`, `distinct()` — cannot be right there unless order is put back first. `race_through()` therefore has a second gear, and whether it engages is a property of the chain, not of the executor:
+
+`_split_point(chain)` finds the first op that either declares `Ordering.SET` (`sorted()`, wherever it sits — a sort claims its output is ordered, so it must see the whole stream) or declares `order_sensitive` **and** sits at a position `is_ordered()` reports ordered (`limit`/`skip`/`distinct`). When there is none — including every pipeline the caller declared `unordered()` before such an op — `race_through()` runs exactly the code it always did, at the same per-element cost.
+
+When there is one, the chain splits there. The head races across branches as ever, but over `_guarded(shared, lock, window)`, which tags each element with the source index it assigns under the lock — the last point at which pull order still *is* encounter order. Each branch runs `group_through()` rather than `stream_through()`, yielding `(index, outputs)`: everything the head emitted for one source element, since a head chain does not preserve one output per input (`filter` drops, `flat_map` multiplies) and the group is the invariant a per-element tag is not. `_release_in_order()` holds arriving groups until every earlier index has gone out, and `_run_ordered_tail()` runs the rest as one ordered sink chain — up to any `unordered()` in the tail, from which it hands back to `race_through()` and races afresh (`_resume_point()`).
+
+Read-ahead is bounded by `_READ_AHEAD`, enforced in `_guarded()` where the index is assigned — the only place a pull happens, so the bound costs no new synchronisation point. A branch waits *outside* the lock and re-checks after acquiring it; waiting while holding it would stall the very branch the merge is waiting for. Head-of-line blocking remains, as it must; `unordered()` is the escape hatch, and is what makes it a real performance lever rather than a semantic footnote.
+
+The split is internal. It is not a third executor, is not selectable, and `is_parallel()` still reports the executor the stream carries.
 
 ### Collectors
 

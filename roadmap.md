@@ -16,137 +16,56 @@ value rather than a class hierarchy, `summing_int`/`summing_long` sharing a body
 
 ## Now
 
-**Three of the four queued changes remain — and the order they land in still
-matters.** Opened 2026-08-26; item 1 of the original four,
-`collapse-derive-wrappers`, landed the same day and is in **Done**. The three
-below all edit `stream.py` and two of them change `sorted()`. The order is the
-recommendation, and what each one owes the next is recorded underneath it.
+**Two of the four queued changes remain.** Opened 2026-08-26; items 1 and 2 of
+the original four — `collapse-derive-wrappers` and
+`order-stateful-ops-under-racing` — both landed the same day and are in
+**Done**. The order below is the recommendation, and what each one owes the
+next is recorded underneath it.
 
 | # | Change | What it is | Why in this position |
 |---|---|---|---|
-| 1 | `order-stateful-ops-under-racing` | The correctness item written up immediately below: `limit`/`skip`/`distinct`/`sorted` give **wrong answers**, not slower ones, on an ordered pipeline under `RACING`. Carries the test debt on (a). | Correctness outranks everything after it, and the mechanical refactor it was held behind has landed. Nothing blocks it now. |
-| 2 | `collapse-compose-into-iterator` | Deletes `Stream._compose()`, routing its four callers through `iterator()`, which is the same call plus the `_check_not_consumed()` it currently skips. Closes a hole reachable from user code via `Stream.concat()` and a `flat_map()` mapper's return value. | **Not ready to apply.** Proposal only — no design, specs or tasks — and it fails `openspec validate --strict` with "must have at least one delta". Its break is behavioural and currently unspecified, so it wants real deltas rather than `skip_specs: true`. Positioned after item 1 because item 1 works inside two of the four call sites. |
-| 3 | `add-comparator-comparing` | Ports Java's `Comparator.comparing()` key extractors. Measured 6.8-8.8x on sync comparators, 4.8-5.4x on async, where it also collapses O(n log n) interleaved awaits into O(n) gathered up front. | New public API and a performance win, so it yields to the correctness item that redesigns the op it sorts through. Nothing in it is blocked; it is last on value ordering, not on dependency. |
+| 1 | `collapse-compose-into-iterator` | Deletes `Stream._compose()`, routing its four callers through `iterator()`, which is the same call plus the `_check_not_consumed()` it currently skips. Closes a hole reachable from user code via `Stream.concat()` and a `flat_map()` mapper's return value. | **Not ready to apply.** Proposal only — no design, specs or tasks — and it fails `openspec validate --strict` with "must have at least one delta". Its break is behavioural and currently unspecified, so it wants real deltas rather than `skip_specs: true`. Was positioned behind `order-stateful-ops-under-racing`, which worked inside two of the four call sites; that has now landed without adding a fifth, so nothing blocks this but its own missing deltas. |
+| 2 | `add-comparator-comparing` | Ports Java's `Comparator.comparing()` key extractors. Measured 6.8-8.8x on sync comparators, 4.8-5.4x on async, where it also collapses O(n log n) interleaved awaits into O(n) gathered up front. | New public API and a performance win, so it yielded to the correctness item that redesigned how the op it sorts through is executed; that has landed and settled *where* a sort runs, leaving this one *how* a comparison is made. Nothing in it is blocked; it is last on value ordering, not on dependency. |
 
 **What to keep track of between them.**
 
-- **Both remaining `stream.py` items now rebase onto the collapsed copier.**
-  The nine intermediate ops read `self._derive(_SomeOp(...))` as of
-  `collapse-derive-wrappers`; item 1 edits the `limit`/`skip`/`distinct`/`sorted`
-  lines among them and item 3 changes `sorted()`'s signature. Landing the
-  refactor first is what reduced that to one textual rebase instead of two —
-  the sequencing worked, and it is the reason to keep doing it.
-- **Items 1 and 3 both change `sorted()`, and the seam between them is worth
-  keeping clean.** Item 1 decides *where* a sort runs — whether `_SortedOp` stops
-  being a `StatelessOp` and forces a single flight the way `for_each_ordered()`
-  does. Item 3 decides *how* a comparison is made — key extraction reaching
-  `list.sort` versus `cmp_to_key`, and which of those the hand-rolled
-  `merge_sort` in `sort.py` is still needed for. Whichever lands second must not
-  re-litigate the other's half. If the order is ever swapped, item 1's
-  single-flight decision has to cover the key-extractor path as well as the
-  comparator one.
-- **Items 1 and 2 meet in `_FlatMapSink.accept()` and `_concat()`**, two of
-  `_compose()`'s four callers. If item 1 introduces any new composition point,
-  it goes through `iterator()` once item 2 lands — and if item 2 lands first,
-  item 1 inherits the consumed check at those positions.
+- **Item 2 rebases onto the collapsed copier and onto the barrier.** The nine
+  intermediate ops read `self._derive(_SomeOp(...))` as of
+  `collapse-derive-wrappers`, and `order-stateful-ops-under-racing` left those
+  lines alone — it landed entirely in `execution.py` and `sink.py`, so item 2's
+  `sorted()` signature change is a clean one-file rebase. Sequencing the
+  refactor first is what reduced this to one textual rebase instead of three;
+  it worked twice, and it is the reason to keep doing it.
+- **The `sorted()` seam is now half-settled, and item 2 must not re-litigate
+  the settled half.** `order-stateful-ops-under-racing` decided *where* a sort
+  runs: `_SortedOp` stays a `StatelessOp`, and rather than forcing a single
+  flight the way `for_each_ordered()` does, it declares `Ordering.SET` and the
+  racing executor splits the chain there — head raced, tail ordered. Item 2
+  decides only *how* a comparison is made: key extraction reaching `list.sort`
+  versus `cmp_to_key`, and which of those the hand-rolled `merge_sort` in
+  `sort.py` is still needed for. A key extractor changes what `_SortedSink.end()`
+  does, not where it runs, so the split rule is untouched by it — but the
+  key-extractor path must keep `_SortedOp.ordering = Ordering.SET`, which is
+  what makes a sort a split point at all.
+- **Item 1 meets the barrier in `_FlatMapSink.accept()` and `_concat()`**, two
+  of `_compose()`'s four callers. `order-stateful-ops-under-racing` introduced
+  no new composition point in `stream.py` — `group_through()` and
+  `_run_ordered_tail()` compose inside `execution.py`, below the consumed check
+  — so item 1 inherits exactly the four callers it was written against.
 - **Whoever lands next re-checks the other's documentation tasks.** Each of
   these changes carries tasks that correct `CLAUDE.md` and annotate **Done**
   entries here. Stale prose is not cosmetic in this repo, and
   `collapse-derive-wrappers` is the demonstration: it found three stale spots
   its own tasks had not named, because the line numbers those tasks cited had
   drifted. Cite the sentence, not the line.
-- **Item 1 depends on `_is_ordered()` staying a fold over the chain**, which is
-  what `make-ordering-a-chain-characteristic` made it. Neither item 2 nor item 3
-  touches it, and `collapse-derive-wrappers` explicitly preserved it: the chain
-  carrying over unchanged through a mode switch is what carries the
-  characteristic.
+- **The ordering fold now lives in `sink.py`, not on `Stream`.**
+  `order-stateful-ops-under-racing` moved it to a module-level
+  `is_ordered(chain, upto=None)` so `execution.py` could reach it, and reduced
+  `Stream._is_ordered()` to a one-line delegation. It is still a fold over the
+  chain, still never cached, and still private — what
+  `make-ordering-a-chain-characteristic` and `make-is-ordered-internal` each
+  established is intact. Neither remaining item touches it.
 
-**Three stateful ops do not honour encounter order under `RACING`** — opened
-2026-08-26 out of `make-ordering-a-chain-characteristic`, which deliberately
-scoped them out but is what makes them specifiable: `_is_ordered()` now gives a
-reliable, positional answer for an op to branch on, which it could not before.
-Proposed as `order-stateful-ops-under-racing` (item 1 of the queue above).
-
-All three are **wrong answers on an ordered stream, not missed optimisations**,
-and the design doc for that change stated the direction backwards — it recorded
-these as "Java exploits unorderedness to run cheaper, and we could too". The
-opposite is the case. `_LimitSink`/`_SkipSink` share one counter across racing
-branches and `_DistinctSink` shares one set, so all three already implement
-Java's *unordered* behaviour unconditionally; what is missing is the **ordered**
-path, which is the one Java defaults to. Measured 2026-08-26, all reproducible:
-
-| Op | Ordered `.parallel()` result | Java / sequential |
-|---|---|---|
-| `.map(slow).limit(5)` over `range(12)`, first five slow | `[0, 1, 2, 3, 5]` | `[0, 1, 2, 3, 4]` |
-| `.map(slow).skip(5)`, same source | keeps `4`, drops `5` | drops `0..4` |
-| `.sorted(asc)` over `range(12, 0, -1)`, async source | `[4, 2, 3, 1, 8, 6, 7, 12, 5, 10, 11, 9]` | `[1, 2, ..., 12]` |
-
-**(a) `sorted()` under `RACING` does not sort — the sharpest of the three.**
-`_SortedOp` is a `StatelessOp`, so each racing branch buffers and sorts *its own
-subset* and the merged output is not sorted at all. It is not a reordering of a
-correct answer; it is not an answer. Note the table's third row needs an async
-source to show it: over a plain list the branches do not interleave and it
-comes out sorted by luck, which is why it survived this long. `find_first()`
-was the one terminal already protected, since it names `SEQUENTIAL` itself, and
-that is exactly how the `make-ordering-a-chain-characteristic` regression
-surfaced. Java sorts in a full parallel merge (`SortedOps` + `Nodes`); the
-cheap correct fix here is likely for a sort to force a single flight the way
-`for_each_ordered()` does, with the merge left as a later optimisation. Needs a
-decision on which.
-
-**(b) `limit()`/`skip()` select the wrong elements when an upstream op has
-variable cost.** The slot is reserved in the sink's `accept()`, which runs
-*after* the upstream `map`, so the first *n* to finish mapping win rather than
-the first *n* in encounter order. With a uniform-cost chain the shared source
-lock keeps pull order and the selection is right, which is why this is invisible
-until an op ahead of the limit has real per-element variance. Java's `SliceOps`
-picks `SliceTask` on `ORDERED` for precisely this and takes the cheap path only
-when unordered — with `_is_ordered()` now positional, that branch is finally
-expressible here.
-
-**(c) `distinct()` keeps an arbitrary representative.** Same shared-state
-mechanism, lowest stakes: the survivors are `==`-equal, so it only matters for
-objects that are equal but distinguishable (identity, attached payload). Worth
-deciding alongside (b) rather than on its own.
-
-**Test debt on (a): the suite cannot currently see it, and one test is named
-for a guarantee it does not check.** Not a fourth op — the coverage consequence
-of (a), and the reason it should be fixed with (a) rather than separately. Found
-2026-08-26 while implementing `make-is-ordered-internal`, by mutation: invert an
-ordering rule in `src/`, run
-the suite, and see which tests notice. Three inversions, against `main` plus
-that change's tests:
-
-| Inversion | Rule it breaks | Tests that catch it |
-|---|---|---|
-| `_is_ordered()` returns `True` always | `unordered()` clears the characteristic | 4, all in `test_unordered.py` |
-| `_is_ordered()` returns `False` always | a fresh pipeline is ordered | 11, of which 3 outside `test_unordered.py` |
-| `_SortedOp.ordering` = `PRESERVE` | `sorted()` restores the characteristic | **3, all in `test_unordered.py`, and all three assert on the accessor** |
-
-The third row is the finding. Nothing behavioural anywhere in the suite notices
-that `sorted()` stopped restoring encounter order, **because (a) makes a sort
-under `RACING` indistinguishable from an unordered one**: over a list source one
-branch takes everything and emits it sorted whatever the characteristic says.
-Two concrete consequences:
-
-- `tests/test_for_each_ordered.py::test_sorted_after_unordered_restores_the_for_each_ordered_guarantee`
-  passes with `sorted()` no longer restoring anything. It is a **pre-existing
-  weak test**, predating `make-is-ordered-internal`, and its name claims more
-  than it checks. Fixing it is blocked on (a), not on the test.
-- `make-is-ordered-internal` initially rewrote that requirement's four tests
-  behaviourally, to avoid asserting on a now-private accessor; all four silently
-  stopped pinning anything, and the mutation check is what caught it. They were
-  reverted to `_is_ordered()` assertions, with the reason recorded in
-  `tests/test_unordered.py` and in the `stream-ordering` spec.
-
-**So (a) owes a test debt as well as a fix.** Whoever lands ordered `sorted()`
-under `RACING` should, in the same change: restate those four tests
-behaviourally and delete their "restate once (a) lands" notes, repair the
-`test_for_each_ordered.py` test above, and re-run the three inversions to
-confirm each is caught behaviourally. Worth noting the second inversion's
-figures too — the `unordered()` relaxation of `for_each_ordered()` is pinned
-only inside `test_unordered.py`; no test in `test_for_each_ordered.py` notices
-when it stops happening.
 
 **Also still open, and still needing an explicit call: `ExceptionGroup` in
 `Stream.close()`** — see the note below, unchanged.
@@ -182,11 +101,52 @@ in **Later** if the answer is "not now".
 
 ## Next
 
-**Empty as of 2026-08-26.** Its one item — removing `is_ordered()` from the
-public API — was promoted to **Now** the same day and landed the same day; see
-**Done**. Refill from the deferred `ExceptionGroup` question in **Now**'s notes
-if it gets a yes, or the Java-8 parity gaps README still tracks as
-unimplemented.
+**Three items, all fallout from `order-stateful-ops-under-racing`** (see
+**Done**), added 2026-08-26. None is a defect; each is a decision that change
+deliberately declined to take while it was fixing a wrong answer.
+
+**1. Decide what an ordered racing pipeline owes its terminal, then race the
+order-blind suffix.** Today the tail downstream of a barrier resumes racing
+only at an explicit `unordered()`. The `map` in `.limit(n).map(fetch)` needs no
+encounter order and could race, but racing it would scramble the order the
+pipeline *delivers* — and whether that is allowed is unsettled. Three facts
+that have to be reconciled before writing any code:
+
+- Snakestream's stated rule is that racing does not preserve encounter order,
+  and `.parallel().map(f)` does come out scrambled.
+- Java's ordered parallel streams *do* preserve encounter order into `collect`.
+- `order-stateful-ops-under-racing` made the answer accidentally depend on
+  whether a barrier happens to exist: `.parallel().sorted(c)` and
+  `.parallel().limit(8).map(f)` both now deliver in order, while
+  `.parallel().map(f)` does not.
+
+The third is the real reason this is **Next** and not **Later**: it is a seam a
+caller cannot reason about, and it exists now whichever way the first two are
+resolved. The `racing-encounter-order` capability's `sorted()` scenario and
+`CLAUDE.md`'s ordering claim both move with the answer. Do not start by writing
+`_resume_point()`'s replacement; start by writing the requirement.
+
+**2. Collapse `find_first()` and `for_each_ordered()` onto the barrier.** Both
+name `SEQUENTIAL` at their own call site to get encounter order, which the
+barrier now provides while still racing everything upstream. That would replace
+four special cases with one mechanism and let `find_first()` on a parallel
+stream keep its concurrency. Scoped out of `order-stateful-ops-under-racing`
+deliberately: it was fixing a wrong answer, and this changes a right one.
+`find_first()`'s unconditional-`SEQUENTIAL` rule is now correctly spec'd (the
+`stream-execution-model` delta removed and replaced the requirement whose
+scenario the implementation had never followed), so this starts from a true
+statement of the current behaviour.
+
+**3. Export `_READ_AHEAD` — only on a concrete report.** It is a module-level
+constant with no Java counterpart, and the tuning lever the spec gives a caller
+is `unordered()`. `PROCESSES` is exported because it names a real Java-side
+concept and is spec'd. Revisit if someone actually hits the head-of-line or
+over-pull trade-off in anger, not before; the measured curve is in the
+constant's comment.
+
+Also available to refill from: the deferred `ExceptionGroup` question in
+**Now**'s notes if it gets a yes, or the Java-8 parity gaps README still tracks
+as unimplemented.
 
 ## Later
 
@@ -202,6 +162,85 @@ core semantic.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should instead be documented as intentional next to the `str`/`bytes` note. Surfaced 2026-08-20 in the same code-quality read that produced **Now** items 1-4. |
 
 ## Done
+
+- **Ordered `sorted()`/`limit()`/`skip()`/`distinct()` under `RACING`**
+  (2026-08-26). All four gave **wrong answers**, not slower ones, on an ordered
+  pipeline under the racing executor: `_LimitSink`/`_SkipSink` shared one
+  counter and `_DistinctSink` one set across branches, so all three implemented
+  Java's *unordered* behaviour unconditionally, while `_SortedOp` was a
+  `StatelessOp`, so each branch sorted its own subset and the merged output was
+  not sorted at all. `.map(slow).limit(5)` over `range(12)` returned
+  `[0, 1, 2, 3, 5]`; `.sorted(asc)` over an async `12..1` returned
+  `[4, 2, 3, 1, 8, 6, 7, 12, 5, 10, 11, 9]`. See
+  `openspec/changes/archive/2026-08-26-order-stateful-ops-under-racing`.
+
+  **One bug seen from four angles, so one mechanism rather than four repairs.**
+  A stateful op's decision depends on a global position its branch cannot see.
+  Encounter order is knowable in exactly one place — inside `_guarded()`, under
+  the shared lock, the last point at which pull order still *is* encounter
+  order — and destroyed in exactly one, the `FIRST_COMPLETED` merge. So
+  `_split_point()` finds the first op that either declares `Ordering.SET` or is
+  `order_sensitive` at a position the fold reports ordered; the head races as
+  ever, `_release_in_order()` restores order at the merge, and the tail runs as
+  one ordered pass.
+
+  **Reordering is by source-element *group*, not by tagged element.** A head
+  chain does not preserve one output per input — `filter` drops, `flat_map`
+  multiplies — so a per-element tag has no answer for either. The group does:
+  everything the head emits for source element `k`. `group_through()` yields
+  `(k, outputs)`, using the `GeneratorBridgeSink` buffer flush that already
+  happens once per `accept()` as the group boundary. That is why no head sink
+  learned about indices and `Op` gained exactly one declaration
+  (`order_sensitive`) rather than a protocol change.
+
+  **`unordered()` became a real performance lever.** On an unordered pipeline
+  no barrier is inserted and today's cheap path runs unchanged — measured, and
+  the ranges overlap: 20,000 elements, four workers, best of five over three
+  interleaved runs, `132-141ms` before against `138-143ms` after on an empty
+  chain and `152-157ms` against `152-159ms` on a three-op chain. On the ordered
+  path the concurrency the change exists for is kept: `.map(fetch).limit(5)`
+  with a 20ms fetch costs `102ms` sequential and `42ms` racing, with an
+  identical result.
+
+  **Read-ahead is bounded at `_READ_AHEAD = 16`, enforced in `_guarded()`**
+  where the index is assigned — already the only place a pull happens, so the
+  bound cost no new synchronisation point. The curve that picked it is in the
+  constant's own comment; the knee is at the worker count and everything past
+  it is a slow 20% tail that would be bought with unbounded over-pull upstream
+  of a short-circuiting op.
+
+  **What the design got wrong, and how.** Decision 1 said the whole tail runs
+  as one sequential sink chain. That serialises `.sorted(c).unordered().map(fetch)`
+  — the exact `fetch` `unordered()` exists to release — and, worse, leaves
+  `unordered()` after a barrier with no behavioural observable at all, which is
+  the observable the test debt below is repaid *through*. Corrected during
+  implementation: the tail runs ordered up to the first `Ordering.CLEAR` and
+  hands the remainder back to `race_through()` (`_resume_point()`). The
+  design doc carries the amendment inline rather than being rewritten, so the
+  original reasoning and its correction both stay readable.
+
+  **The test debt on the sort is repaid, which the roadmap made a condition of
+  the fix rather than a follow-up.** The four `sorted()`-restores tests in
+  `test_unordered.py` are behavioural, with the positional delay queued
+  *before* the sort so the branches really do split the source — without it a
+  sort that had stopped restoring the characteristic still passes by one branch
+  happening to take everything. `test_for_each_ordered.py`'s weak test is
+  repaired the same way, and it gained the missing pin on the `unordered()`
+  relaxation of `for_each_ordered()`. Re-running the three inversions: with
+  `_is_ordered()` forced `True`, **14** behavioural tests fail; forced `False`,
+  **26**; with `_SortedOp.ordering` set to `PRESERVE`, **8** — where before the
+  change that third inversion was caught by **none**, which is what made the
+  debt worth repaying here rather than later.
+
+  **One spec claim was written and then found false.** The
+  `racing-encounter-order` delta first said a closeable shared source "SHALL
+  still be closed exactly once". It is not, and never was: each branch's
+  `_guarded()` closes it on the way out, so a duck-typed `aclose()` sees one
+  call per worker, and only an async generator's `finally`-runs-once semantics
+  made it look like one. Restated to what holds and what this change actually
+  owes — that introducing a barrier does not change the count — with a scenario
+  pinning both halves. Worth remembering as a shape: a requirement asserting
+  today's behaviour is still a claim that has to be measured.
 
 - **Collapsed the derive wrappers into one copier** (2026-08-26). `_extend(op)`
   and `_derive_executor(executor)` were one-expression wrappers over
