@@ -16,10 +16,62 @@ value rather than a class hierarchy, `summing_int`/`summing_long` sharing a body
 
 ## Now
 
+**Four changes are proposed, committed, and waiting to be applied — and the
+order they land in matters.** Opened 2026-08-26. All four edit `stream.py`; two
+of them rewrite the same nine lines, and two of them change `sorted()`. The
+order below is the recommendation, and what each one owes the next is recorded
+underneath it. The precedent for sequencing a mechanical change ahead of the
+work that overlaps it is the second 2026-08-25 batch, whose story 1 moved four
+fifths of `collector.py` before story 2 went looking for findings in the lines
+that moved.
+
+| # | Change | What it is | Why in this position |
+|---|---|---|---|
+| 1 | `collapse-derive-wrappers` | Pure refactor. `_extend(op)` and `_derive_executor(executor)` collapse into one `_derive(op: Op \| None = None)`; the mode switch assigns `_executor` in `sequential()`/`parallel()` themselves. `skip_specs: true`. | Smallest and the only one with no behavioural surface, **and it rewrites the nine intermediate-op call sites that items 2 and 4 also edit**. Landing it first makes the bigger changes rebase onto the final shape once, instead of the refactor rebasing onto both of them. |
+| 2 | `order-stateful-ops-under-racing` | The correctness item written up immediately below: `limit`/`skip`/`distinct`/`sorted` give **wrong answers**, not slower ones, on an ordered pipeline under `RACING`. Carries the test debt on (a). | Correctness outranks everything after it. Held behind item 1 only because item 1 is hours of mechanical work against lines this change also touches — not because anything in it is blocked. |
+| 3 | `collapse-compose-into-iterator` | Deletes `Stream._compose()`, routing its four callers through `iterator()`, which is the same call plus the `_check_not_consumed()` it currently skips. Closes a hole reachable from user code via `Stream.concat()` and a `flat_map()` mapper's return value. | **Not ready to apply.** Proposal only — no design, specs or tasks — and it fails `openspec validate --strict` with "must have at least one delta". Its break is behavioural and currently unspecified, so it wants real deltas rather than `skip_specs: true`. Positioned after item 2 because item 2 works inside two of the four call sites. |
+| 4 | `add-comparator-comparing` | Ports Java's `Comparator.comparing()` key extractors. Measured 6.8-8.8x on sync comparators, 4.8-5.4x on async, where it also collapses O(n log n) interleaved awaits into O(n) gathered up front. | New public API and a performance win, so it yields to the correctness item that redesigns the op it sorts through. Nothing in it is blocked; it is last on value ordering, not on dependency. |
+
+**What to keep track of between them.**
+
+- **Items 1, 2 and 4 collide on the nine intermediate-op call sites.** Item 1
+  rewrites every `self._extend(_SomeOp(...))` into `self._derive(_SomeOp(...))`;
+  item 2 edits the `limit`/`skip`/`distinct`/`sorted` lines among them, and item
+  4 changes `sorted()`'s signature. This is the whole reason item 1 is first, and
+  it is a textual conflict rather than a semantic one — cheap to resolve, but
+  only if it happens once.
+- **Items 2 and 4 both change `sorted()`, and the seam between them is worth
+  keeping clean.** Item 2 decides *where* a sort runs — whether `_SortedOp` stops
+  being a `StatelessOp` and forces a single flight the way `for_each_ordered()`
+  does. Item 4 decides *how* a comparison is made — key extraction reaching
+  `list.sort` versus `cmp_to_key`, and which of those the hand-rolled
+  `merge_sort` in `sort.py` is still needed for. Whichever lands second must not
+  re-litigate the other's half. If the order is ever swapped, item 2's
+  single-flight decision has to cover the key-extractor path as well as the
+  comparator one.
+- **Items 2 and 3 meet in `_FlatMapSink.accept()` and `_concat()`**, two of
+  `_compose()`'s four callers. If item 2 introduces any new composition point,
+  it goes through `iterator()` once item 3 lands — and if item 3 lands first,
+  item 2 inherits the consumed check at those positions.
+- **Items 1 and 3 both restructure `stream.py`'s private surface without
+  conflicting.** Item 1 leaves `_compose()` untouched; item 3 deletes it. They
+  overlap only in prose: both edit `CLAUDE.md`'s architecture section (item 1 at
+  line 61, item 3 in the composition paragraphs).
+- **Whoever lands second re-checks the other's documentation tasks.** Each of
+  these changes carries tasks that correct `CLAUDE.md` and annotate **Done**
+  entries here. Stale prose is not cosmetic in this repo: `_derive_executor()`
+  was resurrected in the first place because `CLAUDE.md` described a method that
+  did not exist, which is exactly what item 1 exists to undo.
+- **Item 2 depends on `_is_ordered()` staying a fold over the chain**, which is
+  what `make-ordering-a-chain-characteristic` made it. None of items 1, 3 or 4
+  touches it; item 1 explicitly preserves it, since the chain carrying over
+  unchanged through a mode switch is what carries the characteristic.
+
 **Three stateful ops do not honour encounter order under `RACING`** — opened
 2026-08-26 out of `make-ordering-a-chain-characteristic`, which deliberately
 scoped them out but is what makes them specifiable: `_is_ordered()` now gives a
 reliable, positional answer for an op to branch on, which it could not before.
+Proposed as `order-stateful-ops-under-racing` (item 2 of the queue above).
 
 All three are **wrong answers on an ordered stream, not missed optimisations**,
 and the design doc for that change stated the direction backwards — it recorded
