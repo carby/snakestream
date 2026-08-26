@@ -8,7 +8,7 @@ import time
 import pytest
 
 from snakestream import Stream
-from snakestream.collector import to_list
+from snakestream.collectors import to_list
 from snakestream.exception import IllegalStateException
 from snakestream.execution import RACING, SEQUENTIAL
 

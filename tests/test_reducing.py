@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from snakestream.collector import reducing
+from snakestream.collectors import reducing
 from snakestream.stream import Stream
 
 

@@ -1,6 +1,6 @@
 import pytest
 
-from snakestream.collector import to_list
+from snakestream.collectors import to_list
 from snakestream.stream_builder import StreamBuilder
 
 

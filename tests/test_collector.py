@@ -2,7 +2,8 @@ import asyncio
 import pytest
 
 from snakestream import Stream
-from snakestream.collector import Collector, grouping_by, partitioning_by, summing_int, to_generator, to_list
+from snakestream.collector import Collector, to_generator
+from snakestream.collectors import grouping_by, partitioning_by, summing_int, to_list
 from snakestream.exception import StreamBuildException
 
 

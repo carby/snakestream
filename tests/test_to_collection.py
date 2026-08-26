@@ -2,7 +2,7 @@ import bisect
 
 import pytest
 
-from snakestream.collector import to_collection
+from snakestream.collectors import to_collection
 from snakestream.stream import Stream
 
 

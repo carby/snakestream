@@ -16,54 +16,37 @@ value rather than a class hierarchy, `summing_int`/`summing_long` sharing a body
 
 ## Now
 
-Two stories, bundling the thirteen findings of a second legibility,
-structure and stdlib-usage read of all twelve modules in `src/snakestream/`
-(2026-08-25, at `651f734`, immediately after the six-story batch closed). The
-read deliberately started from the **Done** rejection log, so nothing here
-re-proposes the three measured rejections — the `CallSite` dispatch wrapper,
-collapsing `min`/`max`/`count`/`reduce` onto their collectors, or
-deduplicating the bridge-buffer flush.
+**One story left of the two opened 2026-08-25.** Story 1 landed 2026-08-26 and
+is written up in **Done**; story 2 is below, unchanged in scope but with its
+line anchors refreshed against the post-split layout.
 
-They are **sequenced**: story 1 moves roughly four fifths of `collector.py`
-into a new module, and three of story 2's findings sit in the lines that move,
-so taking story 2 first puts its diff in a file that is about to be split.
-Story 1 is private-surface only apart from one new public exception base;
-story 2 is entirely non-behavioural except for the lint gate it widens.
+The pair bundled the thirteen findings of a second legibility, structure and
+stdlib-usage read of all twelve modules in `src/snakestream/` (2026-08-25, at
+`651f734`). The read deliberately started from the **Done** rejection log, so
+nothing here re-proposes the three measured rejections — the `CallSite`
+dispatch wrapper, collapsing `min`/`max`/`count`/`reduce` onto their
+collectors, or deduplicating the bridge-buffer flush.
 
-**Neither story faces the benchmark gate.** Every site in both batches runs
-once per module import, once per stream construction, once per composition or
-once per collection — the one per-element neighbourhood either of them touches
-is `_finish_groups`, which runs once per collection at `end()`. Do not spend a
-harness run on these; if a diff in either story reaches a per-element path,
-that is the signal it went wider than the story.
+They were **sequenced**, and that sequencing has now paid out: story 1 moved
+roughly four fifths of `collector.py` into `collectors.py`, and three of story
+2's findings sat in the lines that moved. Those anchors are updated below.
 
-| # | Story | Why it sits here in the order |
+**Story 2 does not face the benchmark gate.** Every site runs once per module
+import, once per stream construction, once per composition or once per
+collection — the one per-element neighbourhood it touches is `_finish_groups`,
+which runs once per collection at `end()`. Do not spend a harness run on it;
+if a diff reaches a per-element path, that is the signal it went wider than
+the story.
+
+| # | Story | Why it is still here |
 |---|---|---|
-| 1 | **Structure: `collector.py` holds two things, and four smaller legibility gaps.** **(a)** `collector.py` is 633 lines, 1.7x the next largest module, and holds two unrelated things: the collector *protocol* (`Collector`, `_CollectorSink`, `StreamingCollector`, `_stream`/`to_generator`, `collector.py:30-117`) and the ~20 collector *factories* (`collector.py:125-633`). **(b)** `Stream.sequential()` and `Stream.parallel()` carry the same twelve-line docstring verbatim (`stream.py:140-151`, `154-165`). **(c)** `TerminalSink`'s docstring (`sink.py:149-159`) does not state that `_create_container()` and `_finish()` may return awaitables, though `begin()`/`end()` route both through `_maybe_await` and three call sites depend on it. **(d)** `Box` (`sink.py:25`) is the last hand-written `__slots__`-plus-`__init__` container after story 6 of the previous batch converted the other nine to `@dataclass(slots=True)`. **(e)** `StreamBuildException` and `IllegalStateException` (`exception.py`) both derive straight from `Exception`, so there is no way to catch "anything snakestream raised". | **First, because (a) is the only finding in either story with real design surface**, and because three of story 2's findings live in the lines it moves. The split follows precedent this project has already set twice — `sink.py`/`ops.py`, and story 5's `sort.py`/`comparator.py` — and lands on Java's own naming for free: `Collector` is the interface, `Collectors` the factory holder, so `collector.py` + `collectors.py` needs no invented name. It also disentangles the `collector.py` -> `execution.py` import of `_maybe_aclosing`, which exists solely for `_stream`/`to_generator` and would travel with the protocol half. **(e) is the one public-surface change in the story** and is non-breaking by construction — inserting a base above two existing classes leaves every `except StreamBuildException` working — but it is still an ADDED requirement and needs the spec delta. **(b), (c) and (d) are pure documentation and boilerplate** and ride the story's tripwire: the suite passes with no test file edited. |
-| 2 | **Built-ins, stdlib and the lint gate.** **(a)** `execution.py` calls `source.__anext__()` (`:88`, in `_guarded`) and `branch.__anext__()` (`:159`, `:172`, in `race_through`) directly, the latter two within twenty lines of `aiter(source)` at `:151` — `anext()` is a builtin as of 3.10, the same floor that made `aiter()` available. **(b)** `_finish_groups` (`collector.py:504-509`) is an async dict comprehension written longhand, with a loop-invariant `finisher is not None` test inside the loop; `partitioning_by._supply` (`collector.py:541-545`) builds a two-key dict with a `for` over a literal tuple. **(c)** `RUF005` at `stream.py:127`: `self._chain + [op]` -> `[*self._chain, op]`, on the chain-extension path. **(d)** `RUF036` — `None` sits mid-union in three aliases (`type.py:24`, `:30`, `:37`); `Mapper`'s is the interesting one, since `Callable[[T], R \| None \| Awaitable[R \| None]]` widens every `.map()` result to optional and nothing documents why. **(e)** `__init__.py:11`'s `finally: del version, PackageNotFoundError` misses `dist_name`, which it created at `:6` — `snakestream.dist_name` is importable today (verified 2026-08-25). **(f)** Widen the ruff selection past `E,F,W,C90,UP` — see the notes for what the trial run actually found. | Second because (b) and (d)'s `Mapper` question sit inside story 1's move, and because (f) should be turned on *after* story 1 rather than during it, so the new rules judge the module layout the batch is settling on rather than the one it is leaving. **Nothing in (a)-(e) changes behaviour**, so the whole story rides one tripwire: the suite passes with no test file edited, `snakestream.dist_name` excepted — (e) removes a name, and nothing in `tests/` references it (verified 2026-08-25). **(f) is the only part with judgement in it**: it is a config change whose cost lands on future diffs, not this one, and the two `noqa`s it requires are both genuine false positives, so it needs the reasoning below rather than a bare `--select` edit. |
+| 2 | **Built-ins, stdlib and the lint gate.** **(a)** `execution.py` calls `source.__anext__()` (`:88`, in `_guarded`) and `branch.__anext__()` (`:159`, `:172`, in `race_through`) directly, the latter two within twenty lines of `aiter(source)` at `:151` — `anext()` is a builtin as of 3.10, the same floor that made `aiter()` available. **(b)** `_finish_groups` (`collectors.py:415-420`) is an async dict comprehension written longhand, with a loop-invariant `finisher is not None` test inside the loop; `partitioning_by._supply` (`collectors.py:452-456`) builds a two-key dict with a `for` over a literal tuple. **(c)** `RUF005` at `stream.py:128`: `self._chain + [op]` -> `[*self._chain, op]`, on the chain-extension path. **(d)** `RUF036` — `None` sits mid-union in three aliases (`type.py:24`, `:30`, `:37`); `Mapper`'s is the interesting one, since `Callable[[T], R \| None \| Awaitable[R \| None]]` widens every `.map()` result to optional and nothing documents why. **(e)** `__init__.py:11`'s `finally: del version, PackageNotFoundError` misses `dist_name`, which it created at `:6` — `snakestream.dist_name` is importable today (verified 2026-08-25). **(f)** Widen the ruff selection past `E,F,W,C90,UP` — see the notes for what the trial run actually found. | It waited on story 1: (b) and (d)'s `Mapper` question sat inside that move, and (f) is better turned on after it, so the new rules judge the module layout the batch settled on rather than the one it was leaving. Story 1 is done, so this is now unblocked. **Nothing in (a)-(e) changes behaviour**, so the whole story rides one tripwire: the suite passes with no test file edited, `snakestream.dist_name` excepted — (e) removes a name, and nothing in `tests/` references it (verified 2026-08-25). **(f) is the only part with judgement in it**: it is a config change whose cost lands on future diffs, not this one, and the two `noqa`s it requires are both genuine false positives, so it needs the reasoning below rather than a bare `--select` edit. |
 
 ### Implementation notes for the second 2026-08-25 batch
 
-Line anchors are as of `651f734` and will drift — the symbol names are the
-durable part.
-
-**Story 1(c), the three dependents.** The undocumented awaitable-return
-contract is not decorative; removing it would break `_CollectorSink`, which
-calls a possibly-async supplier un-awaited at `collector.py:75`, and both
-`grouping_by._finish` (`collector.py:530`) and `partitioning_by._finish`
-(`collector.py:553`), which are *sync* functions returning the un-awaited
-coroutine of `_finish_groups`. Each of the three reads like a missing `await`
-until the base class is traced. The story is to state the contract in
-`TerminalSink`'s docstring — not to change it, and not to add defensive
-`await`s at the three sites.
-
-**Story 1(e), what the base is not.** A shared base is worth having for the
-catch-everything case; it is not licence to reshape the two existing names.
-`IllegalStateException` is Java's name for Java's reason and the
-`collector-to-map` spec now pins it (story 6 of the previous batch moved
-`to_map`'s duplicate-key error onto it as a breaking change) — so the story
-adds a base and stops. Renaming either leaf, or introducing a third exception,
-is out of scope.
+Line anchors below are refreshed to the post-split layout (2026-08-26); the
+symbol names remain the durable part. Story 1's notes were removed when it
+landed — see its **Done** entry for how each of its five parts resolved.
 
 **Story 2(f), the trial run.** Ruff currently selects `E,F,W,C90,UP` with
 `mccabe.max-complexity = 10`. Trialling `ASYNC,B,SIM,RUF,PERF,C4,RET,PIE,FURB,PLR,PLW`
@@ -73,7 +56,7 @@ argument for turning them on — the cleanup cost is already paid:
 | Rule | Count | Disposition |
 |---|---|---|
 | `RUF036` | 3 | Story 2(d) |
-| `B008` | 2 | `collector.py:519,537` — see below |
+| `B008` | 2 | `collectors.py:430,448` — see below |
 | `B004` | 1 | **False positive**, `noqa` |
 | `PERF203` | 1 | **False positive**, `noqa` |
 | `RUF005` | 1 | Story 2(c) |
@@ -110,7 +93,8 @@ them auto-fixable. That is a separate story if it is wanted at all, and it
 should not be smuggled into this one — but **`PT011` (3 sites) is worth a look
 on its own merits**, since a `pytest.raises(Exception)` in a library that
 defines `StreamBuildException` and `IllegalStateException` will pass on the
-wrong error, and story 1(e) gives those three sites a precise base to name.
+wrong error, and story 1 has now shipped `StreamException` — so those three
+sites have a precise base to name.
 
 **Deferred, needs an explicit call: `ExceptionGroup` in `Stream.close()`.**
 Raised by the same read and deliberately **not** made a story. `close()`
@@ -150,6 +134,97 @@ core semantic.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should instead be documented as intentional next to the `str`/`bytes` note. Surfaced 2026-08-20 in the same code-quality read that produced **Now** items 1-4. |
 
 ## Done
+
+- **`collectors.py` split out of `collector.py`, and four legibility gaps**
+  (2026-08-26). Story 1 of the second 2026-08-25 batch, and the one the other
+  story waited on.
+
+  **The roadmap row was wrong about the blast radius, and that was the first
+  finding.** It called story 1 "private-surface only apart from one new public
+  exception base." `snakestream.collector` is public: README's quickstart
+  imports `to_generator` from it and 46 files under `tests/` imported factories
+  from it. Moving the factories is a **breaking import-path change**, and it
+  was surfaced and decided before any artifact was written rather than
+  discovered mid-apply. The user chose the Java-faithful break over a
+  re-export shim, an inverted split, or moving `to_generator` too.
+
+  **The split is `Collector` / `Collectors`, and it cost no invented name.**
+  `collector.py` keeps the protocol — `Collector`, `_CollectorSink`,
+  `StreamingCollector`, `_stream`, `to_generator` — at 114 lines.
+  `collectors.py` takes the ~22 factories plus `SummaryStatistics` and the
+  private helpers and container dataclasses only they use, at 545. The import
+  edge runs one way and is now visible as an import rather than implicit in
+  file ordering, the same shape the `sort.py`/`comparator.py` split settled
+  on. It also disentangled the `collector.py` -> `execution.py` import of
+  `_maybe_aclosing`, which existed solely for `_stream` and travelled with the
+  protocol half; two imports went dead in the process (`_maybe_await` in
+  `collector.py`, `type.A` in `collectors.py`) and were removed.
+
+  **`to_generator` stayed put, and that was the deliberate half of the
+  decision.** It is a `StreamingCollector` instance, not a factory, so it
+  belongs beside the type it instantiates — and the `collector-protocol` spec
+  already singled it out as "the one non-`Collector` collector". Moving it to
+  sit with the factories would have re-created, inside `collectors.py`,
+  exactly the two-things-in-one-module problem the split was fixing. It also
+  means README's quickstart import is unchanged.
+
+  **The move is provably verbatim.** Diffing the original
+  `collector.py:125-633` against `collectors.py` from `to_list` onward:
+  identical, byte for byte. That is what settles the benchmark question the
+  row raised — no factory body was reformatted or reordered, so no per-element
+  path could have been touched, and no harness run was needed. The remaining
+  `src/` diff is 42 insertions across four files, none inside an `accept()`
+  body or an accumulator inner function.
+
+  **`StreamException`, named by the user over `SnakestreamException`.** Java
+  has no common base for its stream exceptions, so the Java-parity rule did
+  not decide this one. Inserted above `StreamBuildException` and
+  `IllegalStateException`, source-compatible by construction. The temptation
+  refused was giving it a second base such as `ValueError` to soften the
+  previous batch's `to_map` break — refused for the reason that batch already
+  recorded: the same hierarchy covers stream-reuse errors, and a stream-reuse
+  error is not a `ValueError`. New capability `exception-hierarchy`, five
+  scenarios, five tests.
+
+  **`CLAUDE.md` was already describing a method that did not exist.** Its
+  "Sequential vs. parallel execution" section states that `.parallel()` /
+  `.sequential()` "go through `_derive_executor()`" — but the code called
+  `_derive(self._chain, EXEC)` directly and the two public methods carried the
+  same twelve-line docstring verbatim, which was the row's finding (b). The
+  fix made the code match the documentation rather than the other way round:
+  `_derive_executor()` now exists and owns the shared explanation, and both
+  public methods are one-liners.
+
+  **The `TerminalSink` contract was documented, not changed.** The row was
+  explicit that the three dependents must not gain defensive `await`s, and
+  they did not: `_CollectorSink._create_container()` is still `def`, and
+  `grouping_by`'s and `partitioning_by`'s `_finish` still return the
+  un-awaited coroutine of `_finish_groups()`. Verified by grep after the edit,
+  not assumed.
+
+  **The tripwire had to be restated before it could hold.** "The suite passes
+  with no test file edited" is unachievable once 46 import lines move, so it
+  became mechanical: `git diff -U0 -- tests/` must show import lines only. It
+  did, across all 45 files that changed — no assertion touched.
+
+  **Coverage identity held exactly, which is the check the previous batch
+  taught.** Missed statements 2 -> 2, branches 288 -> 288, partial branches
+  26 -> 26; the uncovered set is the same two lines in `_summarizing`, now at
+  `collectors.py:192-193`. Total went 98.05% -> 98.05%. Compare the counts,
+  not the percentage.
+
+  **One thing the sync surfaced that the plan did not.** `collector-protocol`'s
+  main-spec `## Purpose` read "every `collector.py` factory returns", which the
+  requirement directly below it now contradicted. Corrected to `collectors.py`
+  — a module name this change itself renamed, not a Purpose rewrite — and
+  flagged rather than done silently.
+
+  567 tests green. `ruff`, `ruff format --check`, `ty check src` (output
+  identical to baseline), `--cov-fail-under=98` at 98.05%, and
+  `openspec validate --specs` at 37/37 all pass. Spec deltas on
+  `collector-protocol` (2 MODIFIED) and `exception-hierarchy` (new), plus two
+  README migration entries. See
+  `openspec/changes/archive/2026-08-26-split-collector-protocol-and-factories`.
 
 - **Collector containers, and the duplicate-key exception** (2026-08-25).
   Story 6 of the 2026-08-25 batch — independent of the other five, and the one

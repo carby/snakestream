@@ -9,6 +9,7 @@ intermediate operation on top of them."""
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any, ClassVar, Generic
 from collections.abc import Callable
 
@@ -22,15 +23,13 @@ from snakestream.type import StateMap, T
 _UNSET = object()
 
 
+@dataclass(slots=True)
 class Box:
     """A mutable single-value box. Lets a fixed accumulator function rebind a
     scalar accumulation by mutating this in place, since it cannot rebind a
     local of its caller's."""
 
-    __slots__ = ("value",)
-
-    def __init__(self, value: Any = None) -> None:
-        self.value = value
+    value: Any = None
 
 
 class Sink(ABC, Generic[T]):
@@ -150,6 +149,14 @@ class TerminalSink(Sink[T]):
     """Base for sinks with no downstream: begin() creates an accumulation
     container, accept() accumulates into it, end() finishes it into the value
     exposed via result().
+
+    _create_container() and _finish() may each return an awaitable instead of
+    a value: begin() and end() route both through _maybe_await. Three sites
+    depend on this and read like a missing await until this contract is
+    traced - _CollectorSink._create_container() returns a possibly-async
+    supplier's result un-awaited, and grouping_by()'s and partitioning_by()'s
+    _finish are *sync* functions returning the un-awaited coroutine of
+    _finish_groups().
 
     A terminal whose answer is settled before the source runs out may override
     cancellation_requested() to report True from that point on, exactly as a

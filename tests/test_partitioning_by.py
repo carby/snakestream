@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from snakestream.collector import counting, partitioning_by
+from snakestream.collectors import counting, partitioning_by
 from snakestream.stream import Stream
 
 

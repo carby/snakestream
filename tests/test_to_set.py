@@ -1,6 +1,6 @@
 import pytest
 
-from snakestream.collector import to_set
+from snakestream.collectors import to_set
 from snakestream.stream import Stream
 
 

@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from snakestream.collector import min_by
+from snakestream.collectors import min_by
 from snakestream.stream import Stream
 
 

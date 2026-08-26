@@ -2,7 +2,8 @@ from collections.abc import AsyncGenerator
 import pytest
 
 from snakestream import Stream
-from snakestream.collector import to_list, to_generator
+from snakestream.collector import to_generator
+from snakestream.collectors import to_list
 
 
 async def async_generator() -> AsyncGenerator:

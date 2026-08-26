@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from snakestream.collector import to_map
+from snakestream.collectors import to_map
 from snakestream.exception import IllegalStateException
 from snakestream.stream import Stream
 

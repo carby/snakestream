@@ -1,6 +1,6 @@
 import pytest
 
-from snakestream.collector import joining
+from snakestream.collectors import joining
 from snakestream.stream import Stream
 
 

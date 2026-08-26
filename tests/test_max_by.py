@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from snakestream.collector import max_by
+from snakestream.collectors import max_by
 from snakestream.stream import Stream
 
 

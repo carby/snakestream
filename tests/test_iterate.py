@@ -2,7 +2,8 @@ from inspect import isawaitable
 
 import pytest
 
-from snakestream.collector import to_generator, to_list
+from snakestream.collector import to_generator
+from snakestream.collectors import to_list
 from snakestream.stream import Stream
 
 

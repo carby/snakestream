@@ -5,7 +5,7 @@ import time
 
 import pytest
 from snakestream.execution import _wrap_sink
-from snakestream.collector import to_list
+from snakestream.collectors import to_list
 from snakestream.sink import Op
 from snakestream.stream import Stream
 
