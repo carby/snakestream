@@ -9,7 +9,7 @@ restored before it decides. This capability is the contract for that
 restoration, and for the deliberate absence of it on an unordered pipeline,
 where the cheaper order-blind behaviour is correct and is what runs.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Order-sensitive operations honour encounter order under the racing executor
 
@@ -150,8 +150,11 @@ the elements produced by a pipeline containing no order-sensitive operation.
 
 Every source the racing executor accepts today SHALL still be accepted: sync and
 async, closeable and not, `__aiter__` returning `self` or a separate iterator.
-Pulls from the shared source SHALL remain serialized, and the source SHALL still
-be closed exactly once if it is closeable.
+Pulls from the shared source SHALL remain serialized, and the shared source
+SHALL be closed exactly as it is without a barrier — each branch closes it on
+its way out, which for the async generators source normalization builds means
+its `finally` runs once. Introducing a barrier SHALL NOT change how many times
+a closeable source is closed.
 
 Errors raised by user-supplied callables SHALL still propagate out of the
 pipeline rather than being swallowed by a buffer holding elements back.
@@ -167,6 +170,12 @@ pipeline rather than being swallowed by a buffer holding elements back.
   collected over a source with repeated and distinguishable elements
 - **THEN** each element the operation admits appears exactly once, none is lost,
   and none is duplicated
+
+#### Scenario: A barrier does not change how the shared source is closed
+- **WHEN** the same short-circuiting racing pipeline is run with a barrier and
+  without one, over a closeable source that counts its closes
+- **THEN** the two counts are equal, and a generator source behind a barrier
+  runs its `finally` exactly once
 
 #### Scenario: A source with no aclose() still races under an ordered pipeline
 - **WHEN** an ordered racing pipeline containing an order-sensitive operation is

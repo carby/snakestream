@@ -69,6 +69,25 @@ performance and is the stronger of the two.
 downstream of the barrier sequentially but merging out of order. It does not fix
 anything: `limit(5)` downstream of an unordered merge still picks the wrong five.
 
+**Amended during implementation:** "operations from `i` onward run as one
+sequential sink chain" is right only up to the point the caller clears the
+characteristic again. `.sorted(c).unordered().map(fetch)` splits at the sort, so
+a wholly sequential tail serialises the very `fetch` that `unordered()` exists
+to release — and it makes `unordered()` after a barrier unobservable, which is
+the observable the `stream-ordering` delta's fourth scenario and task 9.1 both
+depend on. So the tail runs ordered up to the first op declaring
+`Ordering.CLEAR` and hands the remainder back to `race_through()`, which may
+split it again (`_resume_point()`).
+
+Only an explicit clear resumes the race, not merely the absence of anything
+downstream that reads position. Racing an order-blind *suffix* — the `map` in
+`.limit(n).map(fetch)` — would scramble the order the pipeline delivers, and
+whether an ordered racing pipeline owes its terminal encounter order is a
+question this change does not answer: today it does not (`.parallel().map(f)`
+comes out scrambled), Java's ordered parallel streams do, and this change makes
+the answer depend on whether a barrier happens to exist. That is recorded as its
+own roadmap item rather than settled here.
+
 ### 2. The split rule: `Ordering.SET`, or order-sensitive at an ordered position
 
 An operation is a split point when either:
