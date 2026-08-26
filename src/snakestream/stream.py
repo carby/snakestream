@@ -141,7 +141,7 @@ class Stream(Generic[T]):
         """A mode switch: a new stream over the SAME source and the SAME queued
         chain, differing only in its executor, consuming this one. The chain
         carrying over unchanged is also what carries the ordering
-        characteristic over - is_ordered() folds it from there, so there is no
+        characteristic over - _is_ordered() folds it from there, so there is no
         ordering state for this to copy.
 
         It must not compose. Composing here is what made `.parallel()`
@@ -174,10 +174,15 @@ class Stream(Generic[T]):
         parallel(), which sets a flag on the source stage so as *not* to be."""
         return self._extend(_UnorderedOp())
 
-    def is_ordered(self) -> bool:
+    def _is_ordered(self) -> bool:
         """Folded from the chain, never stored. Java's combineOpFlags() folds
         the same three-valued answer down its stage list; here the fold is the
         whole of it, because there is one characteristic rather than five.
+
+        Private because Java exposes no ordering accessor: BaseStream offers
+        isParallel() and nothing else, and ORDERED lives in the package-private
+        StreamOpFlag. A caller influences ordering through unordered() and
+        sorted(), and observes it through what the order-sensitive terminals do.
 
         Deliberately not cached onto the instance as _derive() copies it
         forward: a denormalised copy of a chain property is exactly what let
@@ -353,7 +358,7 @@ class Stream(Generic[T]):
         way - ForEachOps.OfRef.evaluateParallel() picks ForEachOrderedTask or
         plain ForEachTask on whether ORDERED is known upstream - and it is what
         the javadoc's "if the stream has a defined encounter order" means."""
-        executor = SEQUENTIAL if self.is_ordered() else None
+        executor = SEQUENTIAL if self._is_ordered() else None
         return await self._evaluate(_ForEachSink(consumer), executor)
 
     async def to_array(self) -> list[T]:
