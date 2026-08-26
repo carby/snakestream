@@ -11,7 +11,12 @@ async def _maybe_await(fn: Callable, *args: Any) -> Any:
 def is_async_callable(fn: Callable) -> bool:
     if iscoroutinefunction(fn):
         return True
-    call = getattr(type(fn), "__call__", None)
+    # not callable(fn): this is reaching for the *class-level* __call__ to ask
+    # whether that is a coroutine function, which is the only way an object
+    # with an `async def __call__` classifies correctly -- iscoroutinefunction
+    # returns False for such an instance. callable() cannot express the
+    # question, so B004's rewrite would be a silent correctness regression.
+    call = getattr(type(fn), "__call__", None)  # noqa: B004
     return call is not None and iscoroutinefunction(call)
 
 

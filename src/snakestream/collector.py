@@ -39,7 +39,7 @@ class Collector(Generic[T, A, R]):
     callables, no per-collection state of its own, so one instance is safe to
     reuse across streams and across concurrent collections."""
 
-    __slots__ = ("supplier", "accumulator", "combiner", "finisher")
+    __slots__ = ("accumulator", "combiner", "finisher", "supplier")
 
     def __init__(
         self,

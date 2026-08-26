@@ -85,7 +85,7 @@ async def _guarded(source: AsyncIterator, lock: asyncio.Lock) -> AsyncGenerator:
         while True:
             async with lock:
                 try:
-                    item = await source.__anext__()
+                    item = await anext(source)
                 except StopAsyncIteration:
                     return
             yield item
@@ -150,14 +150,12 @@ async def race_through(chain: list[Op], source: AsyncGenerator, workers: int) ->
     # times over. One iterator, shared under the lock, is what racing means.
     shared = aiter(source)
     branches = [stream_through(chain, _guarded(shared, lock), state_map) for _ in range(workers)]
-    # the in-flight __anext__() per branch, keyed by task so a completed one
+    # the in-flight anext() per branch, keyed by task so a completed one
     # maps back to its branch in O(1); it doubles as the waitlist and as the
     # "any branch still running" test, so nothing here is scanned or rebuilt
     # per element. A branch that raised StopAsyncIteration is simply not
     # re-armed, which is what drains this dict to empty.
-    in_flight: dict[asyncio.Task[Any], int] = {
-        asyncio.create_task(branch.__anext__()): idx for idx, branch in enumerate(branches)
-    }
+    in_flight: dict[asyncio.Task[Any], int] = {asyncio.create_task(anext(branch)): idx for idx, branch in enumerate(branches)}
 
     try:
         while in_flight:
@@ -169,7 +167,7 @@ async def race_through(chain: list[Op], source: AsyncGenerator, workers: int) ->
                     result = task.result()
                 except StopAsyncIteration:
                     continue
-                in_flight[asyncio.create_task(branches[branch].__anext__())] = branch
+                in_flight[asyncio.create_task(anext(branches[branch]))] = branch
                 yield result
     finally:
         # if we're leaving early (e.g. a task raised), make sure no other

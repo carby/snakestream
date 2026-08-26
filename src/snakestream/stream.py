@@ -125,7 +125,7 @@ class Stream(Generic[T]):
         """This stream's chain plus one more op, under the same executor.
         The chain-extension rule lives here and nowhere else; _derive() runs
         the consumed check, so this deliberately does not."""
-        return self._derive(self._chain + [op], self._executor)
+        return self._derive([*self._chain, op], self._executor)
 
     def _compose(self) -> AsyncGenerator[T, None]:
         """The chain as a generator, under this stream's executor."""
@@ -184,7 +184,11 @@ class Stream(Generic[T]):
         for close_handler in self._close_handlers:
             try:
                 close_handler()
-            except Exception as e:
+            except Exception as e:  # noqa: PERF203
+                # PERF203 objects to try/except inside a loop; here that is the
+                # loop's contract. close() invokes *every* registered handler
+                # (stream-close-handling spec), so a raising handler must be
+                # caught per iteration rather than aborting the rest.
                 exceptions.append(e)
         if exceptions:
             first = exceptions[0]

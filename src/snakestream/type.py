@@ -21,20 +21,20 @@ StateMap = dict[Any, Any]
 Predicate = Callable[[T], bool | Awaitable[bool]]
 
 # Intermediaries
-Mapper = Callable[[T], R | None | Awaitable[R | None]]
+Mapper = Callable[[T], R | Awaitable[R]]
 FlatMapper = Callable[[T], "Stream[R]"]
 Comparator = Callable[[T, T], int | Awaitable[int]]
 # The awaitable arm of Comparator, for the merge-sort path that reaches it
 # only after sort() has established the comparator returns awaitables.
 AsyncComparator = Callable[[T, T], Awaitable[int]]
-Consumer = Callable[[T], None | Awaitable[None]]
+Consumer = Callable[[T], Awaitable[None] | None]
 CloseHandler = Callable[[], None]
 
 # Terminals
 Accumulator = Callable[[T, T | R], T | R | Awaitable[T | R]]
 BinaryOperator = Callable[[T, T], T | Awaitable[T]]
 Supplier = Callable[[], R | Awaitable[R]]
-BiConsumer = Callable[[R, T], None | Awaitable[None]]
+BiConsumer = Callable[[R, T], Awaitable[None] | None]
 NumberMapper = Callable[[T], int | float | Awaitable[int | float]]
 
 # Collector protocol
