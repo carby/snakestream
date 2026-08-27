@@ -20,19 +20,26 @@ value rather than a class hierarchy, `summing_int`/`summing_long` sharing a body
 `collapse-derive-wrappers`, `order-stateful-ops-under-racing`,
 `collapse-compose-into-iterator`, and `add-comparator-comparing` are all in
 **Done**. What is here now is the two changes **Next**'s fleshing-out produced,
-plus six questions the roadmap has been implying without ever writing down.
+plus `unify-derive-signature` (opened 2026-08-27, out of an exploration of
+`_derive()`'s two call shapes) and six questions the roadmap has been implying
+without ever writing down.
 
 ### Queued changes
 
-Run them in this order. The dependency is real, not preference: the second
-reads the characteristic the first ships.
+Run them in this order. One dependency in the list is real rather than
+preference: `order-racing-delivery` reads the characteristic
+`add-collector-characteristics` ships, so it cannot go first.
+`unify-derive-signature` is independent of both and is slotted between them
+only because it is small, self-contained, and touches a file neither of the
+others does.
 
 | # | Change | State | What it is |
 |---|---|---|---|
-| 1 | `add-collector-characteristics` | **Planning complete** — proposal, 4 delta specs, design and tasks all written; `openspec validate --strict` passes. Ready to apply. | Gives `Collector` its Java `Characteristics`, `UNORDERED` only. Matches OpenJDK's assignments exactly: `to_set()` declares it, `mapping()`/`collecting_and_then()` derive from downstream, everything else stays unmarked. **Ships inert** — nothing reads it until change 2 — which is stated in the proposal, in the code comments its tasks require, and in README, so it is not mistaken for dead code. Was **Next**'s item 4. |
-| 2 | `order-racing-delivery` | **Proposal only.** Needs specs, design, tasks. | An ordered racing pipeline delivers in encounter order. **BREAKING.** Was **Next**'s item 1, and the detail that used to sit here is now in its proposal. |
+| 1 | `add-collector-characteristics` | **Planning complete** — proposal, 4 delta specs, design and tasks all written; `openspec validate --strict` passes. Ready to apply. | Gives `Collector` its Java `Characteristics`, `UNORDERED` only. Matches OpenJDK's assignments exactly: `to_set()` declares it, `mapping()`/`collecting_and_then()` derive from downstream, everything else stays unmarked. **Ships inert** — nothing reads it until `order-racing-delivery` — which is stated in the proposal, in the code comments its tasks require, and in README, so it is not mistaken for dead code. Was **Next**'s item 4. |
+| 2 | `unify-derive-signature` | **Proposal and tasks written**; specs opted out (`skip_specs: true`) and design deliberately skipped. `openspec validate` passes. Ready to apply. | Gives `Stream._derive()` an optional `executor` argument so the chain rule and the executor rule both live in it, collapsing `sequential()`/`parallel()` to one line each and removing the only place in `stream.py` where a method writes a private attribute of an object it does not own. Pure refactor, no behaviour change. Fourth pass over this cluster: its proposal records why it is not a revert of `collapse-derive-wrappers`, and its task list retires that change's now-unneeded tripwire about an `await` in `_derive()`. |
+| 3 | `order-racing-delivery` | **Proposal only.** Needs specs, design, tasks. | An ordered racing pipeline delivers in encounter order. **BREAKING.** Was **Next**'s item 1, and the detail that used to sit here is now in its proposal. |
 
-**What change 2 settled that the roadmap had left open**, recorded here because
+**What change 3 settled that the roadmap had left open**, recorded here because
 it is the reasoning, not the code, that took the time:
 
 - **The policy was never actually open.** The guiding principle at the top of
