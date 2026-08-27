@@ -16,56 +16,53 @@ value rather than a class hierarchy, `summing_int`/`summing_long` sharing a body
 
 ## Now
 
-**Two of the four queued changes remain.** Opened 2026-08-26; items 1 and 2 of
-the original four — `collapse-derive-wrappers` and
-`order-stateful-ops-under-racing` — both landed the same day and are in
-**Done**. The order below is the recommendation, and what each one owes the
-next is recorded underneath it.
+**One of the original four queued changes remains.** Opened 2026-08-26; items
+1-3 of the original four — `collapse-derive-wrappers`,
+`order-stateful-ops-under-racing`, and `collapse-compose-into-iterator` — have
+all landed and are in **Done**.
 
 | # | Change | What it is | Why in this position |
 |---|---|---|---|
-| 1 | `collapse-compose-into-iterator` | Deletes `Stream._compose()`, routing its four callers through `iterator()`, which is the same call plus the `_check_not_consumed()` it currently skips. Closes a hole reachable from user code via `Stream.concat()` and a `flat_map()` mapper's return value. | **Not ready to apply.** Proposal only — no design, specs or tasks — and it fails `openspec validate --strict` with "must have at least one delta". Its break is behavioural and currently unspecified, so it wants real deltas rather than `skip_specs: true`. Was positioned behind `order-stateful-ops-under-racing`, which worked inside two of the four call sites; that has now landed without adding a fifth, so nothing blocks this but its own missing deltas. |
-| 2 | `add-comparator-comparing` | Ports Java's `Comparator.comparing()` key extractors. Measured 6.8-8.8x on sync comparators, 4.8-5.4x on async, where it also collapses O(n log n) interleaved awaits into O(n) gathered up front. | New public API and a performance win, so it yielded to the correctness item that redesigned how the op it sorts through is executed; that has landed and settled *where* a sort runs, leaving this one *how* a comparison is made. Nothing in it is blocked; it is last on value ordering, not on dependency. |
+| 1 | `add-comparator-comparing` | Ports Java's `Comparator.comparing()` key extractors. Measured 6.8-8.8x on sync comparators, 4.8-5.4x on async, where it also collapses O(n log n) interleaved awaits into O(n) gathered up front. | New public API and a performance win, so it yielded to the correctness items that redesigned how the op it sorts through is executed and reached. Both have landed and settled *where* a sort runs and *how* a stream is composed, leaving this one *how* a comparison is made. Nothing in it is blocked; it was last on value ordering, not on dependency. |
 
-**What to keep track of between them.**
+**What it inherits.**
 
-- **Item 2 rebases onto the collapsed copier and onto the barrier.** The nine
+- **Rebases onto the collapsed copier and onto the barrier.** The nine
   intermediate ops read `self._derive(_SomeOp(...))` as of
   `collapse-derive-wrappers`, and `order-stateful-ops-under-racing` left those
-  lines alone — it landed entirely in `execution.py` and `sink.py`, so item 2's
-  `sorted()` signature change is a clean one-file rebase. Sequencing the
-  refactor first is what reduced this to one textual rebase instead of three;
-  it worked twice, and it is the reason to keep doing it.
-- **The `sorted()` seam is now half-settled, and item 2 must not re-litigate
+  lines alone — it landed entirely in `execution.py` and `sink.py`, so this
+  item's `sorted()` signature change is a clean one-file rebase.
+- **The `sorted()` seam is half-settled, and this item must not re-litigate
   the settled half.** `order-stateful-ops-under-racing` decided *where* a sort
   runs: `_SortedOp` stays a `StatelessOp`, and rather than forcing a single
   flight the way `for_each_ordered()` does, it declares `Ordering.SET` and the
-  racing executor splits the chain there — head raced, tail ordered. Item 2
+  racing executor splits the chain there — head raced, tail ordered. This item
   decides only *how* a comparison is made: key extraction reaching `list.sort`
   versus `cmp_to_key`, and which of those the hand-rolled `merge_sort` in
   `sort.py` is still needed for. A key extractor changes what `_SortedSink.end()`
   does, not where it runs, so the split rule is untouched by it — but the
   key-extractor path must keep `_SortedOp.ordering = Ordering.SET`, which is
   what makes a sort a split point at all.
-- **Item 1 meets the barrier in `_FlatMapSink.accept()` and `_concat()`**, two
-  of `_compose()`'s four callers. `order-stateful-ops-under-racing` introduced
-  no new composition point in `stream.py` — `group_through()` and
-  `_run_ordered_tail()` compose inside `execution.py`, below the consumed check
-  — so item 1 inherits exactly the four callers it was written against.
-- **Whoever lands next re-checks the other's documentation tasks.** Each of
-  these changes carries tasks that correct `CLAUDE.md` and annotate **Done**
-  entries here. Stale prose is not cosmetic in this repo, and
-  `collapse-derive-wrappers` is the demonstration: it found three stale spots
-  its own tasks had not named, because the line numbers those tasks cited had
-  drifted. Cite the sentence, not the line.
-- **The ordering fold now lives in `sink.py`, not on `Stream`.**
+- **`_compose()` is gone.** `collapse-compose-into-iterator` deleted it;
+  `Stream.iterator()` is now the one place a chain becomes a generator. Nothing
+  in this item's design referenced `_compose()` by name, so there is nothing to
+  rebase here — noted only so a stale mental model doesn't creep back in.
+- **Re-check documentation tasks on landing.** Every change in this cycle has
+  carried tasks that correct `CLAUDE.md` and annotate **Done** entries here.
+  Stale prose is not cosmetic in this repo, and `collapse-derive-wrappers` was
+  the demonstration: it found three stale spots its own tasks had not named,
+  because the line numbers those tasks cited had drifted. Cite the sentence,
+  not the line. `collapse-compose-into-iterator` extended this to spec
+  `## Purpose` sections: a delta can't carry one for an existing capability, so
+  the hand-edit has to happen at archive time, off a task that names what to
+  drop rather than where.
+- **The ordering fold lives in `sink.py`, not on `Stream`.**
   `order-stateful-ops-under-racing` moved it to a module-level
   `is_ordered(chain, upto=None)` so `execution.py` could reach it, and reduced
   `Stream._is_ordered()` to a one-line delegation. It is still a fold over the
   chain, still never cached, and still private — what
   `make-ordering-a-chain-characteristic` and `make-is-ordered-internal` each
-  established is intact. Neither remaining item touches it.
-
+  established is intact. This item does not touch it.
 
 **Also still open, and still needing an explicit call: `ExceptionGroup` in
 `Stream.close()`** — see the note below, unchanged.
@@ -162,6 +159,43 @@ core semantic.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should instead be documented as intentional next to the `str`/`bytes` note. Surfaced 2026-08-20 in the same code-quality read that produced **Now** items 1-4. |
 
 ## Done
+
+- **Collapse `Stream._compose()` into `iterator()`** (2026-08-27). `_compose()`
+  had shrunk, since the executor-value redesign, to a one-line forward to
+  `self._executor.elements(...)` — the only thing separating it from the
+  public `iterator()` was the `_check_not_consumed()` call `iterator()` makes
+  and `_compose()` skipped. That gap was reachable from user code in exactly
+  two of its four call sites: `Stream.concat()` and a `flat_map()` mapper's
+  return value could both slip an already-extended stream past the
+  pipeline-immutability contract. Deleted `_compose()` and routed all four
+  callers — `_concat()`, `_FlatMapSink.accept()`, `collect()`'s
+  `StreamingCollector` branch, and `iterator()` itself — through `iterator()`.
+  See `openspec/changes/archive/2026-08-27-collapse-compose-into-iterator`.
+
+  **BREAKING (behavioural, previously unspecified):** `Stream.concat()` and a
+  `flat_map()` mapper now raise `IllegalStateException` on an already-extended
+  argument. Neither was ever documented as accepting one, so no README
+  migration-log entry — the two newly-raising cases were unsupported
+  before this, just silently so. A stream that was merely *terminally
+  consumed*, never extended, is unaffected in both positions.
+
+  **`_concat()` moved the check out of its own body, not into it.** It is an
+  `async def` generator, so a `_check_not_consumed()` call inside it would not
+  run until first pull — a materially weaker guarantee than "raises when you
+  call `concat()`". `Stream.concat()` now calls `a.iterator()` / `b.iterator()`
+  itself before constructing `_concat(a.iterator(), b.iterator())`, which also
+  dropped `_concat()`'s only dependency on `Stream`: it takes two
+  `AsyncGenerator`s now, nothing else.
+
+  **Four specs touched, no guarantee changed except the one stated above.**
+  `pipeline-immutability` gained the argument-position scenarios;
+  `pipeline-composition`, `stream-iterator`, and `mutable-reduction-collect`
+  had prose restated from `_compose()` naming to the executor vocabulary they
+  already used elsewhere — a legibility fix, not a behaviour change.
+  `pipeline-composition`'s `## Purpose` named both `_compose()` and the
+  already-stale `_parallel()` (deleted by the executor-value redesign); hand-
+  edited at archive time, since a delta can't carry `## Purpose` for an
+  existing capability.
 
 - **Ordered `sorted()`/`limit()`/`skip()`/`distinct()` under `RACING`**
   (2026-08-26). All four gave **wrong answers**, not slower ones, on an ordered
