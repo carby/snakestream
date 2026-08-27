@@ -6,9 +6,10 @@ collectors.py, which imports from here - never the other way round."""
 
 from __future__ import annotations
 
+from enum import Enum, auto
 from inspect import isawaitable
 from typing import Any, Generic, cast
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
 
 from snakestream.execution import _maybe_aclosing
 from snakestream.callable_dispatch import AsyncDispatch
@@ -24,6 +25,36 @@ from snakestream.type import (
 )
 
 
+class Characteristics(Enum):
+    """Mirrors Java's `Collector.Characteristics`. Ships one member,
+    `UNORDERED`, though the enum is shaped so `IDENTITY_FINISH` and
+    `CONCURRENT` could join later without changing what `UNORDERED` means.
+
+    `IDENTITY_FINISH` is left out because it is already observable as
+    `Collector.finisher is None` - defining it too would give one fact two
+    statements that can disagree. `CONCURRENT` describes accumulating into
+    one shared container from independently reduced partitions; snakestream
+    has no execution mode that produces independent partitions (`combiner` is
+    accepted for signature parity and never invoked), so nothing could read
+    it. Real partitioned execution belongs to the roadmap's Later, and that is
+    where `CONCURRENT` belongs too.
+
+    Nothing in the library reads `UNORDERED` yet - it is a declaration a
+    collector makes about itself, not an instruction to the pipeline. The
+    roadmap's Next item 1 (an ordered racing pipeline delivers in encounter
+    order) is what will read it, to let a terminal that does not observe
+    encounter order skip the reorder barrier."""
+
+    UNORDERED = auto()
+
+
+# Shared empty default for Collector.characteristics: a frozenset() call in
+# the signature trips ruff's B008 (mutable-looking default), and naming it at
+# module scope - the same move collectors.py makes for _TO_LIST - lets a
+# reader rule out the mutable-default bug without a trip to the docstring.
+_NO_CHARACTERISTICS: frozenset[Characteristics] = frozenset()
+
+
 class Collector(Generic[T, A, R]):
     """Java-style `Collector<T,A,R>`: `supplier()` creates a fresh
     accumulation container, `accumulator(container, element)` mutates it per
@@ -35,11 +66,15 @@ class Collector(Generic[T, A, R]):
     partitions to merge - the same posture `Stream.collect(supplier,
     accumulator, combiner)` and `reduce()`'s `combiner` already have.
 
-    Every part may be sync or async. A `Collector` holds only these four
-    callables, no per-collection state of its own, so one instance is safe to
-    reuse across streams and across concurrent collections."""
+    Every part may be sync or async. A `Collector` holds these four callables
+    plus one immutable datum, `characteristics`: a `frozenset` of
+    `Characteristics` declaring traits of the collector. It is data, not a
+    callable, so it is neither invoked nor awaited and the sync-or-async rule
+    the four callables carry does not apply to it. A `Collector` has no other
+    per-collection state of its own, so one instance is safe to reuse across
+    streams and across concurrent collections."""
 
-    __slots__ = ("accumulator", "combiner", "finisher", "supplier")
+    __slots__ = ("accumulator", "characteristics", "combiner", "finisher", "supplier")
 
     def __init__(
         self,
@@ -47,11 +82,19 @@ class Collector(Generic[T, A, R]):
         accumulator: BiConsumer[A, T],
         combiner: Combiner[A] | None = None,
         finisher: Finisher[A, R] | None = None,
+        characteristics: Iterable[Characteristics] = _NO_CHARACTERISTICS,
     ) -> None:
         self.supplier = supplier
         self.accumulator = accumulator
         self.combiner = combiner
         self.finisher = finisher
+        # Appended as the fifth parameter, after finisher, so every existing
+        # positional Collector(...) call - in this library and in user code -
+        # stays valid. Normalized to a frozenset regardless of what iterable
+        # is passed: a Collector is spec'd reusable across concurrent
+        # collections, so a mutable characteristics set would be its first
+        # piece of mutable shared state.
+        self.characteristics = frozenset(characteristics)
 
 
 class _CollectorSink(AsyncDispatch, TerminalSink[T]):

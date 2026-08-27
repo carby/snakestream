@@ -11,7 +11,7 @@ from typing import Any, NamedTuple, cast, overload
 from collections.abc import Awaitable, Callable
 
 from snakestream.callable_dispatch import _classify_step, _maybe_await, is_async_callable
-from snakestream.collector import Collector
+from snakestream.collector import Characteristics, Collector
 from snakestream.comparator import is_new_extremum
 from snakestream.exception import IllegalStateException, StreamBuildException
 from snakestream.sink import Box, _UNSET
@@ -47,7 +47,10 @@ _TO_LIST: Collector[Any, list[Any], list[Any]] = to_list()
 
 
 def to_set() -> Collector[T, set[T], set[T]]:
-    return Collector(set, set.add)
+    # The only factory in this module whose Java counterpart carries
+    # UNORDERED (CH_UNORDERED_ID). The declaration is true of the behaviour,
+    # not merely asserted: a set retains no record of insertion order.
+    return Collector(set, set.add, characteristics=(Characteristics.UNORDERED,))
 
 
 def joining(delimiter: str = "", prefix: str = "", suffix: str = "") -> Collector[str, list[str], str]:
@@ -58,6 +61,18 @@ def joining(delimiter: str = "", prefix: str = "", suffix: str = "") -> Collecto
 
 
 def counting() -> Collector[Any, Any, int]:
+    # Order-blind in fact - counting the same elements in any order gives the
+    # same count - but left undeclared, matching Java: OpenJDK gives counting()
+    # and the rest below (summing_*, averaging_*, summarizing_*, to_map,
+    # grouping_by, partitioning_by) CH_ID/CH_NOID rather than CH_UNORDERED_ID,
+    # because Java's UNORDERED governs its combine strategy, where an
+    # associative reduction is safe either way and the mark buys nothing.
+    # Under the roadmap's item 1 the mark would buy skipping the reorder
+    # barrier here - a real divergence from Java, and item 1's to weigh with a
+    # benchmark, not this change's to decide by inspection. min_by/max_by are
+    # excluded from that reconsideration regardless: is_new_extremum() keeps
+    # the earlier element on a tie, so which of two equal elements is returned
+    # is an encounter-order question, not an order-blind one.
     def _accumulate(container: Box, element: Any) -> None:
         container.value += 1
 
@@ -439,6 +454,12 @@ def grouping_by(
     classifier: Mapper[T, R],
     downstream: Collector[T, Any, Any] = _TO_LIST,
 ) -> Collector[T, Any, dict[R, Any]]:
+    # Takes a downstream but deliberately does not derive characteristics from
+    # it, unlike mapping()/collecting_and_then(): the downstream's result is a
+    # map *value*, and a trait of the values says nothing about the map itself.
+    # grouping_by(f, to_set()) builds a dict whose insertion order follows
+    # encounter order, so deriving UNORDERED from the inner to_set() would be
+    # wrong, not merely conservative.
     _check_downstream(downstream)
 
     def _supply() -> _GroupBox:
@@ -457,6 +478,9 @@ def partitioning_by(
     predicate: Predicate[T],
     downstream: Collector[T, Any, Any] = _TO_LIST,
 ) -> Collector[T, Any, dict[bool, Any]]:
+    # Same reasoning as grouping_by() above: takes a downstream, deliberately
+    # does not derive characteristics from it, because the downstream's
+    # result is a map value and says nothing about the (always two-key) map.
     _check_downstream(downstream)
 
     async def _supply() -> _GroupBox:
@@ -506,7 +530,9 @@ def mapping(mapper: Mapper[T, R], downstream: Collector[R, Any, Any]) -> Collect
         finisher = downstream.finisher
         return container.container if finisher is None else finisher(container.container)
 
-    return Collector(_supply, _accumulate, finisher=_finish)
+    # The mapper runs per element and the result is downstream's unchanged, so
+    # every trait of that result - including UNORDERED - is downstream's too.
+    return Collector(_supply, _accumulate, finisher=_finish, characteristics=downstream.characteristics)
 
 
 @dataclass(slots=True)
@@ -540,7 +566,13 @@ def collecting_and_then(downstream: Collector[T, Any, R], finisher: Finisher[R, 
     def _finish(container: _CollectAndThenBox) -> Any:
         return _finish_collecting_and_then(downstream, finisher, container.container)
 
-    return Collector(_supply, _accumulate, finisher=_finish)
+    # finisher runs once on the finished result, not per element, so it
+    # cannot introduce a dependence on arrival order - downstream's
+    # characteristics carry over unchanged. Java additionally clears
+    # IDENTITY_FINISH here, since adding a finisher is what makes the finish
+    # non-identity; not done here because that member does not exist yet -
+    # whoever adds it adds the clearing with it.
+    return Collector(_supply, _accumulate, finisher=_finish, characteristics=downstream.characteristics)
 
 
 def to_collection(collection_supplier: Supplier[_C]) -> Collector[Any, _C, _C]:

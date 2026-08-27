@@ -1,6 +1,7 @@
 import pytest
 
-from snakestream.collectors import collecting_and_then, counting, summing_int, to_list
+from snakestream.collector import Characteristics
+from snakestream.collectors import collecting_and_then, counting, mapping, summing_int, to_list, to_set
 from snakestream.exception import StreamBuildException
 from snakestream.stream import Stream
 
@@ -61,3 +62,16 @@ async def test_collecting_and_then_rejects_non_collector_downstream() -> None:
 
     with pytest.raises(StreamBuildException):
         collecting_and_then(not_a_collector, tuple)
+
+
+def test_collecting_and_then_adapting_unordered_downstream_stays_unordered() -> None:
+    assert Characteristics.UNORDERED in collecting_and_then(to_set(), frozenset).characteristics
+
+
+def test_collecting_and_then_adapting_ordered_downstream_stays_ordered() -> None:
+    assert Characteristics.UNORDERED not in collecting_and_then(to_list(), tuple).characteristics
+
+
+def test_collecting_and_then_composing_both_adapters_derives_through_both() -> None:
+    collector = collecting_and_then(mapping(len, to_set()), frozenset)
+    assert Characteristics.UNORDERED in collector.characteristics

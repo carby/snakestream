@@ -2,7 +2,7 @@ import asyncio
 import pytest
 
 from snakestream import Stream
-from snakestream.collector import Collector, to_generator
+from snakestream.collector import Characteristics, Collector, to_generator
 from snakestream.collectors import grouping_by, partitioning_by, summing_int, to_list
 from snakestream.exception import StreamBuildException
 
@@ -232,3 +232,41 @@ async def test_partitioning_by_default_downstream_still_builds_lists() -> None:
     actual = await Stream.of([1, 2, 3, 4]).collect(partitioning_by(lambda x: x % 2 == 0))
     # then
     assert actual == {False: [1, 3], True: [2, 4]}
+
+
+def test_characteristics_exposes_unordered() -> None:
+    assert Characteristics.UNORDERED in Characteristics
+
+
+def test_characteristics_does_not_define_identity_finish_or_concurrent() -> None:
+    assert not hasattr(Characteristics, "IDENTITY_FINISH")
+    assert not hasattr(Characteristics, "CONCURRENT")
+
+
+@pytest.mark.asyncio
+async def test_collector_without_characteristics_reports_empty_set() -> None:
+    collector = Collector(list, lambda c, e: c.append(e))
+    assert collector.characteristics == frozenset()
+    assert await Stream.of([1, 2, 3]).collect(collector) == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_collector_with_unordered_reports_it_and_collects_unchanged() -> None:
+    collector = Collector(list, lambda c, e: c.append(e), characteristics=(Characteristics.UNORDERED,))
+    assert collector.characteristics == frozenset({Characteristics.UNORDERED})
+    assert await Stream.of([1, 2, 3]).collect(collector) == [1, 2, 3]
+
+
+def test_collector_characteristics_normalizes_list_to_frozenset() -> None:
+    collector = Collector(list, lambda c, e: c.append(e), characteristics=[Characteristics.UNORDERED])
+    assert collector.characteristics == frozenset({Characteristics.UNORDERED})
+
+
+def test_collector_characteristics_normalizes_set_to_frozenset() -> None:
+    collector = Collector(list, lambda c, e: c.append(e), characteristics={Characteristics.UNORDERED})
+    assert collector.characteristics == frozenset({Characteristics.UNORDERED})
+
+
+def test_collector_characteristics_normalizes_frozenset_to_frozenset() -> None:
+    collector = Collector(list, lambda c, e: c.append(e), characteristics=frozenset({Characteristics.UNORDERED}))
+    assert collector.characteristics == frozenset({Characteristics.UNORDERED})

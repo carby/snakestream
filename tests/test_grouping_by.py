@@ -2,7 +2,8 @@ import asyncio
 
 import pytest
 
-from snakestream.collectors import counting, grouping_by, joining
+from snakestream.collector import Characteristics
+from snakestream.collectors import counting, grouping_by, joining, to_set
 from snakestream.stream import Stream
 
 
@@ -72,3 +73,7 @@ async def test_grouping_by_only_present_keys_get_downstream_reduced_entry() -> N
     # then
     assert result == {1: 1, 2: 1, 3: 1}
     assert 4 not in result
+
+
+def test_grouping_by_does_not_report_unordered_even_with_unordered_downstream() -> None:
+    assert Characteristics.UNORDERED not in grouping_by(len, to_set()).characteristics
