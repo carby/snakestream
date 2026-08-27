@@ -19,23 +19,17 @@ value rather than a class hierarchy, `summing_int`/`summing_long` sharing a body
 **Opened 2026-08-26:** `collapse-derive-wrappers`,
 `order-stateful-ops-under-racing`, `collapse-compose-into-iterator`, and
 `add-comparator-comparing` are all in **Done**. **`add-collector-characteristics`**
-(2026-08-27) has landed too — see **Done**. What is left here is the remaining
-two changes **Next**'s fleshing-out produced, plus `unify-derive-signature`
-(opened 2026-08-27, out of an exploration of `_derive()`'s two call shapes)
-and seven questions the roadmap has been implying without ever writing down.
+(2026-08-27) and **`unify-derive-signature`** (2026-08-27) have landed too — see
+**Done**. What is left here is `order-racing-delivery`, plus seven questions the
+roadmap has been implying without ever writing down.
 
 ### Queued changes
 
-Run them in this order. `unify-derive-signature` is independent of
-`order-racing-delivery` and is slotted first only because it is small,
-self-contained, and touches a file the other does not.
-
 | # | Change | State | What it is |
 |---|---|---|---|
-| 1 | `unify-derive-signature` | **Proposal and tasks written**; specs opted out (`skip_specs: true`) and design deliberately skipped. `openspec validate` passes. Ready to apply. | Gives `Stream._derive()` an optional `executor` argument so the chain rule and the executor rule both live in it, collapsing `sequential()`/`parallel()` to one line each and removing the only place in `stream.py` where a method writes a private attribute of an object it does not own. Pure refactor, no behaviour change. Fourth pass over this cluster: its proposal records why it is not a revert of `collapse-derive-wrappers`, and its task list retires that change's now-unneeded tripwire about an `await` in `_derive()`. |
-| 2 | `order-racing-delivery` | **Proposal only.** Needs specs, design, tasks. | An ordered racing pipeline delivers in encounter order. **BREAKING.** Was **Next**'s item 1, and the detail that used to sit here is now in its proposal. Reads the `Characteristics.UNORDERED` `add-collector-characteristics` shipped. |
+| 1 | `order-racing-delivery` | **Proposal only.** Needs specs, design, tasks. | An ordered racing pipeline delivers in encounter order. **BREAKING.** Was **Next**'s item 1, and the detail that used to sit here is now in its proposal. Reads the `Characteristics.UNORDERED` `add-collector-characteristics` shipped. |
 
-**What change 2 (`order-racing-delivery`) settled that the roadmap had left open**, recorded here because
+**What `order-racing-delivery` settled that the roadmap had left open**, recorded here because
 it is the reasoning, not the code, that took the time:
 
 - **The policy was never actually open.** The guiding principle at the top of
@@ -282,6 +276,28 @@ core semantic.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should instead be documented as intentional next to the `str`/`bytes` note. Surfaced 2026-08-20 in the same code-quality read that produced **Now** items 1-4. |
 
 ## Done
+
+- **`Stream._derive()` gains an optional `executor` argument, collapsing
+  `sequential()`/`parallel()` to one line each** (2026-08-27). `_derive()`'s
+  docstring claimed it derives "under the same executor", but its two mode-switch
+  callers falsified that by hand — `derived = self._derive(); derived._executor =
+  SEQUENTIAL; return derived` — the only place in `stream.py` where a method
+  wrote a private attribute of an object it did not own. The fix is one
+  parameter: `_derive(op=None, executor=None)`, with
+  `new_stream._executor = executor or self._executor` replacing the
+  unconditional assignment, so both derivation rules (chain and executor) live
+  in the one method that already advertises itself as their home.
+  `sequential()`/`parallel()` become `return self._derive(executor=SEQUENTIAL)`
+  / `return self._derive(executor=RACING)`. Pure refactor: no behaviour change,
+  no test edited, `--cov-fail-under=98` passes at 98.30% (691 passed), `ruff`,
+  `ruff format --check`, and `ty check src` all clean. Fourth pass over this
+  cluster; its proposal records why it is not a revert of
+  `collapse-derive-wrappers`. Also retired that entry's `await`-in-`_derive()`
+  tripwire (below) — `executor or self._executor` restores the assign-once
+  property the tripwire existed to guard — and updated the CLAUDE.md paragraph
+  that described the old two-statement mode-switch body. No delta specs:
+  `.openspec.yaml` set `skip_specs: true`, no capability names `_derive()`. See
+  `openspec/changes/archive/2026-08-27-unify-derive-signature`.
 
 - **`Collector` gains a `characteristics` frozenset and `Characteristics.UNORDERED`**
   (2026-08-27). Matches OpenJDK's assignments exactly: `to_set()` declares it,
@@ -539,7 +555,11 @@ core semantic.
   `_executor` is no longer assigned exactly once per instance — the copier sets
   it and the mode method overwrites it. Unobservable today (no `await` between
   the two statements, the instance has not escaped), and recorded so that adding
-  an `await` to `_derive()` is recognised as breaking it.
+  an `await` to `_derive()` is recognised as breaking it. **Retired by
+  `unify-derive-signature` (2026-08-27):** `_derive()` grew an `executor`
+  parameter and assigns `new_stream._executor = executor or self._executor`
+  once, so there is no longer a second statement for an `await` to land
+  between.
 
   **`_derive()` stays a method on `Stream`**, explicitly rather than by default.
   Moving it beside `execution.py`'s `_wrap_sink`/`_copy_into`/`stream_through`

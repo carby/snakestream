@@ -112,15 +112,19 @@ class Stream(Generic[T]):
         if self._consumed:
             raise IllegalStateException("this stream has already been extended into a new instance")
 
-    def _derive(self, op: Op | None = None) -> Stream[Any]:
+    def _derive(self, op: Op | None = None, executor: Executor | None = None) -> Stream[Any]:
         """A new stream over the same source, carrying this stream's chain plus
-        `op`, under the same executor, consuming this one. The
-        chain-extension rule lives here and nowhere else. Called with no op it
-        is a plain copy, which is what a mode switch derives from."""
+        `op`, under `executor`, consuming this one. Both derivation rules live
+        here and nowhere else. Called with no op it is a plain copy, which is
+        what a mode switch derives from - and on that no-op path the chain
+        passes through by identity rather than being copied, safe only because
+        the receiver is consumed on the way out and chains are only ever
+        extended by copy. Called with no executor the receiver's carries
+        over."""
         self._check_not_consumed()
         new_stream = type(self)(self._source, self._close_handlers)
         new_stream._chain = [*self._chain, op] if op is not None else self._chain
-        new_stream._executor = self._executor
+        new_stream._executor = executor or self._executor
         self._consumed = True
         return new_stream
 
@@ -132,11 +136,7 @@ class Stream(Generic[T]):
         return await (executor or self._executor).value(self._chain, self._source, terminal)
 
     def sequential(self) -> Stream[T]:
-        """This pipeline under SEQUENTIAL: a new stream over the SAME source and
-        the SAME queued chain, differing only in its executor, consuming this
-        one. The chain carrying over unchanged is also what carries the ordering
-        characteristic over - _is_ordered() folds it from there, so there is no
-        ordering state for this to copy.
+        """This pipeline under SEQUENTIAL.
 
         A mode switch must not compose - _derive() does not, and composing here
         is what made `.parallel()` position-dependent, freezing ops queued
@@ -145,19 +145,14 @@ class Stream(Generic[T]):
         appears.
 
         It must not assign onto self and return self either, however tempting -
-        and the body below is one line away from doing exactly that:
         pipeline-immutability requires the receiver be invalidated, and an
         in-place flip would leave it usable."""
-        derived = self._derive()
-        derived._executor = SEQUENTIAL
-        return derived
+        return self._derive(executor=SEQUENTIAL)
 
     def parallel(self) -> Stream[T]:
         """This pipeline under RACING; see sequential(), which carries the rules
         both mode switches obey."""
-        derived = self._derive()
-        derived._executor = RACING
-        return derived
+        return self._derive(executor=RACING)
 
     def iterator(self) -> AsyncGenerator[T, None]:
         self._check_not_consumed()
