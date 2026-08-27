@@ -1,6 +1,6 @@
 ## Purpose
 
-Defines the contract for turning a `Stream`'s queued chain of intermediate-operation closures into an executable pipeline via `_compose()` (and the `_wrap_sink()`/`_parallel()` helpers it uses). Covers two guarantees: that composing a chain never consumes or mutates it, so a stream can be composed and re-composed across multiple terminal operations; and that stateful intermediate operations (`distinct()`, `limit()`) start with fresh state on each composition rather than leaking state from a prior run, under both `SEQUENTIAL` execution and `RACING` execution (where state must additionally stay globally correct across racing branches within one composition).
+Defines the contract for turning a `Stream`'s queued chain of intermediate-operation closures into an executable pipeline via the executor's element-producing operation (and the `_wrap_sink()` helper it uses). Covers two guarantees: that composing a chain never consumes or mutates it, so a stream can be composed and re-composed across multiple terminal operations; and that stateful intermediate operations (`distinct()`, `limit()`) start with fresh state on each composition rather than leaking state from a prior run, under both `SEQUENTIAL` execution and `RACING` execution (where state must additionally stay globally correct across racing branches within one composition).
 
 ## Requirements
 
@@ -16,7 +16,7 @@ Because composition never mutates the chain, it SHALL NOT be necessary to defens
 - **THEN** the second call composes against the same chain of intermediate operations as the first call, rather than against an empty or partially-emptied chain
 
 #### Scenario: Chain length unaffected by composition
-- **WHEN** a `Stream` has one or more intermediate operations queued and `_compose()` is called any number of times
+- **WHEN** a `Stream` has one or more intermediate operations queued and the executor's element-producing operation is invoked any number of times (directly, or via `iterator()`, or via a terminal operation)
 - **THEN** `len(self._chain)` after each call equals `len(self._chain)` before that call
 
 #### Scenario: Sequential and parallel composition behave consistently
@@ -208,7 +208,7 @@ it has fewer.
 
 ### Requirement: Building a composed pipeline does not recurse per chained operation
 
-`Stream._compose()` (and the `_wrap_sink()` helper it uses to link the sink chain) SHALL build the executable pipeline without recursing once per queued intermediate operation. Building (as opposed to consuming) a chain of intermediate operations SHALL NOT fail with `RecursionError` regardless of how many operations are queued, up to ordinary Python list-size limits.
+The executor's element-producing operation (and the `_wrap_sink()` helper it uses to link the sink chain) SHALL build the executable pipeline without recursing once per queued intermediate operation. Building (as opposed to consuming) a chain of intermediate operations SHALL NOT fail with `RecursionError` regardless of how many operations are queued, up to ordinary Python list-size limits.
 
 Note: this requirement covers only the build-time traversal that links the sink chain. It does not cover recursion that occurs while *consuming* the composed pipeline: each intermediate sink's `accept()` calls `downstream.accept()`, so pushing one element through a chain of *k* operations is O(k) stack-deep. That is a separate concern, not addressed by this requirement, and is unchanged by the push-based redesign — the same O(k) per-element depth existed under the previous `async for`/`__anext__()` delegation model, and Java's own `Sink.ChainedReference` has it too.
 
