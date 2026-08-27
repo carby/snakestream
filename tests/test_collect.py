@@ -2,8 +2,8 @@ from collections.abc import AsyncGenerator
 import pytest
 
 from snakestream import Stream
-from snakestream.collector import to_generator
-from snakestream.collectors import to_list
+from snakestream.collector import Characteristics, to_generator
+from snakestream.collectors import joining, to_list, to_set
 
 
 async def async_generator() -> AsyncGenerator:
@@ -180,3 +180,21 @@ async def test_collect_supplier_accumulator_combiner_parallel_never_calls_combin
     # then
     assert sorted(it) == [1, 2, 3, 4, 5]
     assert combiner_calls == []
+
+
+def test_to_set_reports_unordered() -> None:
+    assert to_set().characteristics == frozenset({Characteristics.UNORDERED})
+
+
+def test_to_list_and_joining_do_not_report_unordered() -> None:
+    assert Characteristics.UNORDERED not in to_list().characteristics
+    assert Characteristics.UNORDERED not in joining().characteristics
+
+
+@pytest.mark.asyncio
+async def test_to_set_declaration_matches_behaviour_across_orderings() -> None:
+    # when
+    forward = await Stream.of([1, 2, 3]).collect(to_set())
+    backward = await Stream.of([3, 2, 1]).collect(to_set())
+    # then
+    assert forward == backward

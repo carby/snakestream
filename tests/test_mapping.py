@@ -1,6 +1,7 @@
 import pytest
 
-from snakestream.collectors import counting, mapping, summing_int, to_list
+from snakestream.collector import Characteristics
+from snakestream.collectors import counting, mapping, summing_int, to_list, to_set
 from snakestream.exception import StreamBuildException
 from snakestream.stream import Stream
 
@@ -61,3 +62,15 @@ async def test_mapping_rejects_non_collector_downstream() -> None:
 
     with pytest.raises(StreamBuildException):
         mapping(len, not_a_collector)
+
+
+def test_mapping_into_unordered_downstream_is_unordered() -> None:
+    assert Characteristics.UNORDERED in mapping(len, to_set()).characteristics
+
+
+def test_mapping_into_ordered_downstream_is_not_unordered() -> None:
+    assert Characteristics.UNORDERED not in mapping(len, to_list()).characteristics
+
+
+def test_nested_mapping_derives_through_both_levels() -> None:
+    assert Characteristics.UNORDERED in mapping(len, mapping(str, to_set())).characteristics

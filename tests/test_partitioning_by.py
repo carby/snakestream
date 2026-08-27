@@ -2,7 +2,8 @@ import asyncio
 
 import pytest
 
-from snakestream.collectors import counting, partitioning_by
+from snakestream.collector import Characteristics
+from snakestream.collectors import counting, partitioning_by, to_set
 from snakestream.stream import Stream
 
 
@@ -62,3 +63,7 @@ async def test_partitioning_by_downstream_runs_on_empty_partition() -> None:
 
     # then
     assert result == {True: 0, False: 3}
+
+
+def test_partitioning_by_does_not_report_unordered_even_with_unordered_downstream() -> None:
+    assert Characteristics.UNORDERED not in partitioning_by(lambda x: x % 2 == 0, to_set()).characteristics
