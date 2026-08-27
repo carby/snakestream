@@ -19,136 +19,141 @@ value rather than a class hierarchy, `summing_int`/`summing_long` sharing a body
 **All four of the originally queued changes have landed.** Opened 2026-08-26:
 `collapse-derive-wrappers`, `order-stateful-ops-under-racing`,
 `collapse-compose-into-iterator`, and `add-comparator-comparing` are all in
-**Done**. Nothing is currently queued here; see **Next** for what is already
-staged and sequenced.
+**Done**. What is here now is the two changes **Next**'s fleshing-out produced,
+plus six questions the roadmap has been implying without ever writing down.
 
-**Also still open, and still needing an explicit call: `ExceptionGroup` in
-`Stream.close()`** — see the note below, unchanged.
+### Queued changes
 
-**Previously here, now landed.** Both stories of the second 2026-08-25 batch
-are done; each is written up in **Done**. The pair bundled the thirteen findings
-of a second legibility, structure and stdlib-usage read of all twelve modules
-in `src/snakestream/` (2026-08-25, at `651f734`), and the sequencing paid out
-as intended — story 1 moved roughly four fifths of `collector.py` into
-`collectors.py`, and three of story 2's findings sat in the lines that moved.
+Run them in this order. The dependency is real, not preference: the second
+reads the characteristic the first ships.
 
-The read deliberately started from the **Done** rejection log, so nothing in
-either story re-proposed the three measured rejections — the `CallSite`
-dispatch wrapper, collapsing `min`/`max`/`count`/`reduce` onto their
-collectors, or deduplicating the bridge-buffer flush.
+| # | Change | State | What it is |
+|---|---|---|---|
+| 1 | `add-collector-characteristics` | **Planning complete** — proposal, 4 delta specs, design and tasks all written; `openspec validate --strict` passes. Ready to apply. | Gives `Collector` its Java `Characteristics`, `UNORDERED` only. Matches OpenJDK's assignments exactly: `to_set()` declares it, `mapping()`/`collecting_and_then()` derive from downstream, everything else stays unmarked. **Ships inert** — nothing reads it until change 2 — which is stated in the proposal, in the code comments its tasks require, and in README, so it is not mistaken for dead code. Was **Next**'s item 4. |
+| 2 | `order-racing-delivery` | **Proposal only.** Needs specs, design, tasks. | An ordered racing pipeline delivers in encounter order. **BREAKING.** Was **Next**'s item 1, and the detail that used to sit here is now in its proposal. |
 
-**Still open, and still needing an explicit call: `ExceptionGroup` in
-`Stream.close()`.** Raised by the same read and deliberately not made a story.
-`close()` collects every handler exception, raises the first, and attaches the
-rest via `add_note()` on 3.11+. `ExceptionGroup` is the built-in for exactly
-this and would make the other failures programmatically catchable rather than
-merely readable. It is parked because it re-opens a decision taken hours
-earlier in story 2(c) of the previous batch, and because the rule it would
-change is pinned in two places: the `stream-close-handling` spec
-("Requirement: `close()` invokes every registered close handler", spec line 23)
-and `tests/test_close.py`'s
-`test_close_with_multiple_raising_handlers_runs_all_and_raises_first`. It would
-also need a `sys.version_info >= (3, 11)` fork, since 3.10 is the floor and has
-no `ExceptionGroup`. Story 2 has now added a third pin: that loop carries a
-`noqa: PERF203` whose stated reason is the run-every-handler contract. Belongs
-in **Later** if the answer is "not now".
+**What change 2 settled that the roadmap had left open**, recorded here because
+it is the reasoning, not the code, that took the time:
 
+- **The policy was never actually open.** The guiding principle at the top of
+  this file already decides it — a divergence in observable API behaviour is a
+  defect — and `.parallel().map(f).collect(to_list())` returning a scrambled
+  list is one. So "racing does not preserve encounter order" is the defect, and
+  the accidental in-order delivery behind a barrier is the code drifting toward
+  the right answer.
+- **The barrier goes at `len(chain)`, not at index 0.** At index 0 the head is
+  empty and the whole chain lands in the ordered tail, i.e. effectively
+  sequential. At the end, every branch races the whole chain and only delivery
+  is reordered — Java's shape, and no per-element concurrency lost. This is the
+  distinction that makes B affordable rather than ruinous.
+- **`_resume_point()` is replaced, not tuned, and that is a concurrency
+  *gain*.** Its docstring says an ordered tail resumes racing only at an
+  explicit `unordered()` because racing an order-blind suffix would scramble
+  delivery. Once delivery is reordered at the terminal, that reason is gone:
+  the barrier op runs one ordered pass and everything after it races.
+  `.limit(n).map(fetch)` gets its concurrency back — the case this item was
+  opened on. A gain and a cost land in the same change, which the benchmarking
+  has to separate.
+
+### Open questions needing a session
+
+None is a defect report and none is queued. Each is something the roadmap, the
+README or a just-landed change has been implying without ever stating, found
+while fleshing out **Next** on 2026-08-27. Ordered by how ready they are.
+
+**1. `Comparator.thenComparing()` — the precondition just landed.** README
+(line 177) records it as "Not yet. Genuinely useful and cheap to add once the
+unwrapping mechanism `comparing()` establishes exists, but its composition
+rules deserve their own design pass rather than riding along here."
+`add-comparator-comparing` has landed, so the "once" is satisfied and only the
+design pass is outstanding. The pass has to answer how a chained comparator
+survives `sort()`'s `_KeyComparator` unwrapping — the fast path extracts one
+key per element, and a chain has several — and whether the tuple-key workaround
+the README offers stays the recommendation for the sync case.
+
+**2. `ExceptionGroup` in `Stream.close()` — parked since 2026-08-25 and still
+needing a yes or no.** `close()` collects every handler exception, raises the
+first, and attaches the rest via `add_note()` on 3.11+. `ExceptionGroup` is the
+built-in for exactly this and would make the other failures programmatically
+catchable rather than merely readable. Parked because it re-opens a decision
+taken hours earlier in story 2(c), and because the rule it would change is
+pinned in three places: the `stream-close-handling` spec ("Requirement:
+`close()` invokes every registered close handler"), `tests/test_close.py`'s
+`test_close_with_multiple_raising_handlers_runs_all_and_raises_first`, and the
+`noqa: PERF203` on that loop whose stated reason is the run-every-handler
+contract. It would also need a `sys.version_info >= (3, 11)` fork, since 3.10
+is the floor. **Belongs in Later if the answer is "not now" — but it needs an
+answer rather than another deferral**, this being the third batch it has sat
+through.
+
+**3. `.parallel().min()` / `.max()` tie-breaking is an unspecified divergence
+today.** `comparator-contract` requires first-of-tied-elements-wins, and
+`is_new_extremum()` implements it by keeping the earlier element. Under racing,
+"earlier" means earliest to *arrive*, not earliest in encounter order, so which
+of two equal-comparing distinguishable elements is returned is currently
+arbitrary — where Java's parallel `min()` reduces with `BinaryOperator.minBy`
+and keeps the first in encounter order. No spec says either way. Found
+2026-08-27 while re-reading `comparator.py`. `order-racing-delivery` fixes it as
+a side effect, since `min`/`max` land in the order-observing column of its
+terminal table — but it needs a scenario either way, and if that change is
+deferred this is a standing divergence with no test.
+
+**4. Marking the collectors Java leaves unmarked — deferred twice now.**
+`counting()`, `summing_*()`, `averaging_*()`, `summarizing_*()`, `to_map()`,
+`grouping_by()` and `partitioning_by()` are order-blind in fact but `CH_ID` /
+`CH_NOID` in OpenJDK, because Java's `UNORDERED` governs its combine strategy
+where an associative reduction is safe either way and the mark buys nothing.
+After `order-racing-delivery` the mark *would* buy something here — skipping the
+delivery barrier. `add-collector-characteristics` handed the question to
+`order-racing-delivery`, which hands it on again so it can land at parity and
+be measured first. **That is two deferrals; the third has to come with a
+benchmark or the answer is no.** `min_by`/`max_by` are excluded regardless, for
+the reason in item 3 above.
+
+**5. Enumerate the remaining Java-8 parity gaps, once, concretely.** Three
+places in this file offer "the Java-8 parity gaps README still tracks as
+unimplemented" as a refill source for **Next**, and none of them says what they
+are. README's tables mark most absent methods as deliberately-skipped with a
+reason; the genuinely-not-yet set is small and unlisted. Listing it once would
+turn a vague refill source into a real queue, and would show whether Java-8
+parity is close enough to start the Java 9 work **Later** gates on exactly that
+question.
+
+**6. Repo hygiene: a stray `</content>` closing tag sits at the end of three
+main specs** — `openspec/specs/stream-iterate/spec.md`,
+`collector-to-map/spec.md` and `collector-to-set/spec.md`. Committed, harmless
+to the parser, and clearly an artifact of however those files were first
+written. A one-line fix, listed here only so it is not rediscovered a fourth
+time.
 
 ## Next
 
-**Four items, three of them fallout from `order-stateful-ops-under-racing`**
-(see **Done**), added 2026-08-26 and fleshed out 2026-08-27. None is a defect;
-each is a decision that change deliberately declined to take while it was
-fixing a wrong answer. The fleshing-out found that they are not independent —
-item 1 decides a policy, item 2 shrinks to about half its size once item 1
-lands, item 3's answer flips with item 1's, and item 4 is a Java-parity gap
-item 1 turned out to need.
+**Two items left of the four, both fallout from
+`order-stateful-ops-under-racing`** (see **Done**), added 2026-08-26 and
+fleshed out 2026-08-27. None is a defect; each is a decision that change
+deliberately declined to take while it was fixing a wrong answer.
 
-**The seam that connects them.** `_split_point()` only ever inspects *ops*. A
-terminal has no way to declare that it needs encounter order, which is why the
-two that need it opt out of racing altogether by naming `SEQUENTIAL` at their
-own call site. That one missing concept — an ordering demand that originates at
-the terminal rather than in the chain — is item 2's whole content and is also
-the mechanism item 1 needs.
+**Items 1 and 4 have moved to Now** as the changes `order-racing-delivery` and
+`add-collector-characteristics`. **The numbering here is deliberately not
+compacted** — the two proposals cite "the roadmap's **Next** item 2" and "item
+3", and renumbering would silently break those references. Items 2 and 3 keep
+their numbers for as long as anything points at them.
+
+**The seam that connects all four.** `_split_point()` only ever inspects *ops*.
+A terminal has no way to declare that it needs encounter order, which is why
+the two that need it opt out of racing altogether by naming `SEQUENTIAL` at
+their own call site. That one missing concept — an ordering demand originating
+at the terminal rather than in the chain — is item 2's whole content and is
+also the mechanism item 1 needed.
 
 | | where the ordering demand comes from | how it is handled today |
 |---|---|---|
 | an op in the chain | `sorted`, `limit`, `skip`, `distinct` | `_split_point()` |
 | the terminal | `find_first`, `for_each_ordered`, `collect(to_list)`, `iterator()` | not modelled at all |
 
-**Do these in order: 4, then 1, then 2, then 3.** Item 4 first because item 1
-needs it and it is independently justified by parity; the structural change
-ahead of the item that rebases onto it is the sequencing that paid out twice
-already (see **Now**'s notes).
-
----
-
-**1. An ordered racing pipeline delivers in encounter order. Decided
-2026-08-27: option B below.** Today the tail downstream of a barrier resumes
-racing only at an explicit `unordered()`, and whether a pipeline delivers in
-order depends on whether a barrier happens to exist upstream:
-
-```
-  .parallel().map(f).collect()                 -> scrambled
-  .parallel().sorted(c).map(f).collect()       -> in order   (accidentally)
-  .parallel().limit(8).map(f).collect()        -> in order   (accidentally)
-  .parallel().unordered().limit(8).map(f)      -> scrambled
-```
-
-The roadmap previously framed this as an open policy question with three
-irreconcilable facts. It is not open: **the guiding principle at the top of
-this file already decides it.** "A divergence from Java's internals is not a
-defect; a divergence in observable API behaviour is." `.parallel().map(f)
-.collect(to_list())` returning a scrambled list *is* an observable divergence
-from Java. So the seam is not the bug — **"racing does not preserve encounter
-order" is the bug**, and the accidental in-order delivery behind a barrier is
-the code drifting toward the right answer.
-
-The three candidates and why B won:
-
-| | Rule | Verdict |
-|---|---|---|
-| A | Racing never promises delivery order; race the order-blind suffix aggressively | Rejected. `.parallel().sorted(c).collect()` could return unsorted, and it is *still* seam-y — a bare `sorted()` with no tail ops comes out ordered by accident anyway |
-| B | An ordered racing pipeline delivers in encounter order, Java's rule; `unordered()` is how a caller buys today's behaviour back | **Chosen.** Consistent with the guiding principle, and `unordered()` being the more performant form is what a caller would expect anyway |
-| C | Keep the status quo and document the seam | Rejected. The seam is exactly what a caller cannot reason about |
-
-**The mechanical objection to B, and why it dissolves.** "Ordered racing
-pipeline reorders" sounds like splitting at index 0, which would serialise
-everything — with an empty head the whole chain lands in the ordered *tail*.
-But the demand belongs at the **terminal**, i.e. a split at `len(chain)`:
-
-```
-  split at 0 (naive)                    split at len(chain) (right)
-  ---------------------                 ----------------------------
-  src - reorder -[map f]---> out        src -+[map f]+
-        ^ nothing races                      +[map f]+- reorder -> out
-        (effectively sequential)             +[map f]+   ^
-                                             +[map f]+   only delivery is ordered
-                                             full concurrency, Java's shape
-```
-
-Workers compute concurrently and results are assembled in order — which is
-precisely the mechanism item 2 needs, and is why **item 1 subsumes item 2**.
-
-**Where the real work is: not every terminal observes order.** Forcing
-`count()` to pay head-of-line blocking would be absurd. The default is **order
-demanded unless the terminal opts out**, which is Java's default too:
-
-| demands order at delivery | opts out |
-|---|---|
-| `collect(to_list)`, `collect(joining)` | `collect(to_set)` — the *only* factory whose Java counterpart is marked `UNORDERED` |
-| `to_array()`, `iterator()` | `count` |
-| | `grouping_by`, `partitioning_by`, `to_map`, `counting`, `summing_*`, `averaging_*`, `summarizing_*` are order-blind in fact but **unmarked in Java** (`CH_ID`/`CH_NOID`) — Java's `UNORDERED` governs its combine strategy, where the mark buys nothing; here it would buy skipping the barrier. Divergence to weigh, deliberately left to this item by `add-collector-characteristics` |
-| `min`, `max`, `min_by`, `max_by` — `is_new_extremum()` keeps the **earlier** element on a tie, so which of two equal elements is returned is an encounter-order question | |
-| `reduce` / `collect(supplier, accumulator, combiner)` — a non-commutative accumulator is order-sensitive in Java | `all_match` / `any_match` / `none_match`, `for_each`, `find_any` |
-| `for_each_ordered` (when ordered), `find_first` (always) | |
-
-The opt-out is what item 4 exists to express. Do not start by writing
-`_resume_point()`'s replacement; start by writing the requirement. What moves
-with the answer: the `racing-encounter-order` capability's `sorted()` scenario,
-`CLAUDE.md`'s ordering claim, and the "racing does not preserve encounter
-order" statement wherever it appears. It is a behaviour break for anyone
-relying on today's `.parallel().map(f)`, so it belongs in the migration log.
+**Both remaining items are blocked on `order-racing-delivery`**, which is why
+they are here and it is in **Now**. Item 2 shrinks to about half its size once
+that lands; item 3's answer flips with it.
 
 ---
 
@@ -179,10 +184,10 @@ are its only callers), the `SEQUENTIAL` name in `stream.py` outside
 `sequential()` itself, and `Stream._is_ordered()` — `for_each_ordered()` is its
 sole caller, and `_split_point()` reaches the `sink.py` fold directly.
 
-**Two corrections to how this item was first written.** First, **item 1 shrinks
-it**: once an ordered racing pipeline reorders at delivery, `for_each_ordered()`
+**Two corrections to how this item was first written.** First,
+**`order-racing-delivery` shrinks it**: once an ordered racing pipeline reorders at delivery, `for_each_ordered()`
 needs no special case at all — it is ordered because the pipeline is — and
-`find_first()` reduces to the single unconditional demand. Do item 1 first and
+`find_first()` reduces to the single unconditional demand. Do `order-racing-delivery` first and
 this becomes about half the change. Second, **the "`find_first()` keeps its
 concurrency" claim should not go into the proposal unmeasured.** Sequential
 `find_first()` pulls exactly one element and runs the chain on it, which is
@@ -202,49 +207,26 @@ The simplification case stands on the deletions alone either way.
 
 ---
 
-**3. Export `_READ_AHEAD` — now blocked on item 1, and its answer flips with
-item 1's.** Previously "revisit only on a concrete report", which was right
+**3. Export `_READ_AHEAD` — blocked on `order-racing-delivery` (was item 1,
+now in **Now**), and its answer flips with it.** Previously "revisit only on a concrete report", which was right
 while the constant bound only the narrow set of pipelines that happen to
-contain a barrier. Under item 1 as B it becomes the throughput/memory knob for
+contain a barrier. Under `order-racing-delivery` it becomes the throughput/memory knob for
 *every* ordered parallel pipeline, and the concrete report arrives by
 construction rather than by someone hitting the trade-off in anger.
 
-- If item 1 lands as B: export it, rename it for what it then means (it stops
+- If `order-racing-delivery` lands: export it, rename it for what it then means (it stops
   being read-ahead and becomes the ordered-delivery buffer bound), and give it
   a spec — the same reasoning that makes `PROCESSES` public.
-- If item 1 is somehow revisited to C: it stays private, unchanged, and the
-  original "only on a concrete report" rule applies.
+- If it is abandoned: `_READ_AHEAD` stays private, unchanged, and the original
+  "only on a concrete report" rule applies.
 
 The measured read-ahead/latency curve is in the constant's comment and does not
 move either way.
 
----
-
-**4. Give `Collector` its Java `Characteristics`, starting with `UNORDERED`.**
-Java's `Collector` carries a characteristics set; snakestream's is a bare
-four-callable quadruple with none. That is an existing Java-parity gap on the
-public surface, and item 1 needs it: `UNORDERED` is how `to_set()`,
-`grouping_by()` and `counting()` say they do not need encounter order at
-delivery while `to_list()` and `joining()` do.
-
-Split out from item 1 rather than folded into it, deliberately: it is
-independently justified by parity, it keeps item 1 about ordering, and it
-touches a different set of files — the `Collector` type in `collector.py` plus
-the ~20 factories in `collectors.py`, against item 1's `execution.py`. Folding
-them would make one change that spans the whole library.
-
-**Settled 2026-08-27: `UNORDERED` alone**, with the enum shaped to admit the
-others. `IDENTITY_FINISH` is inferable from `finisher is None` and would be a
-second way to state one fact; `CONCURRENT` is meaningless until real
-partitioned execution exists (see **Later**). Proposal written at
-`openspec/changes/add-collector-characteristics`; it matches Java's
-assignments exactly (`to_set()` only, plus derivation through `mapping()` and
-`collecting_and_then()`) and leaves the mark-what-Java-leaves-unmarked
-question to item 1, per the second row of item 1's table above.
-
-Also available to refill from: the deferred `ExceptionGroup` question in
-**Now**'s notes if it gets a yes, or the Java-8 parity gaps README still tracks
-as unimplemented.
+Refill from **Now**'s open questions, which is where the loose ends now live —
+`thenComparing()` is the readiest of them, and question 5 exists to turn "the
+Java-8 parity gaps README tracks as unimplemented" into an actual list rather
+than the vague refill source this line used to be.
 
 
 ## Later
