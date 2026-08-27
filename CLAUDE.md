@@ -77,8 +77,15 @@ The split is internal. It is not a third executor, is not selectable, and `is_pa
 
 `collect(collector)` (a terminal op) takes a `Collector` — Java's
 `Collector<T,A,R>`: a `supplier`/`accumulator`/`combiner`/`finisher` quadruple,
-each part sync or async — and drives the composed chain into a `_CollectorSink`
-built from it. The two halves live in two modules, on Java's own naming:
+each part sync or async, plus a `characteristics` frozenset (data, not a
+callable, so it is neither invoked nor awaited) mirroring Java's
+`Collector.Characteristics` — and drives the composed chain into a
+`_CollectorSink` built from it. `Characteristics` ships one member,
+`UNORDERED`, declared by `to_set()` and derived by `mapping()`/
+`collecting_and_then()` from their downstream; nothing reads it yet, and it
+exists as the prerequisite an ordered-racing change (see roadmap.md) will read
+to skip a reorder barrier for collectors that don't need it. The two halves
+live in two modules, on Java's own naming:
 `collector.py` holds the *protocol* (`Collector`, `_CollectorSink`,
 `StreamingCollector`, `to_generator`), and `collectors.py` holds the ~20
 *factories* (`to_list()`, `to_set()`, `counting()`, `grouping_by()`, ...).

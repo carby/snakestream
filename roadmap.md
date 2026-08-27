@@ -16,30 +16,26 @@ value rather than a class hierarchy, `summing_int`/`summing_long` sharing a body
 
 ## Now
 
-**All four of the originally queued changes have landed.** Opened 2026-08-26:
-`collapse-derive-wrappers`, `order-stateful-ops-under-racing`,
-`collapse-compose-into-iterator`, and `add-comparator-comparing` are all in
-**Done**. What is here now is the two changes **Next**'s fleshing-out produced,
-plus `unify-derive-signature` (opened 2026-08-27, out of an exploration of
-`_derive()`'s two call shapes) and seven questions the roadmap has been implying
-without ever writing down.
+**Opened 2026-08-26:** `collapse-derive-wrappers`,
+`order-stateful-ops-under-racing`, `collapse-compose-into-iterator`, and
+`add-comparator-comparing` are all in **Done**. **`add-collector-characteristics`**
+(2026-08-27) has landed too — see **Done**. What is left here is the remaining
+two changes **Next**'s fleshing-out produced, plus `unify-derive-signature`
+(opened 2026-08-27, out of an exploration of `_derive()`'s two call shapes)
+and seven questions the roadmap has been implying without ever writing down.
 
 ### Queued changes
 
-Run them in this order. One dependency in the list is real rather than
-preference: `order-racing-delivery` reads the characteristic
-`add-collector-characteristics` ships, so it cannot go first.
-`unify-derive-signature` is independent of both and is slotted between them
-only because it is small, self-contained, and touches a file neither of the
-others does.
+Run them in this order. `unify-derive-signature` is independent of
+`order-racing-delivery` and is slotted first only because it is small,
+self-contained, and touches a file the other does not.
 
 | # | Change | State | What it is |
 |---|---|---|---|
-| 1 | `add-collector-characteristics` | **Planning complete** — proposal, 4 delta specs, design and tasks all written; `openspec validate --strict` passes. Ready to apply. | Gives `Collector` its Java `Characteristics`, `UNORDERED` only. Matches OpenJDK's assignments exactly: `to_set()` declares it, `mapping()`/`collecting_and_then()` derive from downstream, everything else stays unmarked. **Ships inert** — nothing reads it until `order-racing-delivery` — which is stated in the proposal, in the code comments its tasks require, and in README, so it is not mistaken for dead code. Was **Next**'s item 4. |
-| 2 | `unify-derive-signature` | **Proposal and tasks written**; specs opted out (`skip_specs: true`) and design deliberately skipped. `openspec validate` passes. Ready to apply. | Gives `Stream._derive()` an optional `executor` argument so the chain rule and the executor rule both live in it, collapsing `sequential()`/`parallel()` to one line each and removing the only place in `stream.py` where a method writes a private attribute of an object it does not own. Pure refactor, no behaviour change. Fourth pass over this cluster: its proposal records why it is not a revert of `collapse-derive-wrappers`, and its task list retires that change's now-unneeded tripwire about an `await` in `_derive()`. |
-| 3 | `order-racing-delivery` | **Proposal only.** Needs specs, design, tasks. | An ordered racing pipeline delivers in encounter order. **BREAKING.** Was **Next**'s item 1, and the detail that used to sit here is now in its proposal. |
+| 1 | `unify-derive-signature` | **Proposal and tasks written**; specs opted out (`skip_specs: true`) and design deliberately skipped. `openspec validate` passes. Ready to apply. | Gives `Stream._derive()` an optional `executor` argument so the chain rule and the executor rule both live in it, collapsing `sequential()`/`parallel()` to one line each and removing the only place in `stream.py` where a method writes a private attribute of an object it does not own. Pure refactor, no behaviour change. Fourth pass over this cluster: its proposal records why it is not a revert of `collapse-derive-wrappers`, and its task list retires that change's now-unneeded tripwire about an `await` in `_derive()`. |
+| 2 | `order-racing-delivery` | **Proposal only.** Needs specs, design, tasks. | An ordered racing pipeline delivers in encounter order. **BREAKING.** Was **Next**'s item 1, and the detail that used to sit here is now in its proposal. Reads the `Characteristics.UNORDERED` `add-collector-characteristics` shipped. |
 
-**What change 3 settled that the roadmap had left open**, recorded here because
+**What change 2 (`order-racing-delivery`) settled that the roadmap had left open**, recorded here because
 it is the reasoning, not the code, that took the time:
 
 - **The policy was never actually open.** The guiding principle at the top of
@@ -107,7 +103,13 @@ a side effect, since `min`/`max` land in the order-observing column of its
 terminal table — but it needs a scenario either way, and if that change is
 deferred this is a standing divergence with no test.
 
-**4. Marking the collectors Java leaves unmarked — deferred twice now.**
+**4. Marking the collectors Java leaves unmarked — deferred twice now, and `add-collector-characteristics` (landed) hands the question on again as designed.**
+`add-collector-characteristics` shipped `Characteristics`/`UNORDERED`,
+`to_set()` declaring it, and `mapping()`/`collecting_and_then()` deriving it —
+matching Java exactly, at parity, with nothing reading the field yet. The
+question below of whether to mark `counting()` and the rest, which parity
+deliberately left open, is unchanged and still `order-racing-delivery`'s to
+weigh with a benchmark:
 `counting()`, `summing_*()`, `averaging_*()`, `summarizing_*()`, `to_map()`,
 `grouping_by()` and `partitioning_by()` are order-blind in fact but `CH_ID` /
 `CH_NOID` in OpenJDK, because Java's `UNORDERED` governs its combine strategy
@@ -280,6 +282,24 @@ core semantic.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should instead be documented as intentional next to the `str`/`bytes` note. Surfaced 2026-08-20 in the same code-quality read that produced **Now** items 1-4. |
 
 ## Done
+
+- **`Collector` gains a `characteristics` frozenset and `Characteristics.UNORDERED`**
+  (2026-08-27). Matches OpenJDK's assignments exactly: `to_set()` declares it,
+  `mapping()`/`collecting_and_then()` derive it from their downstream, and
+  every other factory — `counting()`, `summing_*`, `averaging_*`,
+  `summarizing_*`, `to_map()`, `grouping_by()`, `partitioning_by()`,
+  `min_by`/`max_by` — stays unmarked, matching Java's own choice not this
+  library's judgment. `grouping_by()`/`partitioning_by()` take a downstream but
+  deliberately do not derive from it: the downstream's result is a map value,
+  not the collector's own result. The fifth constructor parameter defaults to
+  a shared empty `frozenset`, so every existing `Collector(...)` call, in this
+  library and in user code, is unaffected — additive, not breaking. **Ships
+  inert**: nothing reads the characteristic yet, and that is stated in the
+  code, the tests and the README rather than left implicit, so it does not
+  read as dead code. Was **Now**'s item 1 and **Next**'s item 4 before that.
+  `openspec validate --strict`, `ruff`, `ty check`, and `pytest
+  --cov-fail-under=98` (691 passed, 98.30%) all pass. See
+  `openspec/changes/archive/2026-08-27-add-collector-characteristics`.
 
 - **`comparing(key_extractor)` ported from Java's `Comparator.comparing`**
   (2026-08-27). `sorted()`, `min()`, `max()`, `min_by()` and `max_by()`
