@@ -27,6 +27,9 @@ Comparator = Callable[[T, T], int | Awaitable[int]]
 # The awaitable arm of Comparator, for the merge-sort path that reaches it
 # only after sort() has established the comparator returns awaitables.
 AsyncComparator = Callable[[T, T], Awaitable[int]]
+# Produces an ordering key for one element, not a comparison sign - the
+# argument to comparing().
+KeyExtractor = Callable[[T], Any | Awaitable[Any]]
 Consumer = Callable[[T], Awaitable[None] | None]
 CloseHandler = Callable[[], None]
 
