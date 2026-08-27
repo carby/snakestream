@@ -158,13 +158,53 @@ the next reader cannot tell "not yet" from "decided against".
 
 ## Open Questions
 
-- **Sequential extraction or `asyncio.gather`?** Gathering would overlap I/O for
-  an async extractor and could dominate the win for genuinely I/O-bound keys,
-  but it changes failure semantics (first error vs. all errors), memory profile,
-  and the order side effects are observed in. Safely deferrable: it is an
-  implementation detail behind a spec that only constrains the invocation
-  *count*, so it can be settled with a benchmark during implementation without
-  reopening the spec or the task breakdown.
 - **Does the key path want to be reused by `min`/`max`?** Named as a non-goal
   above; worth revisiting once the mechanism exists, and it changes nothing here
   if the answer is later yes.
+
+## Settled during implementation
+
+**Sequential extraction or `asyncio.gather`? Gather — measured, not assumed.**
+The question above was left open deliberately, and the mechanism `sort()`
+shipped with first was the sequential loop tasks.md's section 2 describes,
+with a one-time `isawaitable` safety net and explicitly no trial-comparison
+probe. Benchmarked against an `asyncio.gather` alternative before task 4.4's
+gate run, with an I/O-bound extractor (`await asyncio.sleep(0.001)` then
+return a value) - the shape a real async key extractor actually has, since a
+CPU-bound one gets nothing from being async:
+
+| n | sequential (best / median) | gathered (best / median) |
+|---|---|---|
+| 100 | 127.9ms / 133.2ms | 2.4ms / 3.8ms |
+| 1,000 | 1320.1ms / 1325.4ms | 7.0ms / 9.4ms |
+
+A sequential loop pays the full `n * latency` regardless of the extractor
+being async at all - it awaits one key, then the next, exactly as if `await`
+bought nothing. That is the concurrency the proposal's motivation is written
+around, and the sequential shape was throwing it away. Switched to
+`asyncio.gather()`, in both `sort.py`'s `_sort_by_key()` branches: the
+classified-async path gathers every element outright, and the one-time
+safety net becomes a trial call on the first element (the same shape as
+`sort()`'s own trial comparison) whose coroutine joins the gather instead of
+being discarded, so it costs no extra invocation - the invocation-count
+guarantee the spec makes is unaffected either way.
+
+**This reverses tasks.md 2.3's "do not add a trial-comparison probe" line.**
+That line was correct for the sequential shape it was written for: a loop
+always has an `await` point available, which is exactly what makes a probe
+unnecessary there. It does not hold for `asyncio.gather`, which must build
+every coroutine before awaiting any of them - there is no per-element `await`
+to fall back into, so recovering the first element's already-produced
+coroutine via a trial call (rather than discarding it and calling the
+extractor again) is what keeps the invocation count at exactly n. Recorded
+here rather than silently overwritten, on this project's rule that a
+superseded decision is annotated, not erased.
+
+**Accepted trade-offs, not reconsidered:** `asyncio.gather()`'s default
+failure semantics apply - the first exception raised wins and the rest of the
+gather is not awaited further, rather than every element being attempted in
+encounter order until one fails. Memory profile also changes: every
+element's key coroutine exists concurrently rather than one at a time. Both
+were named as the risk in the original open question and are accepted for
+the same reason the proposal exists at all - an async key extractor's value
+is entirely in not serializing its awaits.

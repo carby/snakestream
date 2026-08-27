@@ -16,53 +16,11 @@ value rather than a class hierarchy, `summing_int`/`summing_long` sharing a body
 
 ## Now
 
-**One of the original four queued changes remains.** Opened 2026-08-26; items
-1-3 of the original four — `collapse-derive-wrappers`,
-`order-stateful-ops-under-racing`, and `collapse-compose-into-iterator` — have
-all landed and are in **Done**.
-
-| # | Change | What it is | Why in this position |
-|---|---|---|---|
-| 1 | `add-comparator-comparing` | Ports Java's `Comparator.comparing()` key extractors. Measured 6.8-8.8x on sync comparators, 4.8-5.4x on async, where it also collapses O(n log n) interleaved awaits into O(n) gathered up front. | New public API and a performance win, so it yielded to the correctness items that redesigned how the op it sorts through is executed and reached. Both have landed and settled *where* a sort runs and *how* a stream is composed, leaving this one *how* a comparison is made. Nothing in it is blocked; it was last on value ordering, not on dependency. |
-
-**What it inherits.**
-
-- **Rebases onto the collapsed copier and onto the barrier.** The nine
-  intermediate ops read `self._derive(_SomeOp(...))` as of
-  `collapse-derive-wrappers`, and `order-stateful-ops-under-racing` left those
-  lines alone — it landed entirely in `execution.py` and `sink.py`, so this
-  item's `sorted()` signature change is a clean one-file rebase.
-- **The `sorted()` seam is half-settled, and this item must not re-litigate
-  the settled half.** `order-stateful-ops-under-racing` decided *where* a sort
-  runs: `_SortedOp` stays a `StatelessOp`, and rather than forcing a single
-  flight the way `for_each_ordered()` does, it declares `Ordering.SET` and the
-  racing executor splits the chain there — head raced, tail ordered. This item
-  decides only *how* a comparison is made: key extraction reaching `list.sort`
-  versus `cmp_to_key`, and which of those the hand-rolled `merge_sort` in
-  `sort.py` is still needed for. A key extractor changes what `_SortedSink.end()`
-  does, not where it runs, so the split rule is untouched by it — but the
-  key-extractor path must keep `_SortedOp.ordering = Ordering.SET`, which is
-  what makes a sort a split point at all.
-- **`_compose()` is gone.** `collapse-compose-into-iterator` deleted it;
-  `Stream.iterator()` is now the one place a chain becomes a generator. Nothing
-  in this item's design referenced `_compose()` by name, so there is nothing to
-  rebase here — noted only so a stale mental model doesn't creep back in.
-- **Re-check documentation tasks on landing.** Every change in this cycle has
-  carried tasks that correct `CLAUDE.md` and annotate **Done** entries here.
-  Stale prose is not cosmetic in this repo, and `collapse-derive-wrappers` was
-  the demonstration: it found three stale spots its own tasks had not named,
-  because the line numbers those tasks cited had drifted. Cite the sentence,
-  not the line. `collapse-compose-into-iterator` extended this to spec
-  `## Purpose` sections: a delta can't carry one for an existing capability, so
-  the hand-edit has to happen at archive time, off a task that names what to
-  drop rather than where.
-- **The ordering fold lives in `sink.py`, not on `Stream`.**
-  `order-stateful-ops-under-racing` moved it to a module-level
-  `is_ordered(chain, upto=None)` so `execution.py` could reach it, and reduced
-  `Stream._is_ordered()` to a one-line delegation. It is still a fold over the
-  chain, still never cached, and still private — what
-  `make-ordering-a-chain-characteristic` and `make-is-ordered-internal` each
-  established is intact. This item does not touch it.
+**All four of the originally queued changes have landed.** Opened 2026-08-26:
+`collapse-derive-wrappers`, `order-stateful-ops-under-racing`,
+`collapse-compose-into-iterator`, and `add-comparator-comparing` are all in
+**Done**. Nothing is currently queued here; see **Next** for what is already
+staged and sequenced.
 
 **Also still open, and still needing an explicit call: `ExceptionGroup` in
 `Stream.close()`** — see the note below, unchanged.
@@ -98,52 +56,196 @@ in **Later** if the answer is "not now".
 
 ## Next
 
-**Three items, all fallout from `order-stateful-ops-under-racing`** (see
-**Done**), added 2026-08-26. None is a defect; each is a decision that change
-deliberately declined to take while it was fixing a wrong answer.
+**Four items, three of them fallout from `order-stateful-ops-under-racing`**
+(see **Done**), added 2026-08-26 and fleshed out 2026-08-27. None is a defect;
+each is a decision that change deliberately declined to take while it was
+fixing a wrong answer. The fleshing-out found that they are not independent —
+item 1 decides a policy, item 2 shrinks to about half its size once item 1
+lands, item 3's answer flips with item 1's, and item 4 is a Java-parity gap
+item 1 turned out to need.
 
-**1. Decide what an ordered racing pipeline owes its terminal, then race the
-order-blind suffix.** Today the tail downstream of a barrier resumes racing
-only at an explicit `unordered()`. The `map` in `.limit(n).map(fetch)` needs no
-encounter order and could race, but racing it would scramble the order the
-pipeline *delivers* — and whether that is allowed is unsettled. Three facts
-that have to be reconciled before writing any code:
+**The seam that connects them.** `_split_point()` only ever inspects *ops*. A
+terminal has no way to declare that it needs encounter order, which is why the
+two that need it opt out of racing altogether by naming `SEQUENTIAL` at their
+own call site. That one missing concept — an ordering demand that originates at
+the terminal rather than in the chain — is item 2's whole content and is also
+the mechanism item 1 needs.
 
-- Snakestream's stated rule is that racing does not preserve encounter order,
-  and `.parallel().map(f)` does come out scrambled.
-- Java's ordered parallel streams *do* preserve encounter order into `collect`.
-- `order-stateful-ops-under-racing` made the answer accidentally depend on
-  whether a barrier happens to exist: `.parallel().sorted(c)` and
-  `.parallel().limit(8).map(f)` both now deliver in order, while
-  `.parallel().map(f)` does not.
+| | where the ordering demand comes from | how it is handled today |
+|---|---|---|
+| an op in the chain | `sorted`, `limit`, `skip`, `distinct` | `_split_point()` |
+| the terminal | `find_first`, `for_each_ordered`, `collect(to_list)`, `iterator()` | not modelled at all |
 
-The third is the real reason this is **Next** and not **Later**: it is a seam a
-caller cannot reason about, and it exists now whichever way the first two are
-resolved. The `racing-encounter-order` capability's `sorted()` scenario and
-`CLAUDE.md`'s ordering claim both move with the answer. Do not start by writing
-`_resume_point()`'s replacement; start by writing the requirement.
+**Do these in order: 4, then 1, then 2, then 3.** Item 4 first because item 1
+needs it and it is independently justified by parity; the structural change
+ahead of the item that rebases onto it is the sequencing that paid out twice
+already (see **Now**'s notes).
+
+---
+
+**1. An ordered racing pipeline delivers in encounter order. Decided
+2026-08-27: option B below.** Today the tail downstream of a barrier resumes
+racing only at an explicit `unordered()`, and whether a pipeline delivers in
+order depends on whether a barrier happens to exist upstream:
+
+```
+  .parallel().map(f).collect()                 -> scrambled
+  .parallel().sorted(c).map(f).collect()       -> in order   (accidentally)
+  .parallel().limit(8).map(f).collect()        -> in order   (accidentally)
+  .parallel().unordered().limit(8).map(f)      -> scrambled
+```
+
+The roadmap previously framed this as an open policy question with three
+irreconcilable facts. It is not open: **the guiding principle at the top of
+this file already decides it.** "A divergence from Java's internals is not a
+defect; a divergence in observable API behaviour is." `.parallel().map(f)
+.collect(to_list())` returning a scrambled list *is* an observable divergence
+from Java. So the seam is not the bug — **"racing does not preserve encounter
+order" is the bug**, and the accidental in-order delivery behind a barrier is
+the code drifting toward the right answer.
+
+The three candidates and why B won:
+
+| | Rule | Verdict |
+|---|---|---|
+| A | Racing never promises delivery order; race the order-blind suffix aggressively | Rejected. `.parallel().sorted(c).collect()` could return unsorted, and it is *still* seam-y — a bare `sorted()` with no tail ops comes out ordered by accident anyway |
+| B | An ordered racing pipeline delivers in encounter order, Java's rule; `unordered()` is how a caller buys today's behaviour back | **Chosen.** Consistent with the guiding principle, and `unordered()` being the more performant form is what a caller would expect anyway |
+| C | Keep the status quo and document the seam | Rejected. The seam is exactly what a caller cannot reason about |
+
+**The mechanical objection to B, and why it dissolves.** "Ordered racing
+pipeline reorders" sounds like splitting at index 0, which would serialise
+everything — with an empty head the whole chain lands in the ordered *tail*.
+But the demand belongs at the **terminal**, i.e. a split at `len(chain)`:
+
+```
+  split at 0 (naive)                    split at len(chain) (right)
+  ---------------------                 ----------------------------
+  src - reorder -[map f]---> out        src -+[map f]+
+        ^ nothing races                      +[map f]+- reorder -> out
+        (effectively sequential)             +[map f]+   ^
+                                             +[map f]+   only delivery is ordered
+                                             full concurrency, Java's shape
+```
+
+Workers compute concurrently and results are assembled in order — which is
+precisely the mechanism item 2 needs, and is why **item 1 subsumes item 2**.
+
+**Where the real work is: not every terminal observes order.** Forcing
+`count()` to pay head-of-line blocking would be absurd. The default is **order
+demanded unless the terminal opts out**, which is Java's default too:
+
+| demands order at delivery | opts out |
+|---|---|
+| `collect(to_list)`, `collect(joining)` | `collect(to_set)` — the *only* factory whose Java counterpart is marked `UNORDERED` |
+| `to_array()`, `iterator()` | `count` |
+| | `grouping_by`, `partitioning_by`, `to_map`, `counting`, `summing_*`, `averaging_*`, `summarizing_*` are order-blind in fact but **unmarked in Java** (`CH_ID`/`CH_NOID`) — Java's `UNORDERED` governs its combine strategy, where the mark buys nothing; here it would buy skipping the barrier. Divergence to weigh, deliberately left to this item by `add-collector-characteristics` |
+| `min`, `max`, `min_by`, `max_by` — `is_new_extremum()` keeps the **earlier** element on a tie, so which of two equal elements is returned is an encounter-order question | |
+| `reduce` / `collect(supplier, accumulator, combiner)` — a non-commutative accumulator is order-sensitive in Java | `all_match` / `any_match` / `none_match`, `for_each`, `find_any` |
+| `for_each_ordered` (when ordered), `find_first` (always) | |
+
+The opt-out is what item 4 exists to express. Do not start by writing
+`_resume_point()`'s replacement; start by writing the requirement. What moves
+with the answer: the `racing-encounter-order` capability's `sorted()` scenario,
+`CLAUDE.md`'s ordering claim, and the "racing does not preserve encounter
+order" statement wherever it appears. It is a behaviour break for anyone
+relying on today's `.parallel().map(f)`, so it belongs in the migration log.
+
+---
 
 **2. Collapse `find_first()` and `for_each_ordered()` onto the barrier.** Both
 name `SEQUENTIAL` at their own call site to get encounter order, which the
-barrier now provides while still racing everything upstream. That would replace
-four special cases with one mechanism and let `find_first()` on a parallel
-stream keep its concurrency. Scoped out of `order-stateful-ops-under-racing`
-deliberately: it was fixing a wrong answer, and this changes a right one.
-`find_first()`'s unconditional-`SEQUENTIAL` rule is now correctly spec'd (the
-`stream-execution-model` delta removed and replaced the requirement whose
-scenario the implementation had never followed), so this starts from a true
-statement of the current behaviour.
+barrier now provides while still racing everything upstream. Scoped out of
+`order-stateful-ops-under-racing` deliberately: it was fixing a wrong answer,
+and this changes a right one. `find_first()`'s unconditional-`SEQUENTIAL` rule
+is now correctly spec'd (the `stream-execution-model` delta removed and
+replaced the requirement whose scenario the implementation had never followed),
+so this starts from a true statement of the current behaviour.
 
-**3. Export `_READ_AHEAD` — only on a concrete report.** It is a module-level
-constant with no Java counterpart, and the tuning lever the spec gives a caller
-is `unordered()`. `PROCESSES` is exported because it names a real Java-side
-concept and is spec'd. Revisit if someone actually hits the head-of-line or
-over-pull trade-off in anger, not before; the measured curve is in the
-constant's comment.
+**The two clauses of `_split_point()` are already exactly these two terminals'
+rules**, which is the reason the collapse is available at all:
+
+| `_split_point` clause | op that uses it | terminal wanting the same rule |
+|---|---|---|
+| `Ordering.SET` — splits unconditionally, whatever the characteristic upstream | `sorted()` | `find_first()` — ordered regardless of `_is_ordered()` |
+| `order_sensitive` **and** ordered at that position | `limit`/`skip`/`distinct` | `for_each_ordered()` — `SEQUENTIAL if self._is_ordered()` |
+
+A terminal's demand can therefore be a trailing pseudo-op appended to the chain
+for the drive, and `_split_point()` is reused verbatim. There is precedent for
+a sink-less op: `_UnorderedOp` links to nothing and exists purely to declare a
+characteristic.
+
+**What disappears:** `_evaluate()`'s `executor` parameter (these two terminals
+are its only callers), the `SEQUENTIAL` name in `stream.py` outside
+`sequential()` itself, and `Stream._is_ordered()` — `for_each_ordered()` is its
+sole caller, and `_split_point()` reaches the `sink.py` fold directly.
+
+**Two corrections to how this item was first written.** First, **item 1 shrinks
+it**: once an ordered racing pipeline reorders at delivery, `for_each_ordered()`
+needs no special case at all — it is ordered because the pipeline is — and
+`find_first()` reduces to the single unconditional demand. Do item 1 first and
+this becomes about half the change. Second, **the "`find_first()` keeps its
+concurrency" claim should not go into the proposal unmeasured.** Sequential
+`find_first()` pulls exactly one element and runs the chain on it, which is
+already wall-clock optimal; racing can only do *more* work, up to `_READ_AHEAD`
+maps to return element 0. The win exists only where the head can *drop*
+elements:
+
+```
+  .parallel().map(f).find_first()        racing buys nothing, wastes <=15 maps
+  .parallel().filter(slow).find_first()  racing buys ~4x - several elements must
+  .parallel().flat_map(g).find_first()   be processed before an answer exists
+```
+
+Benchmark the `filter` shape before claiming it. `for_each_ordered()` carries no
+such caveat — it drains everything, so its head-racing win is unconditional.
+The simplification case stands on the deletions alone either way.
+
+---
+
+**3. Export `_READ_AHEAD` — now blocked on item 1, and its answer flips with
+item 1's.** Previously "revisit only on a concrete report", which was right
+while the constant bound only the narrow set of pipelines that happen to
+contain a barrier. Under item 1 as B it becomes the throughput/memory knob for
+*every* ordered parallel pipeline, and the concrete report arrives by
+construction rather than by someone hitting the trade-off in anger.
+
+- If item 1 lands as B: export it, rename it for what it then means (it stops
+  being read-ahead and becomes the ordered-delivery buffer bound), and give it
+  a spec — the same reasoning that makes `PROCESSES` public.
+- If item 1 is somehow revisited to C: it stays private, unchanged, and the
+  original "only on a concrete report" rule applies.
+
+The measured read-ahead/latency curve is in the constant's comment and does not
+move either way.
+
+---
+
+**4. Give `Collector` its Java `Characteristics`, starting with `UNORDERED`.**
+Java's `Collector` carries a characteristics set; snakestream's is a bare
+four-callable quadruple with none. That is an existing Java-parity gap on the
+public surface, and item 1 needs it: `UNORDERED` is how `to_set()`,
+`grouping_by()` and `counting()` say they do not need encounter order at
+delivery while `to_list()` and `joining()` do.
+
+Split out from item 1 rather than folded into it, deliberately: it is
+independently justified by parity, it keeps item 1 about ordering, and it
+touches a different set of files — the `Collector` type in `collector.py` plus
+the ~20 factories in `collectors.py`, against item 1's `execution.py`. Folding
+them would make one change that spans the whole library.
+
+**Settled 2026-08-27: `UNORDERED` alone**, with the enum shaped to admit the
+others. `IDENTITY_FINISH` is inferable from `finisher is None` and would be a
+second way to state one fact; `CONCURRENT` is meaningless until real
+partitioned execution exists (see **Later**). Proposal written at
+`openspec/changes/add-collector-characteristics`; it matches Java's
+assignments exactly (`to_set()` only, plus derivation through `mapping()` and
+`collecting_and_then()`) and leaves the mark-what-Java-leaves-unmarked
+question to item 1, per the second row of item 1's table above.
 
 Also available to refill from: the deferred `ExceptionGroup` question in
 **Now**'s notes if it gets a yes, or the Java-8 parity gaps README still tracks
 as unimplemented.
+
 
 ## Later
 
@@ -159,6 +261,93 @@ core semantic.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should instead be documented as intentional next to the `str`/`bytes` note. Surfaced 2026-08-20 in the same code-quality read that produced **Now** items 1-4. |
 
 ## Done
+
+- **`comparing(key_extractor)` ported from Java's `Comparator.comparing`**
+  (2026-08-27). `sorted()`, `min()`, `max()`, `min_by()` and `max_by()`
+  previously accepted only a 3-way `Comparator`, the most expensive way Python
+  can express an ordering — every comparison forces a `cmp_to_key` call, and an
+  async comparator forces the hand-written `merge_sort` because `list.sort`'s C
+  loop has no point to return control to the event loop. Measured sorting dicts
+  by one field: **6.8-8.8x** for a sync key extractor over a sync comparator,
+  **4.8-5.4x** for async, where it also collapses the interleaved-await count
+  from O(n log n) to O(n). See
+  `openspec/changes/archive/2026-08-27-add-comparator-comparing`.
+
+  **`comparing()` returns an object, not a closure.** A literal port of Java's
+  `(a, b) -> k(a).compareTo(k(b))` would be a regression: the key would be
+  called twice per comparison, O(n log n) times, so an async key would cost
+  `2n log n` awaits. The returned `_KeyComparator` instead exposes the key
+  extractor as a plain attribute so `sort()` can recognize it and take a
+  decorate-sort-undecorate fast path, while still implementing `__call__` as an
+  ordinary `Comparator` for `min()`/`max()`/`min_by()`/`max_by()`, none of which
+  know about the fast path.
+
+  **The fast path sorts on the key alone, never on `(key, element)`.** An
+  explicit key selector over the paired list, not a bare tuple sort — Timsort's
+  stability then gives encounter order for equal keys for free with no
+  tie-break index, and the *elements* are never compared, so one that doesn't
+  support `<` still sorts as long as its key does. No sign or `bool` validation
+  reaches this path either: a key extractor returns a key, not a comparison
+  result, so `check_comparator_result_type`/`_checked`/the trial probe are all
+  skipped, and an incomparable-key `TypeError` propagates from `list.sort`
+  unwrapped.
+
+  **Async key extraction gathers concurrently, reversing a task written before
+  benchmarking.** The design deferred "sequential loop or `asyncio.gather`?" as
+  an open question, and the sequential loop shipped first, per its own task,
+  with no trial-comparison probe — reasoned as unnecessary since a loop always
+  has an `await` point available. Benchmarked before the gate run with an
+  I/O-bound extractor (`sleep(0.001)` per key, the shape a real async extractor
+  actually has): 1,000 elements cost **1325ms sequential vs. 9ms gathered**. A
+  sequential loop was paying the full `n * latency` regardless of the extractor
+  being async — exactly the concurrency `comparing()`'s async case exists to
+  buy, and the loop was throwing it away. Switched to `asyncio.gather()`, which
+  *reinstates* a trial call on the first element (the same shape as `sort()`'s
+  own trial comparison) so the one-time `isawaitable` safety net's coroutine
+  joins the gather instead of being discarded — invocation count stays exactly
+  n either way. The reversal is recorded in design.md rather than the
+  now-stale task line being silently correct in hindsight, on this project's
+  rule that a superseded decision is annotated, not erased.
+  **Accepted trade-off:** `gather`'s failure semantics apply — first exception
+  wins, not left-to-right — and every element's key coroutine is in flight
+  concurrently rather than one at a time. Both follow from the same reason the
+  capability exists: an async key extractor's value is entirely in not
+  serializing its awaits.
+
+  **New capability spec `comparator-comparing`**, five requirements: builds a
+  `Comparator` from a key extractor and is accepted anywhere one is; the
+  extractor may be sync or async; sorting invokes it exactly once per element,
+  not once per comparison (the property the capability exists for); ordering by
+  key is stable; keys must be mutually comparable, with `bool` keys explicitly
+  a legitimate ordering rather than an error. `comparator-contract`'s
+  bool-rejection rule is unaffected — a key extractor returns a key, never a
+  comparison sign, so there is no `bool <: int` hazard on this path to guard.
+  27 new tests in `tests/test_comparing.py`, including a drift test asserting
+  the fast path and the `__call__` path agree on the same comparator (ties,
+  `bool` keys, a property-based comparator-vs-`cmp_to_key` check), an exact
+  invocation-count test, and the misclassified-sync safety-net path (a `def
+  __call__` that manually returns a coroutine).
+
+  **README gained a third parity table** — `Comparator`, alongside `Stream` and
+  `Collectors` — recording `comparing()` as implemented and `thenComparing`,
+  `reversed`, `naturalOrder`, `reverseOrder` as deliberately skipped with their
+  reasons, in the same struck-through style the `Stream` table already uses so
+  "not yet" reads differently from "decided against". `thenComparing()`'s
+  workaround (`comparing(lambda x: (a(x), b(x)))`) is documented in
+  `comparing()`'s own docstring, since it is exactly what a future
+  `thenComparing()` would compile to.
+
+  **Not breaking.** Every existing comparator path, `merge_sort` included, is
+  untouched; `comparing()` is a new way to build a `Comparator`, not a change
+  to what one means. 673 tests green, `ruff`, `ruff format --check`,
+  `ty check src`, and `--cov-fail-under=98` at 98.30% all pass.
+
+  **Landing this is the precondition for two items `add-comparator-comparing`'s
+  own proposal named out of scope**: replacing `merge_sort` with a smaller
+  algorithm, and retiring the async comparator path altogether. Both were
+  deferred specifically because they become easier to judge once `comparing()`
+  exists and it is visible how much traffic still reaches the comparator path
+  rather than the key path — that visibility didn't exist until now.
 
 - **Collapse `Stream._compose()` into `iterator()`** (2026-08-27). `_compose()`
   had shrunk, since the executor-value redesign, to a one-line forward to
