@@ -93,10 +93,10 @@ def _accept(source: Any) -> AsyncGenerator | None:
     return None
 
 
-async def _concat(a: Stream, b: Stream) -> AsyncGenerator:
-    async for i in a._compose():
+async def _concat(a: AsyncGenerator, b: AsyncGenerator) -> AsyncGenerator:
+    async for i in a:
         yield i
-    async for j in b._compose():
+    async for j in b:
         yield j
 
 
@@ -123,10 +123,6 @@ class Stream(Generic[T]):
         new_stream._executor = self._executor
         self._consumed = True
         return new_stream
-
-    def _compose(self) -> AsyncGenerator[T, None]:
-        """The chain as a generator, under this stream's executor."""
-        return self._executor.elements(self._chain, self._source)
 
     async def _evaluate(self, terminal: TerminalSink[Any], executor: Executor | None = None) -> Any:
         """The chain driven into a terminal sink. The one place a stream's
@@ -165,7 +161,7 @@ class Stream(Generic[T]):
 
     def iterator(self) -> AsyncGenerator[T, None]:
         self._check_not_consumed()
-        return self._compose()
+        return self._executor.elements(self._chain, self._source)
 
     def unordered(self) -> Stream[T]:
         """Queues an op that clears encounter order for everything after it,
@@ -228,7 +224,7 @@ class Stream(Generic[T]):
 
     @staticmethod
     def concat(a: Stream[T], b: Stream[T]) -> Stream[T]:
-        new_stream = _concat(a, b)
+        new_stream = _concat(a.iterator(), b.iterator())
         return Stream(new_stream, a._close_handlers + b._close_handlers)
 
     @staticmethod
@@ -307,7 +303,7 @@ class Stream(Generic[T]):
             if isinstance(collector, Collector):
                 return self._evaluate(_CollectorSink(collector))
             if isinstance(collector, StreamingCollector):
-                return collector(self._compose())
+                return collector(self.iterator())
             raise StreamBuildException(
                 "collect() requires a Collector (see snakestream.collector.Collector), "
                 "or to_generator for a lazy, streaming result"
