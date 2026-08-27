@@ -21,7 +21,7 @@ value rather than a class hierarchy, `summing_int`/`summing_long` sharing a body
 `collapse-compose-into-iterator`, and `add-comparator-comparing` are all in
 **Done**. What is here now is the two changes **Next**'s fleshing-out produced,
 plus `unify-derive-signature` (opened 2026-08-27, out of an exploration of
-`_derive()`'s two call shapes) and six questions the roadmap has been implying
+`_derive()`'s two call shapes) and seven questions the roadmap has been implying
 without ever writing down.
 
 ### Queued changes
@@ -64,9 +64,11 @@ it is the reasoning, not the code, that took the time:
 
 ### Open questions needing a session
 
-None is a defect report and none is queued. Each is something the roadmap, the
-README or a just-landed change has been implying without ever stating, found
-while fleshing out **Next** on 2026-08-27. Ordered by how ready they are.
+None is queued. Items 1-6 are things the roadmap, the README or a just-landed
+change has been implying without ever stating, found while fleshing out
+**Next** on 2026-08-27, ordered by how ready they are. **Item 7 is the
+exception and the only actual defect in the list** — appended rather than
+sorted in, so the numbering above stays stable.
 
 **1. `Comparator.thenComparing()` — the precondition just landed.** README
 (line 177) records it as "Not yet. Genuinely useful and cheap to add once the
@@ -132,6 +134,34 @@ main specs** — `openspec/specs/stream-iterate/spec.md`,
 to the parser, and clearly an artifact of however those files were first
 written. A one-line fix, listed here only so it is not rediscovered a fourth
 time.
+
+**7. A subclass's `__init__` re-runs on every derivation — a real defect, found
+2026-08-27.** `_derive()` builds the next stage with
+`type(self)(self._source, self._close_handlers)`, which re-enters the user's
+constructor. Measured: a three-op pipeline plus one mode switch runs it **five
+times**. CLAUDE.md documents subclassing `Stream` to wrap an I/O-like resource
+and pairs it with `on_close()`/`contextlib.closing()`; such a subclass acquires
+its resource in `__init__`, so `MyStream(src).map(f).filter(g)` acquires three
+and keeps one, with `close()` releasing only the last. The two orphans are
+never closed.
+
+`tests/test_execution_model.py`'s `test_a_user_subclass_survives_a_mode_switch`
+does not catch it: it asserts `seq.resource == "db-handle"` on a string
+literal, so it pins that the attribute *survives*, not that it is the *same
+object*. Changing that one assertion to `is` would turn the test into a
+reproduction.
+
+**Why it is a question and not a queued change:** the fix is a behavioural
+change needing its own scenarios, and the mechanism is a real choice. Deriving
+via `copy.copy(self)` (or `cls.__new__` plus a `__dict__` copy) never re-enters
+`__init__`, which both fixes this and *narrows* the subclass contract to
+nothing — but it makes the resource shared across all stages of a pipeline
+rather than per-stage, which is the semantics the feature wants and is still
+observably different from today. It also interacts with `stream-close-handling`:
+if every stage shares one resource, the shared `_close_handlers` list already
+means one `close()` releases it once, which is the coherent reading. Wants a
+session, not a drive-by. Noted as out of scope in `unify-derive-signature`'s
+proposal, which is where it was found; nothing else tracks it.
 
 ## Next
 
