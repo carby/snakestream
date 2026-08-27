@@ -156,7 +156,7 @@ class _FlatMapSink(IntermediateSink[T]):
         self._flat_mapper = flat_mapper
 
     async def accept(self, element: Any) -> None:
-        async with aclosing(self._flat_mapper(element)._compose()) as inner:
+        async with aclosing(self._flat_mapper(element).iterator()) as inner:
             async for j in inner:
                 await self.downstream.accept(j)
                 if self.downstream.cancellation_requested():

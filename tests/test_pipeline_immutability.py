@@ -123,6 +123,54 @@ async def test_repeat_terminal_call_on_unextended_reference_still_allowed() -> N
     assert second == []
 
 
+def test_concat_with_an_already_extended_first_argument_raises() -> None:
+    a = _fresh_stream()
+    a.map(lambda x: x)  # extends a into a new instance, invalidating a
+    pulled: list[int] = []
+    b = Stream.of([1, 2]).peek(pulled.append)
+
+    with pytest.raises(IllegalStateException):
+        Stream.concat(a, b)
+
+    assert pulled == []
+
+
+def test_concat_with_an_already_extended_second_argument_raises() -> None:
+    pulled: list[int] = []
+    a = Stream.of([1, 2]).peek(pulled.append)
+    b = _fresh_stream()
+    b.map(lambda x: x)  # extends b into a new instance, invalidating b
+
+    with pytest.raises(IllegalStateException):
+        Stream.concat(a, b)
+
+    assert pulled == []
+
+
+@pytest.mark.asyncio
+async def test_concat_with_a_merely_consumed_argument_does_not_raise() -> None:
+    a = _fresh_stream()
+    first = await a.collect(to_list())  # terminally consumes a, without extending it
+    b = Stream.of([4, 5])
+
+    result = await Stream.concat(a, b).collect(to_list())
+
+    assert first == [1, 2, 3]
+    # a's underlying source is a one-shot generator already drained by the
+    # first collect(), so concat() legitimately sees nothing further from a --
+    # what matters is that concat() itself did not raise.
+    assert result == [4, 5]
+
+
+@pytest.mark.asyncio
+async def test_flat_map_returning_an_already_extended_stream_raises() -> None:
+    inner = _fresh_stream()
+    inner.map(lambda x: x)  # extends inner into a new instance, invalidating it
+
+    with pytest.raises(IllegalStateException):
+        await Stream.of([1]).flat_map(lambda _: inner).collect(to_list())
+
+
 def test_close_succeeds_after_receiver_invalidated(mocker) -> None:
     handler = mocker.Mock()
     s = _fresh_stream()
