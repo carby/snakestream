@@ -107,12 +107,12 @@ class Op(ABC):
         return None
 
 
-def is_ordered(chain: list[Op], upto: int | None = None) -> bool:
+def is_ordered(chain: list[Op], upto: int | None = None, initial: bool = True) -> bool:
     """Whether the pipeline carries an encounter-order requirement at position
     `upto` (the end of the chain when omitted): the three-valued fold over the
-    ops before it. Java's combineOpFlags() folds the same answer down its stage
-    list; here the fold is the whole of it, because there is one characteristic
-    rather than five.
+    ops before it, seeded with `initial`. Java's combineOpFlags() folds the same
+    answer down its stage list; here the fold is the whole of it, because there
+    is one characteristic rather than five.
 
     Never cached onto anything. A denormalised copy of a chain property is
     exactly what let unordered() apply to a whole pipeline regardless of where
@@ -123,10 +123,18 @@ def is_ordered(chain: list[Op], upto: int | None = None) -> bool:
     split point only if the pipeline is ordered *at its own position*, which is
     the fold over everything queued before it.
 
+    `initial` is what a *suffix* needs. The racing executor splits a chain at a
+    barrier and re-enters itself on what follows, so it folds over a list of ops
+    that is not the whole pipeline. Seeding with True there would read
+    `.sorted(c).unordered().map(f)`'s suffix as ordered and reinstate a
+    requirement the caller cleared two ops earlier; the seed carries the answer
+    across the split. A full chain starts from True because a source is ordered
+    until something says otherwise.
+
     Lives here rather than on Stream because execution.py needs it and may not
     import stream.py; the fold is a property of a list of Ops, and Op and
     Ordering both live here already."""
-    ordered = True
+    ordered = initial
     for op in chain[:upto] if upto is not None else chain:
         if op.ordering is not Ordering.PRESERVE:
             ordered = op.ordering is Ordering.SET

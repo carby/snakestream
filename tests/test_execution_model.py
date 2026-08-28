@@ -180,8 +180,8 @@ async def test_the_fused_override_is_indistinguishable_from_the_generic_form() -
             yield i
 
     # when: the same chain and terminal, driven both ways
-    fused = await SEQUENTIAL.value([], source(), _CountSink())
-    generic = await super(type(SEQUENTIAL), SEQUENTIAL).value([], other(), _CountSink())
+    fused = await SEQUENTIAL.value([], source(), _CountSink(), False)
+    generic = await super(type(SEQUENTIAL), SEQUENTIAL).value([], other(), _CountSink(), False)
 
     # then
     assert fused == generic == 10

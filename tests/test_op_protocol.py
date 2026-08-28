@@ -1,7 +1,7 @@
 import pytest
 
 from snakestream.collectors import to_list
-from snakestream.sink import GeneratorBridgeSink, Op, Ordering, Sink
+from snakestream.sink import GeneratorBridgeSink, Op, Ordering, Sink, is_ordered
 from snakestream.ops import (
     _DistinctOp,
     _FilterOp,
@@ -137,3 +137,32 @@ def test_sorted_declares_ordering_set_rather_than_order_sensitivity() -> None:
     # other one: what it does *to* the characteristic, not what it reads from it
     assert _SortedOp.ordering is Ordering.SET
     assert _SortedOp.order_sensitive is False
+
+
+def test_the_fold_over_a_preserving_chain_returns_its_seed() -> None:
+    # given a chain that says nothing about ordering either way
+    chain = [_MapOp(lambda x: x), _FilterOp(lambda x: True), _PeekOp(lambda x: None)]
+
+    # then the answer is whatever came in - which is what a chain *suffix*
+    # needs, since the ops that decided it sit before the split
+    assert is_ordered(chain) is True
+    assert is_ordered(chain, initial=False) is False
+
+
+def test_a_sort_in_the_chain_overrides_an_unordered_seed() -> None:
+    # given a suffix that sorts
+    chain = [_MapOp(lambda x: x), _SortedOp(lambda a, b: a - b), _LimitOp(2)]
+
+    # then SET wins over the seed, because a sort claims its output is ordered
+    assert is_ordered(chain, initial=False) is True
+
+    # and it still wins read only as far as its own position
+    assert is_ordered(chain, upto=1, initial=False) is False
+
+
+def test_unordered_in_the_chain_overrides_an_ordered_seed() -> None:
+    # given a suffix that clears
+    chain = [_UnorderedOp(), _MapOp(lambda x: x)]
+
+    # then CLEAR wins over the seed too - the seed only survives PRESERVE
+    assert is_ordered(chain, initial=True) is False

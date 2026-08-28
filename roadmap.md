@@ -19,38 +19,15 @@ value rather than a class hierarchy, `summing_int`/`summing_long` sharing a body
 **Opened 2026-08-26:** `collapse-derive-wrappers`,
 `order-stateful-ops-under-racing`, `collapse-compose-into-iterator`, and
 `add-comparator-comparing` are all in **Done**. **`add-collector-characteristics`**
-(2026-08-27) and **`unify-derive-signature`** (2026-08-27) have landed too — see
-**Done**. What is left here is `order-racing-delivery`, plus seven questions the
-roadmap has been implying without ever writing down.
+(2026-08-27), **`unify-derive-signature`** (2026-08-27) and
+**`order-racing-delivery`** (2026-08-28) have landed too — see **Done**.
 
 ### Queued changes
 
-| # | Change | State | What it is |
-|---|---|---|---|
-| 1 | `order-racing-delivery` | **Proposal only.** Needs specs, design, tasks. | An ordered racing pipeline delivers in encounter order. **BREAKING.** Was **Next**'s item 1, and the detail that used to sit here is now in its proposal. Reads the `Characteristics.UNORDERED` `add-collector-characteristics` shipped. |
-
-**What `order-racing-delivery` settled that the roadmap had left open**, recorded here because
-it is the reasoning, not the code, that took the time:
-
-- **The policy was never actually open.** The guiding principle at the top of
-  this file already decides it — a divergence in observable API behaviour is a
-  defect — and `.parallel().map(f).collect(to_list())` returning a scrambled
-  list is one. So "racing does not preserve encounter order" is the defect, and
-  the accidental in-order delivery behind a barrier is the code drifting toward
-  the right answer.
-- **The barrier goes at `len(chain)`, not at index 0.** At index 0 the head is
-  empty and the whole chain lands in the ordered tail, i.e. effectively
-  sequential. At the end, every branch races the whole chain and only delivery
-  is reordered — Java's shape, and no per-element concurrency lost. This is the
-  distinction that makes B affordable rather than ruinous.
-- **`_resume_point()` is replaced, not tuned, and that is a concurrency
-  *gain*.** Its docstring says an ordered tail resumes racing only at an
-  explicit `unordered()` because racing an order-blind suffix would scramble
-  delivery. Once delivery is reordered at the terminal, that reason is gone:
-  the barrier op runs one ordered pass and everything after it races.
-  `.limit(n).map(fetch)` gets its concurrency back — the case this item was
-  opened on. A gain and a cost land in the same change, which the benchmarking
-  has to separate.
+**None.** The queue is empty for the first time since 2026-08-26. What is left
+in **Now** is seven questions the roadmap has been implying without ever
+writing down; the two items in **Next** are both unblocked as of
+`order-racing-delivery` and are the readiest work.
 
 ### Open questions needing a session
 
@@ -92,10 +69,19 @@ today.** `comparator-contract` requires first-of-tied-elements-wins, and
 of two equal-comparing distinguishable elements is returned is currently
 arbitrary — where Java's parallel `min()` reduces with `BinaryOperator.minBy`
 and keeps the first in encounter order. No spec says either way. Found
-2026-08-27 while re-reading `comparator.py`. `order-racing-delivery` fixes it as
-a side effect, since `min`/`max` land in the order-observing column of its
-terminal table — but it needs a scenario either way, and if that change is
-deferred this is a standing divergence with no test.
+2026-08-27 while re-reading `comparator.py`. **This item predicted its own
+answer wrong and the prediction is worth keeping.** It expected
+`order-racing-delivery` to fix the divergence as a side effect, on the
+assumption that `min`/`max` would land in the order-observing column of that
+change's terminal table. They landed in the *order-blind* column instead
+(2026-08-28), and deliberately: ordering delivery would charge every racing
+`min()`/`max()` the full barrier — head-of-line blocking and a reorder buffer —
+to buy nothing but deterministic tie-breaking, on a fold whose value is
+otherwise identical in any order. So the divergence **stands**, is now a
+conscious one rather than an unexamined one, and still has no spec and no test.
+The choice left is to state first-in-encounter-order as the contract and pay
+the barrier for it, or to spec ties under racing as unspecified and say so in
+`comparator-contract` and the README. Either needs a scenario.
 
 **4. Marking the collectors Java leaves unmarked — deferred twice now, and `add-collector-characteristics` (landed) hands the question on again as designed.**
 `add-collector-characteristics` shipped `Characteristics`/`UNORDERED`,
@@ -108,12 +94,17 @@ weigh with a benchmark:
 `grouping_by()` and `partitioning_by()` are order-blind in fact but `CH_ID` /
 `CH_NOID` in OpenJDK, because Java's `UNORDERED` governs its combine strategy
 where an associative reduction is safe either way and the mark buys nothing.
-After `order-racing-delivery` the mark *would* buy something here — skipping the
-delivery barrier. `add-collector-characteristics` handed the question to
-`order-racing-delivery`, which hands it on again so it can land at parity and
-be measured first. **That is two deferrals; the third has to come with a
-benchmark or the answer is no.** `min_by`/`max_by` are excluded regardless, for
-the reason in item 3 above.
+`order-racing-delivery` landed on 2026-08-28, so the mark now *does* buy
+something concrete: skipping the delivery barrier, which that change measured at
+10.01 vs 7.51 us/element on a chain too cheap to race and at nothing at all on
+IO-bound work. It deferred the marking as its second non-goal — land at parity,
+measure, then decide — so **that is the third deferral, and by this item's own
+rule the next pass either brings a benchmark of these specific collectors under
+an ordered racing pipeline or the answer is no.** The benchmark to run is
+narrow: `counting()` and `grouping_by()` with and without the mark, on the two
+shapes `race_through()`'s docstring already covers, since the +33% figure is the
+whole of what the mark would recover. `min_by`/`max_by` are excluded regardless,
+for the reason in item 3 above.
 
 **5. Enumerate the remaining Java-8 parity gaps, once, concretely.** Three
 places in this file offer "the Java-8 parity gaps README still tracks as
@@ -166,27 +157,30 @@ proposal, which is where it was found; nothing else tracks it.
 fleshed out 2026-08-27. None is a defect; each is a decision that change
 deliberately declined to take while it was fixing a wrong answer.
 
-**Items 1 and 4 have moved to Now** as the changes `order-racing-delivery` and
-`add-collector-characteristics`. **The numbering here is deliberately not
-compacted** — the two proposals cite "the roadmap's **Next** item 2" and "item
-3", and renumbering would silently break those references. Items 2 and 3 keep
-their numbers for as long as anything points at them.
+**Items 1 and 4 landed** as `order-racing-delivery` (2026-08-28) and
+`add-collector-characteristics` (2026-08-27), both in **Done**. **The numbering
+here is deliberately not compacted** — the two archived proposals cite "the
+roadmap's **Next** item 2" and "item 3", and renumbering would silently break
+those references. Items 2 and 3 keep their numbers for as long as anything
+points at them.
 
-**The seam that connects all four.** `_split_point()` only ever inspects *ops*.
-A terminal has no way to declare that it needs encounter order, which is why
-the two that need it opt out of racing altogether by naming `SEQUENTIAL` at
-their own call site. That one missing concept — an ordering demand originating
-at the terminal rather than in the chain — is item 2's whole content and is
-also the mechanism item 1 needed.
+**The seam that connected all four is closed.** `_split_point()` used to
+inspect only *ops*, so a terminal had no way to declare that it needed
+encounter order, and the two that need it opted out of racing altogether by
+naming `SEQUENTIAL` at their own call site. `order-racing-delivery` added the
+missing concept — an ordering demand originating at the terminal — as
+`observes_order`, a bool each terminal passes to `_evaluate()` and on through
+`Executor.value()`/`elements()` into `_split_point()`'s third clause.
 
-| | where the ordering demand comes from | how it is handled today |
+| | where the ordering demand comes from | how it is handled |
 |---|---|---|
-| an op in the chain | `sorted`, `limit`, `skip`, `distinct` | `_split_point()` |
-| the terminal | `find_first`, `for_each_ordered`, `collect(to_list)`, `iterator()` | not modelled at all |
+| an op in the chain | `sorted`, `limit`, `skip`, `distinct` | `_split_point()` clauses 1 and 2 |
+| the terminal | `collect(to_list)`, `reduce`, `to_array`, `iterator()` | `_split_point()` clause 3, a split at `len(chain)` |
+| the terminal, unconditionally | `find_first`, `for_each_ordered` | still `SEQUENTIAL` at their own call site — item 2 |
 
-**Both remaining items are blocked on `order-racing-delivery`**, which is why
-they are here and it is in **Now**. Item 2 shrinks to about half its size once
-that lands; item 3's answer flips with it.
+**Both remaining items are now unblocked**, which is what `order-racing-delivery`
+was standing in front of. Item 2 shrank to about half its size as predicted;
+item 3's answer flipped to "export it".
 
 ---
 
@@ -218,10 +212,15 @@ are its only callers), the `SEQUENTIAL` name in `stream.py` outside
 sole caller, and `_split_point()` reaches the `sink.py` fold directly.
 
 **Two corrections to how this item was first written.** First,
-**`order-racing-delivery` shrinks it**: once an ordered racing pipeline reorders at delivery, `for_each_ordered()`
-needs no special case at all — it is ordered because the pipeline is — and
-`find_first()` reduces to the single unconditional demand. Do `order-racing-delivery` first and
-this becomes about half the change. Second, **the "`find_first()` keeps its
+**`order-racing-delivery` shrank it, as predicted, and it has now landed**
+(2026-08-28): an ordered racing pipeline reorders at delivery, so
+`for_each_ordered()` needs no special case at all — it is ordered because the
+pipeline is — and `find_first()` reduces to the single unconditional demand.
+That change deliberately left both terminals untouched (its proposal's first
+non-goal: it was altering a wrong answer, and this alters a right one), so this
+item starts from exactly the halved scope it described. Note that what
+disappears is now `_evaluate()`'s `executor` parameter specifically — its
+`observes_order` parameter stays, since every terminal uses it. Second, **the "`find_first()` keeps its
 concurrency" claim should not go into the proposal unmeasured.** Sequential
 `find_first()` pulls exactly one element and runs the chain on it, which is
 already wall-clock optimal; racing can only do *more* work, up to `_READ_AHEAD`
@@ -240,21 +239,27 @@ The simplification case stands on the deletions alone either way.
 
 ---
 
-**3. Export `_READ_AHEAD` — blocked on `order-racing-delivery` (was item 1,
-now in **Now**), and its answer flips with it.** Previously "revisit only on a concrete report", which was right
-while the constant bound only the narrow set of pipelines that happen to
-contain a barrier. Under `order-racing-delivery` it becomes the throughput/memory knob for
-*every* ordered parallel pipeline, and the concrete report arrives by
-construction rather than by someone hitting the trade-off in anger.
+**3. Export `_READ_AHEAD` — unblocked, and the answer is "export it".**
+Previously "revisit only on a concrete report", which was right while the
+constant bound only the narrow set of pipelines that happen to contain a
+barrier. `order-racing-delivery` landed on 2026-08-28, and the branch it named
+is the one that came true: `_READ_AHEAD` is now the throughput/memory knob for
+*every* ordered racing pipeline delivering to an order-observing terminal, so
+the concrete report arrives by construction rather than by someone hitting the
+trade-off in anger.
 
-- If `order-racing-delivery` lands: export it, rename it for what it then means (it stops
-  being read-ahead and becomes the ordered-delivery buffer bound), and give it
-  a spec — the same reasoning that makes `PROCESSES` public.
-- If it is abandoned: `_READ_AHEAD` stays private, unchanged, and the original
-  "only on a concrete report" rule applies.
+So: export it, rename it for what it now means (it stops being read-ahead and
+becomes the ordered-delivery buffer bound), and give it a spec — the same
+reasoning that makes `PROCESSES` public. `order-racing-delivery` deliberately
+left it alone (its third non-goal) so that the export and the rename would be
+this item's work rather than a line slipped into a behaviour break.
 
 The measured read-ahead/latency curve is in the constant's comment and does not
-move either way.
+move. What is new alongside it is the delivery-barrier benchmark
+`order-racing-delivery` recorded in `race_through()`'s docstring, which is the
+other half of what a spec for this knob has to state: 10.01 vs 7.51 us/element
+ordered vs `unordered()` on a chain too cheap to race, and no measurable
+difference at all on IO-bound work.
 
 Refill from **Now**'s open questions, which is where the loose ends now live —
 `thenComparing()` is the readiest of them, and question 5 exists to turn "the
@@ -276,6 +281,65 @@ core semantic.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should instead be documented as intentional next to the `str`/`bytes` note. Surfaced 2026-08-20 in the same code-quality read that produced **Now** items 1-4. |
 
 ## Done
+
+- **An ordered racing pipeline delivers in encounter order** (2026-08-28).
+  **BREAKING**, and the break is the point: `.parallel().map(f).collect(to_list())`
+  returned a scrambled list, which the guiding principle at the top of this file
+  classifies as a defect — Java's ordered parallel streams preserve encounter
+  order into `collect`, so "racing does not preserve encounter order" was the
+  rule that had to go, not the accidental in-order delivery behind a barrier.
+  The three things it settled, recorded because the reasoning took longer than
+  the code:
+  - **The barrier goes at `len(chain)`, not at index 0.** At index 0 the head is
+    empty and the whole chain lands in the ordered tail — effectively
+    sequential. At the end, every branch races the whole chain and only delivery
+    is reordered, which is Java's shape and costs no per-element concurrency.
+    `_split_point()` gained a third clause returning `len(chain)`, so one
+    mechanism serves both callers and there is no second reorder implementation
+    to keep in step.
+  - **A terminal declares whether it observes encounter order**, as
+    `observes_order`, a bool passed to `_evaluate()` and through
+    `Executor.value()`/`elements()`. `count()`, `for_each()`, `find_any()`,
+    `max`/`min` and the `*_match` family declare `False` and pay nothing;
+    `collect(collector)` reads the collector's `Characteristics.UNORDERED`,
+    which is the first and only reader of what `add-collector-characteristics`
+    shipped, and the reason that change existed.
+  - **`_resume_point()` was replaced, not tuned, and that is a concurrency
+    *gain*.** It resumed racing only at an explicit `unordered()` because racing
+    an order-blind suffix would scramble delivery; once delivery is reordered at
+    the terminal that reason is gone. The barrier op runs one ordered pass and
+    everything after it races. Measured: `.parallel().limit(8).map(50ms)` went
+    **403.4 ms -> 101.7 ms**, the 4-branch floor exactly.
+
+  **The cost, measured, because the proposal required it before landing.**
+  Ordered delivery costs +33% per element (10.01 vs 7.51 us) on a 20,000-element
+  `map(x + 1)` — but that is a chain too cheap to race in the first place. On
+  40 elements at 10ms each, the shape racing exists for, ordered and
+  `unordered()` are 105.5 ms and 106.9 ms: within noise, and both 4x ahead of
+  sequential's 420 ms. So `unordered()` is measurably the faster path, as the
+  spec promises, and the default regression is charged where it does not matter.
+  Figures are in `race_through()`'s docstring.
+
+  **One latent bug fixed on the way.** `is_ordered()` folded from `True`
+  unconditionally, so the recursive re-entry over a chain *suffix* re-seeded the
+  fold and read `.sorted(c).unordered().limit(3)`'s suffix as ordered, installing
+  a barrier the caller had cleared two ops earlier. It now takes an `initial`
+  seed, threaded through `race_through(ordered_in=...)`.
+
+  Deliberately untouched, each with its own non-goal in the proposal:
+  `find_first()` and `for_each_ordered()` (that is **Next** item 2), marking the
+  collectors Java leaves unmarked, and exporting `_READ_AHEAD` (**Next** item 3,
+  whose answer this flips to "export it"). Four delta specs —
+  `racing-encounter-order` (2 added, 3 modified), `stream-execution-model`,
+  `stream-iterator`, `collector-protocol` — plus a README migration entry, the
+  CLAUDE.md ordering-barrier section, and a stale-`## Purpose` sweep over the
+  three capabilities whose framing the change falsified. 727 passed,
+  `--cov-fail-under=98` at 98.30%, `ruff`, `ruff format --check` and
+  `ty check src` clean. One existing test changed meaning:
+  `test_unordered_applies_only_to_ops_queued_after_it` asserted an in-order list
+  from `.limit(5).unordered()`, which was the accidental behaviour; it now
+  asserts the *selection* and lets delivery scramble, which is what the caller
+  declared. See `openspec/changes/archive/2026-08-28-order-racing-delivery`.
 
 - **`Stream._derive()` gains an optional `executor` argument, collapsing
   `sequential()`/`parallel()` to one line each** (2026-08-27). `_derive()`'s

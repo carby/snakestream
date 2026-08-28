@@ -1,69 +1,4 @@
-## Purpose
-
-Defines what encounter order means under the racing executor: how order is
-preserved across branches that finish out of order, who requires it, where in a
-pipeline the requirement takes effect, and what it costs. Racing destroys
-encounter order at the merge, and two things need it back — an operation whose
-answer depends on global position (`sorted()`, `limit()`, `skip()`,
-`distinct()`), which needs it restored before it decides, and a terminal that
-can tell what order elements reach it in, which needs it restored before
-delivery. This capability is the contract for both restorations, for how much
-of the pipeline still races around them, and for the deliberate absence of them
-on an unordered pipeline, where the cheaper order-blind behaviour is correct and
-is what runs.
-
-## Requirements
-
-### Requirement: Order-sensitive operations honour encounter order under the racing executor
-
-An operation whose result depends on an element's position in the stream —
-`sorted()`, `limit(n)`, `skip(n)` and `distinct()` — SHALL produce the same
-result under the racing executor as under the sequential executor whenever the
-pipeline carries an encounter-order requirement at that operation's position.
-
-This SHALL hold regardless of how much per-element work sits upstream of the
-operation and regardless of how unevenly that work is distributed: an operation
-upstream of `limit(5)` that is slow for the first five elements and fast for the
-rest SHALL NOT cause a later element to take a slot from an earlier one.
-
-Sameness is on the elements selected and their order, not on how many times an
-upstream operation ran; see the read-ahead requirement below.
-
-#### Scenario: limit() selects the first n in encounter order despite variable upstream cost
-- **WHEN** a stream over `range(12)` queues a mapping operation that is slow for
-  the first five elements and fast for the rest, then `.limit(5)`, and is run
-  under `.parallel()` and collected
-- **THEN** the result is `[0, 1, 2, 3, 4]`, the same list the sequential
-  pipeline produces
-
-#### Scenario: skip() drops the first n in encounter order despite variable upstream cost
-- **WHEN** the same stream queues that mapping operation, then `.skip(5)`, and
-  is run under `.parallel()` and collected
-- **THEN** the elements `0` through `4` are the ones dropped, and every element
-  from `5` onward is present
-
-#### Scenario: sorted() sorts the whole stream, not each branch's subset
-- **WHEN** a stream built from an **async** source yielding `12, 11, ..., 1`
-  queues `.sorted(asc)` and is run under `.parallel()` and collected
-- **THEN** the result is `[1, 2, ..., 12]`
-
-#### Scenario: sorted() under racing sorts across branches for a sync source too
-- **WHEN** the same pipeline is built from a list source rather than an async one
-- **THEN** the result is likewise fully sorted, and is so because the ordering
-  requirement was honoured rather than because one branch happened to take
-  every element
-
-#### Scenario: distinct() keeps the earliest-encountered duplicate
-- **WHEN** a stream over objects that compare equal but are distinguishable
-  queues `.distinct()` and is run under `.parallel()`
-- **THEN** the survivor of each equal group is the one earliest in encounter
-  order, matching the sequential result
-
-#### Scenario: An order-sensitive operation queued before .parallel() is still honoured
-- **WHEN** `.sorted(asc)` (or `.limit(n)`, `.skip(n)`, `.distinct()`) is queued
-  before the `.parallel()` call that selects the racing executor
-- **THEN** it honours encounter order exactly as it does when queued after the
-  switch, because the executor governs the whole pipeline
+## ADDED Requirements
 
 ### Requirement: A racing pipeline delivers in encounter order when its terminal observes it
 
@@ -170,6 +105,8 @@ from a pipeline that is unordered at its terminal.
   run
 - **THEN** the mapped elements arrive in whatever order the race resolves them,
   and the sort still saw the whole stream
+
+## MODIFIED Requirements
 
 ### Requirement: An unordered pipeline takes the order-blind path
 

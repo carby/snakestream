@@ -2,11 +2,14 @@
 stream_through() (push in, pull out, lazily), race_through() (N branches
 racing one shared source), feed_through() (fused push straight to a
 terminal, nothing buffered) and drain() (any generator into a terminal).
-race_through() has a second gear: where the chain contains an operation whose
-answer depends on an element's position and the pipeline is ordered there, it
-splits the chain at that operation, races everything upstream and reorders at
-the merge so the rest runs as one ordered pass — see _split_point() and
-_release_in_order().
+race_through() has a second gear: where encounter order has to be restored, it
+splits the chain, races everything upstream of the split and reorders at the
+merge — see _split_point() and _release_in_order(). Two things ask for it. An
+operation whose answer depends on an element's position splits at its own
+index, and only that operation runs in the ordered pass; everything after it
+races again. A terminal that can tell what order elements reach it in splits at
+the end of the chain, so every operation still races and only delivery is
+reordered.
 Two Executor values sit on top: Sequential.elements() and Racing.elements()
 each pick a primitive; Sequential.value() is the one asymmetry in the
 protocol, overriding the generic drain(elements(...), terminal) with
@@ -183,12 +186,12 @@ async def _guarded(source: AsyncIterator, lock: asyncio.Lock, window: _Window | 
             await _maybe_aclose(source)
 
 
-def _split_point(chain: list[Op]) -> int | None:
-    """The index of the first operation that has to see the whole stream in
-    encounter order, or None when there is none and the chain can race
-    end-to-end.
+def _split_point(chain: list[Op], observes_order: bool, ordered_in: bool) -> int | None:
+    """The index at which encounter order has to be restored, or None when it
+    never does and the chain can race end-to-end.
 
-    Two clauses, per the racing-encounter-order capability:
+    Two callers, three clauses. An *operation* needs order restored before it,
+    per the racing-encounter-order capability:
 
     - an op that SETs the ordering characteristic — `sorted()` — splits
       wherever it sits, regardless of the characteristic upstream of it. A sort
@@ -201,11 +204,24 @@ def _split_point(chain: list[Op]) -> int | None:
       fold reports the pipeline ordered. Where it does not, the caller has said
       any answer will do and the cheap order-blind path is correct.
 
+    The *terminal* needs it restored before delivery, which is the third
+    clause and is why this returns `len(chain)` rather than an op's index: a
+    split at the end means every op still races and only the handing over is
+    ordered. Expressing it as a split is what lets one mechanism serve both —
+    race_through() runs the same head/reorder/tail branch either way, with an
+    empty tail here.
+
     The first hit wins: there is at most one barrier per composition, and
-    everything downstream of it already arrives in order."""
+    everything downstream of it already arrives in order.
+
+    `ordered_in` seeds the fold, because a resumed tail is a chain suffix whose
+    ordering was decided by ops that are no longer in the list; see
+    is_ordered()."""
     for i, op in enumerate(chain):
-        if op.ordering is Ordering.SET or (op.order_sensitive and is_ordered(chain, i)):
+        if op.ordering is Ordering.SET or (op.order_sensitive and is_ordered(chain, i, ordered_in)):
             return i
+    if observes_order and is_ordered(chain, initial=ordered_in):
+        return len(chain)
     return None
 
 
@@ -350,64 +366,97 @@ async def _release_in_order(
             await branch.aclose()
 
 
-def _resume_point(tail: list[Op]) -> int | None:
-    """Where the ordered tail may start racing again: one past the first op
-    that clears the encounter-order characteristic, or None when nothing in
-    the tail clears it.
-
-    Without this the barrier would cost the caller every drop of concurrency
-    downstream of it, including where they have said in as many words that
-    they no longer want ordering: `.sorted(c).unordered().map(fetch)` splits at
-    the sort, and running the whole tail in one pass would serialise a fetch
-    that unordered() exists to release. It would also leave unordered() after a
-    barrier with no observable at all, and that observable is what pins
-    sorted()'s restoration of the characteristic.
-
-    Only an explicit clear resumes the race, not merely the absence of anything
-    downstream that reads position. Racing an order-blind *suffix* — the map in
-    `.limit(n).map(fetch)` — would scramble the pipeline's delivered order and
-    so needs an answer to what an ordered racing pipeline promises its
-    terminal, which is a larger question than this one; the roadmap carries it.
-
-    The resumed portion goes back through race_through(), so a tail that clears
-    and later sorts again splits again. The recursion is bounded by the chain
-    being finite and each level consuming at least one op.
-
-    A clear with nothing after it does not resume: `.limit(5).unordered()` has
-    no work left to race, and racing an empty chain would only scramble the
-    delivery order to buy nothing."""
-    for i, op in enumerate(tail):
-        if op.ordering is Ordering.CLEAR and i + 1 < len(tail):
-            return i + 1
-    return None
-
-
 async def _run_ordered_tail(
     tail: list[Op],
     ordered: AsyncGenerator,
     state_map: StateMap,
     workers: int,
+    observes_order: bool,
 ) -> AsyncGenerator:
-    """Everything from the barrier onward, over the reordered stream: one
-    ordered pass, up to any point the caller clears the characteristic again,
-    from which it races afresh (see _resume_point())."""
-    resume = _resume_point(tail)
-    if resume is None:
-        async for out in stream_through(tail, ordered, state_map):
+    """Everything from the barrier onward, over the reordered stream.
+
+    The barrier op alone runs in a single ordered pass — it is the one op in
+    the tail that asked to see the whole stream in order — and everything after
+    it races afresh. That the suffix may be order-blind is no longer an
+    objection: an order-observing terminal gets its own barrier when the
+    resumed race splits at len(), so `.limit(n).map(fetch)` gets its
+    concurrency back without scrambling what the caller receives. This replaced
+    an earlier rule that resumed only at an explicit unordered(), which cost
+    the caller every drop of concurrency downstream of a barrier.
+
+    `ordered_in` for the resumed race is the fold across the barrier op itself:
+    sorted() SETs, limit/skip/distinct PRESERVE what the barrier restored, and
+    the reordered stream arriving here is ordered by construction.
+
+    A tail of fewer than two ops has nothing left to race — an empty one is the
+    delivery-barrier case, where the reordered stream *is* the answer."""
+    barrier, rest = tail[:1], tail[1:]
+    if not rest:
+        async for out in stream_through(barrier, ordered, state_map):
             yield out
         return
-    async for out in race_through(tail[resume:], stream_through(tail[:resume], ordered, state_map), workers):
+    async for out in race_through(
+        rest,
+        stream_through(barrier, ordered, state_map),
+        workers,
+        observes_order,
+        is_ordered(barrier),
+    ):
         yield out
 
 
-async def race_through(chain: list[Op], source: AsyncGenerator, workers: int) -> AsyncGenerator:
+async def race_through(
+    chain: list[Op],
+    source: AsyncGenerator,
+    workers: int,
+    observes_order: bool,
+    ordered_in: bool = True,
+) -> AsyncGenerator:
     """The same chain, run by `workers` branches racing over one shared source.
     Elements are yielded as branches finish them, so encounter order is not
-    preserved — unless the chain contains an operation that needs it (see
-    _split_point()), in which case the chain is split there: the head races as
-    ever, _release_in_order() restores encounter order at the merge, and the
-    tail runs as one ordered pass over that. There is still one executor; the
-    split is internal and nothing outside this function knows of it."""
+    preserved — unless something needs it (see _split_point()), in which case
+    the chain is split there: the head races as ever, _release_in_order()
+    restores encounter order at the merge, and _run_ordered_tail() takes the
+    rest.
+
+    Two things can need it, and the split expresses both. An *operation* that
+    reads position splits at its own index. The *terminal* splits at len(chain)
+    when `observes_order` says it can tell — every op still races and only
+    delivery is reordered.
+
+    `ordered_in` is the pipeline's ordering characteristic entering this chain,
+    True for a whole pipeline and carried across the split for a resumed tail.
+
+    There is still one executor; the split is internal and nothing outside this
+    function knows of it.
+
+    What the delivery barrier costs, and what the tail rule buys (Python
+    3.14.5, 4 workers, best of 5 / 3):
+
+      collect(to_list()) over 20,000 elements, map(x + 1) — no per-element wait,
+      so this is the machinery's own cost and nothing else:
+
+        racing, ordered delivery      10.01 us/element
+        racing, unordered()            7.51 us/element   1.33x cheaper
+        racing, count() (order-blind)  7.57 us/element   pays nothing, as spec'd
+
+      the same chain over 40 elements at 10ms each — the shape racing exists
+      for, where the branches have something to overlap:
+
+        racing, ordered delivery      105.5 ms
+        racing, unordered()           106.9 ms
+        sequential                    420.0 ms
+
+      so the +33% is real but is charged only where per-element work is too
+      cheap to race in the first place; on work worth racing the barrier
+      disappears into the concurrency it does not block. unordered() remains
+      the lever, and remains measurably one.
+
+      .parallel().limit(8).map(50ms), which the old resume rule ran in a single
+      ordered pass because the suffix read no position:
+
+        before  403.4 ms   (8 x 50ms, serial)
+        after   101.7 ms   (4 branches, at the floor)"""
     state_map: StateMap = {}
     for op in chain:
         state = op.make_shared_state()
@@ -420,7 +469,7 @@ async def race_through(chain: list[Op], source: AsyncGenerator, workers: int) ->
     # times over. One iterator, shared under the lock, is what racing means.
     shared = aiter(source)
 
-    split = _split_point(chain)
+    split = _split_point(chain, observes_order, ordered_in)
     if split is not None:
         # race the head, restore encounter order at the merge, hand the rest
         # to the tail. One state map for the whole chain either way: head ops
@@ -428,7 +477,7 @@ async def race_through(chain: list[Op], source: AsyncGenerator, workers: int) ->
         # it with nobody, which comes to the same thing.
         window = _Window()
         head = [group_through(chain[:split], _guarded(shared, lock, window), state_map) for _ in range(workers)]
-        async for out in _run_ordered_tail(chain[split:], _release_in_order(head, window), state_map, workers):
+        async for out in _run_ordered_tail(chain[split:], _release_in_order(head, window), state_map, workers, observes_order):
             yield out
         return
 
@@ -486,26 +535,42 @@ async def drain(elements: AsyncGenerator, terminal: TerminalSink[Any]) -> Any:
 class Executor(ABC):
     """How a stream runs, as a value rather than as the stream's type. Two
     operations: one producing the chain's elements as a generator, one driving
-    the chain into a terminal sink."""
+    the chain into a terminal sink.
+
+    Both take `observes_order`, the consumer's declaration of whether it can
+    tell what order elements reach it in. It is a second axis alongside which
+    executor a terminal names: the executor decides *how* the chain runs, this
+    decides whether the executor owes it encounter order. elements()' consumer
+    always does - it hands out raw elements - so its callers pass True; a
+    terminal answers for itself, and most of them do not care.
+
+    It is a plain bool on the protocol rather than something read off the
+    terminal sink because elements() has no terminal sink to read."""
 
     is_parallel: ClassVar[bool]
 
     @abstractmethod
-    def elements(self, chain: list[Op], source: AsyncGenerator) -> AsyncGenerator: ...
+    def elements(self, chain: list[Op], source: AsyncGenerator, observes_order: bool) -> AsyncGenerator: ...
 
-    async def value(self, chain: list[Op], source: AsyncGenerator, terminal: TerminalSink[Any]) -> Any:
+    async def value(self, chain: list[Op], source: AsyncGenerator, terminal: TerminalSink[Any], observes_order: bool) -> Any:
         """The general form: compose, then drain into the terminal. Correct for
         any executor; Racing uses it unchanged."""
-        return await drain(self.elements(chain, source), terminal)
+        return await drain(self.elements(chain, source, observes_order), terminal)
 
 
 class Sequential(Executor):
     is_parallel = False
 
-    def elements(self, chain: list[Op], source: AsyncGenerator) -> AsyncGenerator:
+    # observes_order is accepted and ignored throughout: a single ordered pass
+    # delivers in encounter order whether or not anyone is looking. The
+    # parameter is on the protocol because the *racing* executor needs it, and
+    # a caller must be able to state the demand without knowing which executor
+    # will read it.
+
+    def elements(self, chain: list[Op], source: AsyncGenerator, observes_order: bool) -> AsyncGenerator:
         return stream_through(chain, source)
 
-    async def value(self, chain: list[Op], source: AsyncGenerator, terminal: TerminalSink[Any]) -> Any:
+    async def value(self, chain: list[Op], source: AsyncGenerator, terminal: TerminalSink[Any], observes_order: bool) -> Any:
         """Overrides the general form with the fused push, which is the one
         asymmetry in this protocol and is here on measurement, not taste:
         composing and then draining costs +125% per element on count() and
@@ -525,8 +590,8 @@ class Racing(Executor):
     def __init__(self, workers: int) -> None:
         self.workers = workers
 
-    def elements(self, chain: list[Op], source: AsyncGenerator) -> AsyncGenerator:
-        return race_through(chain, source, self.workers)
+    def elements(self, chain: list[Op], source: AsyncGenerator, observes_order: bool) -> AsyncGenerator:
+        return race_through(chain, source, self.workers, observes_order)
 
     # value() is inherited: each racing branch owns its own sink chain, so
     # there is no single chain to fuse a terminal onto. The general form is

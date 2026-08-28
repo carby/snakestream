@@ -44,10 +44,19 @@ async def _slow_head(n: int) -> int:
 
 
 # --- the split rule ---------------------------------------------------------
+#
+# Two callers ask for a split. These first tests isolate the *operation*
+# clause by passing observes_order=False, so nothing but an op in the chain can
+# produce a split point; the terminal clause has its own tests below.
 
 
 def _chain(stream: Stream) -> list:
     return stream._chain
+
+
+def _op_split(chain: list, ordered_in: bool = True):
+    """The split an operation asks for, with the terminal clause switched off."""
+    return _split_point(chain, False, ordered_in)
 
 
 def _with_op(stream: Stream, op_cls) -> Stream:
@@ -63,13 +72,13 @@ async def test_an_order_preserving_chain_has_no_split_point() -> None:
     # given map/filter/peek, none of which reads position
     chain = _chain(Stream.of(SOURCE).parallel().map(lambda x: x).filter(lambda x: True).peek(lambda x: None))
     # then nothing has to see the whole stream, so the chain races end to end
-    assert _split_point(chain) is None
+    assert _op_split(chain) is None
 
 
 @pytest.mark.asyncio
 async def test_an_empty_chain_has_no_split_point() -> None:
     # then
-    assert _split_point(_chain(Stream.of(SOURCE).parallel())) is None
+    assert _op_split(_chain(Stream.of(SOURCE).parallel())) is None
 
 
 @pytest.mark.asyncio
@@ -79,7 +88,7 @@ async def test_an_order_sensitive_op_at_an_ordered_position_splits(op_cls) -> No
     stream = _with_op(Stream.of(SOURCE).parallel().map(lambda x: x), op_cls)
     # then it is the split point: it selects on position and the pipeline has
     # a position to speak of
-    assert _split_point(_chain(stream)) == 1
+    assert _op_split(_chain(stream)) == 1
 
 
 @pytest.mark.asyncio
@@ -88,7 +97,7 @@ async def test_an_order_sensitive_op_at_an_unordered_position_does_not_split(op_
     # given the same op, with unordered() queued before it
     stream = _with_op(Stream.of(SOURCE).parallel().unordered(), op_cls)
     # then the caller has said any answer will do, so no barrier is inserted
-    assert _split_point(_chain(stream)) is None
+    assert _op_split(_chain(stream)) is None
 
 
 @pytest.mark.asyncio
@@ -98,7 +107,7 @@ async def test_a_sort_splits_even_at_an_unordered_position() -> None:
     # then: a sort claims its output is ordered, so it must see the whole
     # stream to make that claim true - being at an unordered position is
     # exactly what it is entitled to change
-    assert _split_point(chain) == 1
+    assert _op_split(chain) == 1
     assert isinstance(chain[1], _SortedOp)
 
 
@@ -108,8 +117,55 @@ async def test_the_first_split_point_wins_over_a_later_one() -> None:
     chain = _chain(Stream.of(SOURCE).parallel().unordered().sorted(_asc).limit(3))
     # then it splits at the sort, not at the limit: splitting at the limit
     # would take the three smallest of a wrongly-merged sort
-    assert _split_point(chain) == 1
+    assert _op_split(chain) == 1
     assert isinstance(chain[1], _SortedOp)
+
+
+# --- the split rule, terminal clause ----------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_an_order_observing_terminal_splits_at_the_end_of_the_chain() -> None:
+    # given an ordered chain that no operation in it needs order for
+    chain = _chain(Stream.of(SOURCE).parallel().map(lambda x: x).filter(lambda x: True))
+    # then the split is past the last op: everything races and only delivery is
+    # reordered, which is the whole difference between this and a mid-chain
+    # barrier
+    assert _split_point(chain, True, True) == len(chain)
+
+
+@pytest.mark.asyncio
+async def test_an_order_blind_terminal_does_not_split() -> None:
+    # given the same chain, asked for by count()/for_each()/any_match()
+    chain = _chain(Stream.of(SOURCE).parallel().map(lambda x: x).filter(lambda x: True))
+    # then nothing is owed and nothing is paid
+    assert _split_point(chain, False, True) is None
+
+
+@pytest.mark.asyncio
+async def test_an_unordered_pipeline_does_not_split_for_its_terminal() -> None:
+    # given a pipeline the caller declared unordered
+    chain = _chain(Stream.of(SOURCE).parallel().unordered().map(lambda x: x))
+    # then the terminal's demand goes unmet by the caller's own declaration
+    assert _split_point(chain, True, True) is None
+
+
+@pytest.mark.asyncio
+async def test_an_operations_split_wins_over_the_terminals() -> None:
+    # given both clauses live at once
+    chain = _chain(Stream.of(SOURCE).parallel().map(lambda x: x).limit(3))
+    # then the operation's index wins: it is earlier, and everything past it
+    # arrives in order anyway
+    assert _split_point(chain, True, True) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_terminal_clause_reads_the_carried_ordering_seed() -> None:
+    # given a chain that says nothing about ordering, as a resumed tail is
+    chain = _chain(Stream.of(SOURCE).parallel().map(lambda x: x))
+    # then it splits or not on what the ops before the split had decided
+    assert _split_point(chain, True, True) == len(chain)
+    assert _split_point(chain, True, False) is None
 
 
 # --- the four operations, on an ordered pipeline ----------------------------
@@ -254,8 +310,11 @@ async def test_an_unordered_pipeline_pays_no_head_of_line_delay() -> None:
 async def test_unordered_applies_only_to_ops_queued_after_it() -> None:
     # when the limit is queued before unordered()
     res = await Stream.of(SOURCE).parallel().map(_slow_head).limit(SLOW_HEAD).unordered().collect(to_list())
-    # then it is still at an ordered position and still honours encounter order
-    assert res == [0, 1, 2, 3, 4]
+    # then it is still at an ordered position and still *selects* the first
+    # five in encounter order. Delivery is a separate question and the caller
+    # answered it: unordered() at the end of the chain means the collector is
+    # owed no barrier, so these five may arrive in any order.
+    assert sorted(res) == [0, 1, 2, 3, 4]
 
 
 @pytest.mark.asyncio
