@@ -20,14 +20,14 @@ value rather than a class hierarchy, `summing_int`/`summing_long` sharing a body
 `order-stateful-ops-under-racing`, `collapse-compose-into-iterator`, and
 `add-comparator-comparing` are all in **Done**. **`add-collector-characteristics`**
 (2026-08-27), **`unify-derive-signature`** (2026-08-27) and
-**`order-racing-delivery`** (2026-08-28) have landed too — see **Done**.
+**`order-racing-delivery`** (2026-08-28) and **`order-min-max-tie-breaks`**
+(2026-08-28) have landed too — see **Done**.
 
 ### Queued changes
 
-**None.** The queue is empty for the first time since 2026-08-26. What is left
-in **Now** is seven questions the roadmap has been implying without ever
-writing down; the two items in **Next** are both unblocked as of
-`order-racing-delivery` and are the readiest work.
+**None.** The queue is empty. Of the seven questions in **Now**, three are now
+resolved (1, 2 and 3) and four are open; the two items in **Next** are both
+unblocked as of `order-racing-delivery` and are the readiest work.
 
 ### Open questions needing a session
 
@@ -288,6 +288,30 @@ core semantic.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should instead be documented as intentional next to the `str`/`bytes` note. Surfaced 2026-08-20 in the same code-quality read that produced **Now** items 1-4. |
 
 ## Done
+
+- **`order-min-max-tie-breaks`** (2026-08-28) — `.parallel().min()`/`.max()`
+  now break ties in encounter order, resolving **Now** open question 3.
+  `_min_max()` declares `observes_order=True` and takes the existing terminal
+  clause in `_split_point()`; nothing in `execution.py` changed. Ties on a
+  pipeline declared `unordered()` stay unspecified, matching Java, with
+  `then_comparing()` as the lever for a caller who wants determinism without
+  the barrier.
+
+  Two facts found while writing it are why the "spec ties as unspecified"
+  option was never really open. `comparator-contract` **already required**
+  first-of-tied-in-encounter-order, so racing was violating an existing
+  requirement rather than filling a gap; and `Stream.min()` and
+  `collect(min_by(c))` **disagreed with each other**, the collectors having
+  taken the barrier all along. The cost objection did not survive either:
+  `sorted()` has always paid *more* for the same kind of determinism, splitting
+  at its own index where `min`/`max` split at `len(chain)`.
+
+  Two things landed alongside. `sorted()`'s **stability** is specified and
+  tested for the first time — it held already, but nothing said so, and
+  `racing-encounter-order` asserted the opposite in passing for the
+  `unordered()` case, which is corrected. And `collector-min-max` now
+  *requires* `min_by`/`max_by` not to declare `UNORDERED`, which takes them out
+  of open question 4 permanently instead of by convention.
 
 - **`ExceptionGroup` in `Stream.close()` is declined** (2026-08-28),
   resolving **Now** open question 2 after three batches of deferral — as a
