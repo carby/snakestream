@@ -78,6 +78,22 @@ It SHALL define exactly one member, `UNORDERED`, meaning the collector does not
 observe the encounter order of the elements it accumulates: for any two
 orderings of the same elements, the collected result SHALL be equal.
 
+Equality here SHALL mean `==` on the collected result, as the result's own type
+defines it, and nothing stronger. A collector declaring `UNORDERED` therefore
+makes **no promise about the iteration order** of the result it produces, only
+that any two orderings of the same elements produce results that compare equal.
+This mirrors Java, where `UNORDERED` states that the collection operation "does
+not commit to preserving the encounter order of input elements" — a statement
+about what is promised, not about what is detectable.
+
+A stricter reading, under which no observable property of the result may differ,
+SHALL NOT be applied. It is unsatisfiable for the containers this library
+collects into: a `set` and a `dict` each compare equal irrespective of the order
+their members were added, while each may still *iterate* in an order that
+depends on that history. Applied to iteration order, the stricter reading would
+disqualify `to_set()` — the one collector Java documents as unordered — and
+leave the characteristic with no valid declarer.
+
 `IDENTITY_FINISH` and `CONCURRENT` SHALL NOT be defined. The first is already
 observable as the absence of a finisher, and defining it would allow two
 statements of one fact to disagree. The second describes accumulating into one
@@ -96,7 +112,8 @@ capability).
 Declaring `UNORDERED` SHALL NOT change the *value* a correct collector
 produces. A collector declaring it asserts that its result is equal for any
 ordering of the same elements; where that assertion holds, the declaration is
-observable only as reduced latency and memory, never as a different result.
+observable only as reduced latency and memory, and as the iteration order of a
+result whose type does not fix one — never as a result that compares unequal.
 Where a caller declares it on a collector for which it does not hold, the
 resulting order is unspecified and the caller has broken the contract.
 
@@ -125,6 +142,12 @@ Under the sequential executor the declaration SHALL have no effect at all.
 #### Scenario: to_set() takes the order-blind path
 - **WHEN** an ordered racing pipeline is collected with `to_set()`
 - **THEN** the collected set is correct and no reorder barrier was engaged
+
+#### Scenario: Equality, not iteration order, is the test a declarer must meet
+- **WHEN** the same elements are accumulated by a collector declaring
+  `UNORDERED` in two different orders
+- **THEN** the two results compare equal under `==`, and the specification
+  requires nothing about whether the two results iterate in the same order
 
 ### Requirement: `combiner` is accepted but never invoked
 

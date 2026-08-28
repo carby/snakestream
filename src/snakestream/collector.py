@@ -46,7 +46,22 @@ class Characteristics(Enum):
     reorder barrier before delivery. Declaring it never changes the value a
     correct collector produces; it removes the head-of-line blocking and the
     reorder buffer that producing it in encounter order would cost. Under
-    SEQUENTIAL it has no effect at all."""
+    SEQUENTIAL it has no effect at all.
+
+    Equal means `==` on the collected result, as that result's own type
+    defines it, and nothing stronger. A collector declaring `UNORDERED` makes
+    no promise whatever about the *iteration order* of what it produces - only
+    that two orderings of the same elements compare equal. Java says the same
+    thing from the other side: the collection operation "does not commit to
+    preserving the encounter order of input elements", which is a statement
+    about what is promised, not about what is detectable.
+
+    The stricter reading - that no observable property of the result may
+    differ - is not the rule, and cannot be: a CPython `set` built from the
+    same members in two orders compares equal while iterating differently, so
+    the strict reading would disqualify `to_set()`, the one collector Java
+    documents as unordered, and leave the characteristic with no declarer at
+    all."""
 
     UNORDERED = auto()
 

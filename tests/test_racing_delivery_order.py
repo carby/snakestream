@@ -18,7 +18,7 @@ import pytest
 
 from snakestream import Stream
 from snakestream.collector import Characteristics, Collector, to_generator
-from snakestream.collectors import to_list, to_set
+from snakestream.collectors import grouping_by, partitioning_by, to_list, to_set
 from snakestream.execution import _READ_AHEAD
 
 
@@ -179,6 +179,59 @@ async def test_to_set_takes_the_order_blind_path() -> None:
     res = await Stream.of(SOURCE).parallel().map(_slow_head).collect(to_set())
     # then the result is right and no order was owed to get it
     assert res == set(SOURCE)
+
+
+@pytest.mark.asyncio
+async def test_grouping_by_into_an_unordered_downstream_skips_the_barrier() -> None:
+    # given a downstream that declares UNORDERED but records what it was fed,
+    # so the delivery order of an unordered grouping is visible
+    recording = Collector(list, list.append, characteristics=(Characteristics.UNORDERED,))
+    assert Characteristics.UNORDERED in grouping_by(lambda n: 0, recording).characteristics
+
+    # when one group takes the whole source
+    res = await Stream.of(SOURCE).parallel().map(_slow_head).collect(grouping_by(lambda n: 0, recording))
+
+    # then the group holds every element and no barrier put them back in order
+    assert sorted(res[0]) == SOURCE
+    assert res[0] != SOURCE
+
+
+@pytest.mark.asyncio
+async def test_grouping_by_into_a_set_collects_correctly_under_racing() -> None:
+    res = await Stream.of(SOURCE).parallel().map(_slow_head).collect(grouping_by(lambda n: n % 3, to_set()))
+    assert res == {0: {0, 3, 6, 9, 12, 15, 18}, 1: {1, 4, 7, 10, 13, 16, 19}, 2: {2, 5, 8, 11, 14, 17}}
+
+
+@pytest.mark.asyncio
+async def test_partitioning_by_into_an_unordered_downstream_skips_the_barrier() -> None:
+    recording = Collector(list, list.append, characteristics=(Characteristics.UNORDERED,))
+    assert Characteristics.UNORDERED in partitioning_by(lambda n: True, recording).characteristics
+
+    # when every element lands in the True partition
+    res = await Stream.of(SOURCE).parallel().map(_slow_head).collect(partitioning_by(lambda n: True, recording))
+
+    # then it holds every element, in the race's order rather than encounter order
+    assert sorted(res[True]) == SOURCE
+    assert res[True] != SOURCE
+    assert res[False] == []
+
+
+@pytest.mark.asyncio
+async def test_partitioning_by_into_a_set_collects_correctly_under_racing() -> None:
+    res = await Stream.of(SOURCE).parallel().map(_slow_head).collect(partitioning_by(lambda n: n % 2 == 0, to_set()))
+    assert res == {True: {n for n in SOURCE if n % 2 == 0}, False: {n for n in SOURCE if n % 2}}
+
+
+@pytest.mark.asyncio
+async def test_equality_not_iteration_order_is_what_a_declarer_must_meet() -> None:
+    # given the same elements accumulated by a declaring collector in two
+    # orders - the CPython set whose iteration order depends on that history
+    forward = [0, 8, 16, 24, 32]
+    one = await Stream.of(forward).collect(to_set())
+    other = await Stream.of(list(reversed(forward))).collect(to_set())
+
+    # then the contract is met by ==, and says nothing about how either iterates
+    assert one == other
 
 
 @pytest.mark.asyncio

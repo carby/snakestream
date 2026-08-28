@@ -3,7 +3,7 @@ import asyncio
 import pytest
 
 from snakestream.collector import Characteristics
-from snakestream.collectors import counting, grouping_by, joining, to_set
+from snakestream.collectors import counting, grouping_by, joining, mapping, to_list, to_set
 from snakestream.stream import Stream
 
 
@@ -75,5 +75,33 @@ async def test_grouping_by_only_present_keys_get_downstream_reduced_entry() -> N
     assert 4 not in result
 
 
-def test_grouping_by_does_not_report_unordered_even_with_unordered_downstream() -> None:
-    assert Characteristics.UNORDERED not in grouping_by(len, to_set()).characteristics
+def test_grouping_by_reports_unordered_with_an_unordered_downstream() -> None:
+    assert Characteristics.UNORDERED in grouping_by(len, to_set()).characteristics
+
+
+def test_grouping_by_does_not_report_unordered_with_an_ordered_downstream() -> None:
+    assert Characteristics.UNORDERED not in grouping_by(len, to_list()).characteristics
+
+
+def test_grouping_by_default_downstream_is_ordered() -> None:
+    # the default collects each group into a list, which observes order
+    assert Characteristics.UNORDERED not in grouping_by(len).characteristics
+
+
+def test_grouping_by_derivation_composes_through_nesting() -> None:
+    # derived through the adapter to the innermost downstream
+    assert Characteristics.UNORDERED in grouping_by(len, mapping(str, to_set())).characteristics
+
+
+@pytest.mark.asyncio
+async def test_grouping_by_into_a_set_collects_equal_in_either_order() -> None:
+    # given the same elements in two orders
+    forward = [0, 8, 16, 24, 32]
+    backward = list(reversed(forward))
+
+    # when
+    one = await Stream.of(forward).collect(grouping_by(lambda n: n % 3, to_set()))
+    other = await Stream.of(backward).collect(grouping_by(lambda n: n % 3, to_set()))
+
+    # then the declared characteristic is true of the behaviour
+    assert one == other
