@@ -1,40 +1,4 @@
-## Purpose
-
-Defines how a stream's execution mode is carried and applied: an executor value
-held by the stream, a two-method executor protocol, which executor a terminal
-uses, the rule that a terminal requiring encounter order names its executor
-explicitly instead of depending on the stream's, and the second axis alongside
-it: whether a terminal observes encounter order at all, which is what decides
-whether the executor owes it.
-
-## Requirements
-
-### Requirement: Execution mode is a value carried by the stream
-
-A stream SHALL hold its execution mode as a value (an executor), not as its
-type. There SHALL be exactly one sequential executor and one racing executor,
-and a stream SHALL carry exactly one of them at any time. No stream subclass
-SHALL exist for the purpose of encoding execution mode.
-
-`is_parallel()` SHALL report the mode from that value.
-
-#### Scenario: A sequentially-built stream reports sequential
-- **WHEN** `Stream.of([1, 2, 3]).is_parallel()` is called
-- **THEN** the result is `False`
-
-#### Scenario: A parallel stream reports parallel
-- **WHEN** `Stream.of([1, 2, 3]).parallel().is_parallel()` is called
-- **THEN** the result is `True`
-
-#### Scenario: Intermediate operations carry the executor forward
-- **WHEN** an intermediate operation is called on a parallel stream
-- **THEN** the returned stream reports `is_parallel()` as `True`
-
-#### Scenario: A user subclass survives a mode switch
-- **WHEN** `.parallel()` and then `.sequential()` are called on an instance of a
-  user-defined `class MyStream(Stream)`
-- **THEN** each returned instance is a `MyStream`, not a plain `Stream`, matching
-  how intermediate operations already preserve subclass identity
+## MODIFIED Requirements
 
 ### Requirement: The executor protocol has exactly two operations
 
@@ -174,18 +138,6 @@ one. `find_any()` is where a caller who wants the race goes.
 #### Scenario: find_any remains the unordered alternative
 - **WHEN** `find_any()` is called on a parallel stream
 - **THEN** it runs under the stream's own executor and may return any element
-
-### Requirement: PROCESSES is part of the package's public export surface
-
-`PROCESSES`, the tunable worker count the racing executor is built from, SHALL
-be importable directly from the top-level `snakestream` package, not only from
-`snakestream.execution`.
-
-#### Scenario: PROCESSES is importable from the top-level package
-
-- **WHEN** a caller writes `from snakestream import PROCESSES`
-- **THEN** the import succeeds and yields the same `int` value as
-  `snakestream.execution.PROCESSES`
 
 ### Requirement: Source acceptance does not depend on execution mode
 

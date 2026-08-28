@@ -47,7 +47,8 @@ Execution mode is a **value, not a type**. There is no `ParallelStream` class. `
 ```
 stream_through(chain, src)          -> AsyncGenerator   one worker, elements out lazily
 group_through(chain, src, state)    -> AsyncGenerator   one worker, (index, outputs) per source element
-race_through(chain, src, workers)   -> AsyncGenerator   N branches racing one shared source
+race_through(chain, src, workers, ordered)
+                                    -> AsyncGenerator   N branches racing one shared source
 feed_through(chain, src, terminal)  -> value            fused push, nothing buffered
 drain(elements, terminal)           -> value            any generator into a terminal
 
@@ -57,21 +58,69 @@ RACING.elements     = race_through        RACING.value     = inherited generic
 
 `Executor.value()`'s generic default is `drain(self.elements(...), terminal)`, which `Racing` uses unchanged — each racing branch owns its own sink chain, so there is no single chain to fuse a terminal onto. `Sequential.value()` overrides it with the fused push purely on measurement: composing and then draining costs +125% per element on `count()`. That override is the one asymmetry in the protocol; its docstring carries the figures.
 
-A stream consults its executor in exactly two places: `iterator()` (`self._executor.elements(...)`) and `_evaluate()` (`self._executor.value(...)`). A terminal that needs encounter order regardless of the stream's mode names `SEQUENTIAL` explicitly at its own call site: `find_first()` always and unconditionally, and `for_each_ordered()` when `_is_ordered()` — the private fold over the chain's ordering characteristic, whose sole caller that is. That is why `find_first` has one implementation rather than a per-mode pair. `_is_ordered()` is deliberately not public: Java exposes only `isParallel()` and keeps `ORDERED` in the package-private `StreamOpFlag`.
+A stream consults its executor in exactly two places: `iterator()` (`self._executor.elements(...)`) and `_evaluate()` (`self._executor.value(...)`). Both operations carry the consumer's `observes_order` declaration alongside the chain and the source — a second axis, orthogonal to which executor is named, and the input to the delivery barrier described below. A terminal that needs encounter order regardless of the stream's mode names `SEQUENTIAL` explicitly at its own call site: `find_first()` always and unconditionally, and `for_each_ordered()` when `_is_ordered()` — the private fold over the chain's ordering characteristic, whose sole caller that is. That is why `find_first` has one implementation rather than a per-mode pair. `_is_ordered()` is deliberately not public: Java exposes only `isParallel()` and keeps `ORDERED` in the package-private `StreamOpFlag`.
 
 `.parallel()` / `.sequential()` each derive with no op and their target executor — `_derive()` with its `op` argument omitted and `executor` set to `RACING`/`SEQUENTIAL` — giving a new stream over the **same source and same chain**, differing only in its executor, with the receiver consumed. `sequential()`'s docstring carries the rules both obey and `parallel()` points at it. They deliberately do **not** compose — that is what makes them position-independent, matching Java, where `parallel()` sets a flag on the source stage. The last mode switch before a terminal governs the whole pipeline.
 
 ### The ordering barrier
 
-Racing destroys encounter order at the `FIRST_COMPLETED` merge, so an operation whose answer depends on an element's *position* — `sorted()`, `limit()`, `skip()`, `distinct()` — cannot be right there unless order is put back first. `race_through()` therefore has a second gear, and whether it engages is a property of the chain, not of the executor:
+Racing destroys encounter order at the `FIRST_COMPLETED` merge. Two things want
+it back, and one mechanism gives it to both: `race_through()` has a second gear,
+and whether it engages is a property of the chain plus the consumer, not of the
+executor.
 
-`_split_point(chain)` finds the first op that either declares `Ordering.SET` (`sorted()`, wherever it sits — a sort claims its output is ordered, so it must see the whole stream) or declares `order_sensitive` **and** sits at a position `is_ordered()` reports ordered (`limit`/`skip`/`distinct`). When there is none — including every pipeline the caller declared `unordered()` before such an op — `race_through()` runs exactly the code it always did, at the same per-element cost.
+`_split_point(chain, observes_order, ordered_in)` returns where order has to be
+restored. Three clauses, first hit wins:
 
-When there is one, the chain splits there. The head races across branches as ever, but over `_guarded(shared, lock, window)`, which tags each element with the source index it assigns under the lock — the last point at which pull order still *is* encounter order. Each branch runs `group_through()` rather than `stream_through()`, yielding `(index, outputs)`: everything the head emitted for one source element, since a head chain does not preserve one output per input (`filter` drops, `flat_map` multiplies) and the group is the invariant a per-element tag is not. `_release_in_order()` holds arriving groups until every earlier index has gone out, and `_run_ordered_tail()` runs the rest as one ordered sink chain — up to any `unordered()` in the tail, from which it hands back to `race_through()` and races afresh (`_resume_point()`).
+- an op declaring `Ordering.SET` (`sorted()`, wherever it sits — a sort claims
+  its output is ordered, so it must see the whole stream), or
+- an op declaring `order_sensitive` **and** sitting at a position
+  `is_ordered()` reports ordered (`limit`/`skip`/`distinct`) — an operation
+  whose answer depends on an element's *position*, and
+- `len(chain)`, when the **terminal** observes encounter order and the pipeline
+  is ordered at the end of the chain. A split at the end means every op still
+  races and only delivery is reordered, which is Java's shape and costs no
+  per-element concurrency.
 
-Read-ahead is bounded by `_READ_AHEAD`, enforced in `_guarded()` where the index is assigned — the only place a pull happens, so the bound costs no new synchronisation point. A branch waits *outside* the lock and re-checks after acquiring it; waiting while holding it would stall the very branch the merge is waiting for. Head-of-line blocking remains, as it must; `unordered()` is the escape hatch, and is what makes it a real performance lever rather than a semantic footnote.
+When there is no split — every pipeline the caller declared `unordered()` before
+the relevant point, and every order-blind terminal — `race_through()` runs
+exactly the code it always did, at the same per-element cost.
 
-The split is internal. It is not a third executor, is not selectable, and `is_parallel()` still reports the executor the stream carries.
+When there is one, the chain splits there. The head races across branches as
+ever, but over `_guarded(shared, lock, window)`, which tags each element with
+the source index it assigns under the lock — the last point at which pull order
+still *is* encounter order. Each branch runs `group_through()` rather than
+`stream_through()`, yielding `(index, outputs)`: everything the head emitted for
+one source element, since a head chain does not preserve one output per input
+(`filter` drops, `flat_map` multiplies) and the group is the invariant a
+per-element tag is not. `_release_in_order()` holds arriving groups until every
+earlier index has gone out, and `_run_ordered_tail()` takes the rest: the
+barrier op alone runs in one ordered pass, and **everything after it races**,
+re-entering `race_through()` with `ordered_in` carrying the ordering
+characteristic across the split. So `.limit(n).map(fetch)` races the `map`, and
+an order-observing terminal downstream of it gets its own delivery barrier from
+the resumed race. `is_ordered(chain, upto, initial)`'s `initial` seed exists for
+exactly that re-entry: a suffix's ordering was decided by ops no longer in the
+list.
+
+Which terminals observe order is declared at each terminal's own call site, as
+a bool passed to `_evaluate()` and on through `Executor.value()`/`elements()`.
+`count()`, `for_each()`, `find_any()`, `max`/`min` and the `*_match` family
+declare `False` and pay nothing; `reduce()`, `to_array()`, the three-argument
+`collect()` and `iterator()` declare `True`; `collect(collector)` reads the
+collector's `Characteristics.UNORDERED`. `find_first()` and `for_each_ordered()`
+still name `SEQUENTIAL` at their own call sites and are untouched by this.
+
+Read-ahead is bounded by `_READ_AHEAD`, enforced in `_guarded()` where the index
+is assigned — the only place a pull happens, so the bound costs no new
+synchronisation point. A branch waits *outside* the lock and re-checks after
+acquiring it; waiting while holding it would stall the very branch the merge is
+waiting for. Head-of-line blocking remains, as it must; `unordered()` is the
+escape hatch, and is what makes it a real performance lever rather than a
+semantic footnote.
+
+The split is internal. It is not a third executor, is not selectable, and
+`is_parallel()` still reports the executor the stream carries.
 
 ### Collectors
 
@@ -82,9 +131,8 @@ callable, so it is neither invoked nor awaited) mirroring Java's
 `Collector.Characteristics` — and drives the composed chain into a
 `_CollectorSink` built from it. `Characteristics` ships one member,
 `UNORDERED`, declared by `to_set()` and derived by `mapping()`/
-`collecting_and_then()` from their downstream; nothing reads it yet, and it
-exists as the prerequisite an ordered-racing change (see roadmap.md) will read
-to skip a reorder barrier for collectors that don't need it. The two halves
+`collecting_and_then()` from their downstream. `collect()` reads it to decide
+whether the racing executor owes the collector a reorder barrier. The two halves
 live in two modules, on Java's own naming:
 `collector.py` holds the *protocol* (`Collector`, `_CollectorSink`,
 `StreamingCollector`, `to_generator`), and `collectors.py` holds the ~20

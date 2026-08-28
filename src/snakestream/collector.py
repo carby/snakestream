@@ -39,11 +39,14 @@ class Characteristics(Enum):
     it. Real partitioned execution belongs to the roadmap's Later, and that is
     where `CONCURRENT` belongs too.
 
-    Nothing in the library reads `UNORDERED` yet - it is a declaration a
-    collector makes about itself, not an instruction to the pipeline. The
-    roadmap's Next item 1 (an ordered racing pipeline delivers in encounter
-    order) is what will read it, to let a terminal that does not observe
-    encounter order skip the reorder barrier."""
+    `UNORDERED` is a declaration a collector makes about itself - that any two
+    orderings of the same elements collect to an equal result - rather than an
+    instruction to the pipeline. Stream.collect() reads it, and it is the only
+    reader: under RACING it decides whether the executor owes the collector a
+    reorder barrier before delivery. Declaring it never changes the value a
+    correct collector produces; it removes the head-of-line blocking and the
+    reorder buffer that producing it in encounter order would cost. Under
+    SEQUENTIAL it has no effect at all."""
 
     UNORDERED = auto()
 
