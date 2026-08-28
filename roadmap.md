@@ -40,20 +40,8 @@ sorted in, so the numbering above stays stable.
 **1. `Comparator.thenComparing()` — resolved, landed as `add-comparator-chaining`
 (2026-08-28).** See **Done**.
 
-**2. `ExceptionGroup` in `Stream.close()` — parked since 2026-08-25 and still
-needing a yes or no.** `close()` collects every handler exception, raises the
-first, and attaches the rest via `add_note()` on 3.11+. `ExceptionGroup` is the
-built-in for exactly this and would make the other failures programmatically
-catchable rather than merely readable. Parked because it re-opens a decision
-taken hours earlier in story 2(c), and because the rule it would change is
-pinned in three places: the `stream-close-handling` spec ("Requirement:
-`close()` invokes every registered close handler"), `tests/test_close.py`'s
-`test_close_with_multiple_raising_handlers_runs_all_and_raises_first`, and the
-`noqa: PERF203` on that loop whose stated reason is the run-every-handler
-contract. It would also need a `sys.version_info >= (3, 11)` fork, since 3.10
-is the floor. **Belongs in Later if the answer is "not now" — but it needs an
-answer rather than another deferral**, this being the third batch it has sat
-through.
+**2. `ExceptionGroup` in `Stream.close()` — resolved 2026-08-28, and the
+answer is no.** See **Done**.
 
 **3. `.parallel().min()` / `.max()` tie-breaking is an unspecified divergence
 today.** `comparator-contract` requires first-of-tied-elements-wins, and
@@ -274,6 +262,41 @@ core semantic.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should instead be documented as intentional next to the `str`/`bytes` note. Surfaced 2026-08-20 in the same code-quality read that produced **Now** items 1-4. |
 
 ## Done
+
+- **`ExceptionGroup` in `Stream.close()` is declined** (2026-08-28),
+  resolving **Now** open question 2 after three batches of deferral — as a
+  decision this time, not a fourth park. No code changed; the rationale is now
+  written into the `stream-close-handling` spec, beside the rule it explains,
+  which is what stops the question being re-asked.
+
+  The objection recorded on 2026-08-18 was only ever "the CI matrix still
+  targets Python 3.10", which needs a `sys.version_info >= (3, 11)` fork —
+  an objection with an expiry date, since 3.10 leaves the matrix in October
+  2026. That is not why the answer is no. Java's `AbstractPipeline.close()`
+  composes handlers through `Streams.composeWithExceptions()`: it runs every
+  handler, calls `addSuppressed()` on the first exception for each later one,
+  and rethrows *the first*. Java never throws a composite here. So
+  first-exception-wins-with-the-rest-attached is the contract, and `add_note()`
+  is its faithful Python spelling rather than a compromise forced by the
+  version floor. An `ExceptionGroup` changes which type escapes `close()` —
+  `except ValueError` around a `close()` silently stops matching — which is a
+  divergence in *observable API behaviour*, the one category the guiding
+  principle calls a defect.
+
+  The case against, kept because it is not weak: PEP 654's own motivating
+  example is multiple failures during cleanup, and a caller of an async-first
+  library already handles `ExceptionGroup` from `asyncio.TaskGroup` and
+  already writes `except*`. It loses on cost/benefit rather than on principle
+  — two or more close handlers that both raise is the rare branch of a rare
+  branch, programmatic catchability of the *second* failure buys nearly
+  nothing over a note in the traceback, and the type change is paid by every
+  caller. The `exceptiongroup` backport would remove the version fork at the
+  price of this library's first runtime dependency, for its rarest code path;
+  ruled out on sight.
+
+  Nothing was touched but the spec: `stream.py`'s `close()`, both multi-raise
+  tests, and the `noqa: PERF203` (whose stated reason — the run-every-handler
+  contract — is unaffected either way) all stand unchanged.
 
 - **`Comparator.thenComparing()`/`reversed()` chaining lands** (2026-08-28),
   resolving **Now** open question 1. The previously-private `_KeyComparator`

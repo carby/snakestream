@@ -24,6 +24,8 @@ Defines the `on_close()`/`close()` close-handler contract on `Stream`, regardles
 
 When more than one handler raised, `close()` SHALL NOT discard the later exceptions. On interpreters that support attaching explanatory notes to an exception (Python 3.11 and later), `close()` SHALL attach one note per later exception to the exception it raises, in encounter order, each identifying that exception, so that the propagated traceback shows every failure. Which exception is raised SHALL remain the first one regardless: the notes are additional detail, not a change to what propagates. On interpreters without note support (Python 3.10), `close()` SHALL raise the first exception exactly as specified above, unmodified.
 
+`close()` SHALL NOT raise a composite exception (an `ExceptionGroup`) when more than one handler raised, on any interpreter. Java's `AbstractPipeline.close()` composes its handlers through `Streams.composeWithExceptions()`, which runs every handler, calls `addSuppressed()` on the first exception for each later one, and rethrows that first exception; it never throws a composite. First-exception-wins-with-the-rest-attached is therefore the contract being matched, and `add_note()` is its Python spelling — the same exception propagates, the rest ride along as detail. Raising an `ExceptionGroup` would change which exception type escapes `close()`, and so would be a divergence in observable API behaviour rather than an internal one. This is a settled decision, not a deferral pending the Python 3.10 floor.
+
 #### Scenario: close() with no handlers registered
 
 - **WHEN** `close()` is called on a stream with no close handlers registered
