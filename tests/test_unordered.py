@@ -4,6 +4,10 @@ import pytest
 
 from snakestream.collectors import to_list
 from snakestream.exception import IllegalStateException
+from conftest import TIE_SOURCE, TIED_EARLY, TIED_LATE, by_key, overtaken
+from snakestream.comparator import comparing
+from snakestream.execution import _split_point
+from snakestream.ops import _MapOp
 from snakestream.stream import Stream
 
 
@@ -284,3 +288,45 @@ async def test_the_public_ordering_accessor_does_not_exist() -> None:
     assert not hasattr(stream, "is_ordered")
     with pytest.raises(AttributeError):
         stream.is_ordered()  # type: ignore[attr-defined]
+
+
+# --- unordered() releases min()/max() from the delivery barrier --------------
+#
+# comparator-contract specifies ties as *unspecified* here, matching Java, whose
+# parallel min()/max() on an unordered pipeline may break ties any way. What is
+# specified is that the value is still right, that no barrier is engaged, and
+# that a caller who wants determinism has a lever that does not cost one: a
+# total comparator via then_comparing(). See conftest for the source.
+
+
+@pytest.mark.asyncio
+async def test_unordered_max_returns_one_of_the_tied_records() -> None:
+    # when
+    it = await Stream.of(TIE_SOURCE).parallel().unordered().map(overtaken).max(by_key)
+    # then - either is valid; the extreme key is not
+    assert it in (TIED_EARLY, TIED_LATE)
+    assert it[1] == 5
+
+
+@pytest.mark.asyncio
+async def test_unordered_max_engages_no_delivery_barrier() -> None:
+    # given: a chain with no order-sensitive op, so the terminal's own
+    # declaration is the only thing that could split it
+    chain = [_MapOp(overtaken)]
+
+    # then: max() observes order, but unordered() clears the characteristic
+    assert _split_point(chain, observes_order=True, ordered_in=True) == len(chain)
+    assert _split_point(chain, observes_order=True, ordered_in=False) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("run", range(3))
+async def test_a_total_comparator_is_determinate_on_an_unordered_pipeline(run) -> None:
+    # given: the tie broken by data rather than by position
+    total = comparing(lambda pair: pair[1]).then_comparing(lambda pair: pair[0])
+
+    # when
+    it = await Stream.of(TIE_SOURCE).parallel().unordered().map(overtaken).max(total)
+
+    # then: "late" > "early" on the tie-break segment, on every run
+    assert it == TIED_LATE

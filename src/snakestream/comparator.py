@@ -18,6 +18,15 @@ def is_new_extremum(sign: int, asc: bool) -> bool:
     positive if after. found - the earlier element - is kept on a tie, which is
     what makes both forms first-of-tied-wins.
 
+    "Earlier" means earlier in *encounter order*, not earlier to arrive. This
+    function only ever sees the order its caller was fed, so the guarantee is
+    the caller's to arrange: Stream.min()/max() declare observes_order=True and
+    min_by()/max_by() decline Characteristics.UNORDERED, so both take the
+    racing executor's delivery barrier and both agree with the sequential
+    answer. On a pipeline declared unordered() neither takes it and which of
+    two tied elements wins is unspecified, matching Java - see
+    comparator-contract, which states the rule for sorted() too, as stability.
+
     Sync, and takes an already-awaited sign: it sits on the per-element path of
     both callers, so it replaces their existing check_comparator_result_type()
     call rather than adding a second one. The type test is inlined and only the

@@ -67,12 +67,11 @@ def counting() -> Collector[Any, Any, int]:
     # grouping_by, partitioning_by) CH_ID/CH_NOID rather than CH_UNORDERED_ID,
     # because Java's UNORDERED governs its combine strategy, where an
     # associative reduction is safe either way and the mark buys nothing.
-    # Under the roadmap's item 1 the mark would buy skipping the reorder
-    # barrier here - a real divergence from Java, and item 1's to weigh with a
-    # benchmark, not this change's to decide by inspection. min_by/max_by are
-    # excluded from that reconsideration regardless: is_new_extremum() keeps
-    # the earlier element on a tie, so which of two equal elements is returned
-    # is an encounter-order question, not an order-blind one.
+    # Now that order-racing-delivery has landed the mark would buy skipping the
+    # reorder barrier here - a real divergence from Java, and the roadmap's open
+    # question 4 to weigh with a benchmark, not this change's to decide by
+    # inspection. min_by/max_by are excluded from that reconsideration for good:
+    # collector-min-max requires them not to declare UNORDERED.
     def _accumulate(container: Box, element: Any) -> None:
         container.value += 1
 

@@ -2,7 +2,7 @@ import pytest
 import asyncio
 
 from snakestream import Stream
-from conftest import MyObject
+from conftest import MyObject, TIE_SOURCE, TIED_EARLY, by_key, overtaken
 
 
 @pytest.mark.asyncio
@@ -151,3 +151,28 @@ async def test_find_min_value_rejects_async_bool_comparator():
     # when / then
     with pytest.raises(TypeError):
         await Stream.of(input_list).min(async_comparator)
+
+
+# --- tie-breaking under the racing executor -----------------------------
+#
+# The mirror of test_max.py's pair; see conftest for the source. min() ties on
+# the same two records because by_key's extreme is shared by both, so an
+# ascending fold reaches the same tie from the other side.
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("run", range(3))
+async def test_ordered_racing_min_keeps_the_first_of_tied_elements(run):
+    # when
+    it = await Stream.of(TIE_SOURCE).parallel().map(overtaken).filter(lambda p: p[1] == 5).min(by_key)
+    # then - the earlier in encounter order, not the earlier to arrive
+    assert it == TIED_EARLY
+
+
+@pytest.mark.asyncio
+async def test_ordered_racing_min_agrees_with_the_sequential_answer():
+    # when
+    racing = await Stream.of(TIE_SOURCE).parallel().map(overtaken).filter(lambda p: p[1] == 5).min(by_key)
+    sequential = await Stream.of(TIE_SOURCE).map(overtaken).filter(lambda p: p[1] == 5).min(by_key)
+    # then
+    assert racing == sequential == TIED_EARLY

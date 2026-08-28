@@ -43,26 +43,31 @@ sorted in, so the numbering above stays stable.
 **2. `ExceptionGroup` in `Stream.close()` — resolved 2026-08-28, and the
 answer is no.** See **Done**.
 
-**3. `.parallel().min()` / `.max()` tie-breaking is an unspecified divergence
-today.** `comparator-contract` requires first-of-tied-elements-wins, and
-`is_new_extremum()` implements it by keeping the earlier element. Under racing,
-"earlier" means earliest to *arrive*, not earliest in encounter order, so which
-of two equal-comparing distinguishable elements is returned is currently
-arbitrary — where Java's parallel `min()` reduces with `BinaryOperator.minBy`
-and keeps the first in encounter order. No spec says either way. Found
-2026-08-27 while re-reading `comparator.py`. **This item predicted its own
-answer wrong and the prediction is worth keeping.** It expected
-`order-racing-delivery` to fix the divergence as a side effect, on the
-assumption that `min`/`max` would land in the order-observing column of that
-change's terminal table. They landed in the *order-blind* column instead
-(2026-08-28), and deliberately: ordering delivery would charge every racing
-`min()`/`max()` the full barrier — head-of-line blocking and a reorder buffer —
-to buy nothing but deterministic tie-breaking, on a fold whose value is
-otherwise identical in any order. So the divergence **stands**, is now a
-conscious one rather than an unexamined one, and still has no spec and no test.
-The choice left is to state first-in-encounter-order as the contract and pay
-the barrier for it, or to spec ties under racing as unspecified and say so in
-`comparator-contract` and the README. Either needs a scenario.
+**3. `.parallel().min()` / `.max()` tie-breaking — resolved 2026-08-28, and
+the answer is to pay the barrier.** Landed as `order-min-max-tie-breaks`; see
+**Done**. **This item predicted its own answer wrong twice and both predictions
+are worth keeping.** It first expected `order-racing-delivery` to fix the
+divergence as a side effect; `min`/`max` landed in that change's *order-blind*
+column instead, deliberately, on the reasoning that ordering delivery would buy
+nothing but deterministic tie-breaking on a fold whose value is identical in any
+order. It then framed the remaining choice as "state the contract and pay the
+barrier, or spec ties as unspecified" — and the second option was never really
+open. Two facts found while writing the change closed it:
+
+- `comparator-contract` **already required** first-of-tied-in-encounter-order
+  ("retain the earlier-encountered element"). The racing path was violating an
+  existing requirement, not filling a gap. The item's "no spec says either way"
+  was simply wrong.
+- `Stream.min()` and `collect(min_by(c))` **disagreed with each other**. The
+  collectors declare no `UNORDERED`, so they took the barrier and were already
+  deterministic, while `Stream.min()` was not — two callers of
+  `is_new_extremum()`, which calls itself the one home for the rule, giving
+  different answers on the same pipeline.
+
+The cost objection did not survive either, because `sorted()` — the same shape
+of question, where only tie identity varies — has always paid *more*: it splits
+at its own index, so its whole head is barriered, where `min`/`max` split at
+`len(chain)` and everything still races.
 
 **4. Marking the collectors Java leaves unmarked — deferred twice now, and `add-collector-characteristics` (landed) hands the question on again as designed.**
 `add-collector-characteristics` shipped `Characteristics`/`UNORDERED`,
@@ -84,8 +89,10 @@ rule the next pass either brings a benchmark of these specific collectors under
 an ordered racing pipeline or the answer is no.** The benchmark to run is
 narrow: `counting()` and `grouping_by()` with and without the mark, on the two
 shapes `race_through()`'s docstring already covers, since the +33% figure is the
-whole of what the mark would recover. `min_by`/`max_by` are excluded regardless,
-for the reason in item 3 above.
+whole of what the mark would recover. `min_by`/`max_by` are excluded permanently and no longer by convention:
+`collector-min-max` now *requires* them not to declare `UNORDERED`, so the
+marking pass has one fewer thing to weigh (`order-min-max-tie-breaks`,
+2026-08-28).
 
 **5. Enumerate the remaining Java-8 parity gaps, once, concretely.** Three
 places in this file offer "the Java-8 parity gaps README still tracks as
@@ -241,6 +248,25 @@ move. What is new alongside it is the delivery-barrier benchmark
 other half of what a spec for this knob has to state: 10.01 vs 7.51 us/element
 ordered vs `unordered()` on a chain too cheap to race, and no measurable
 difference at all on IO-bound work.
+
+**Measurement worth keeping: the delivery barrier is 50/50** (taken 2026-08-28
+while pricing the rejected alternative in `order-min-max-tie-breaks`; 20,000
+elements, `map(x + 1)`, 4 workers, Python 3.14.5, best of 5, all three draining
+into the same counting sink):
+
+```
+  baseline (unordered)      7.32 us/element   stream_through + plain merge
+  tagged, unmerged          8.03 us/element   group_through  + plain merge       +9.7%
+  reorder barrier           8.71 us/element   group_through  + _release_in_order  +19%
+```
+
+The tagging half is 0.71 us/element and the reordering half 0.68 — so anyone
+cheapening the ordered racing path has two roughly equal targets, not one, and
+`group_through()` is the harder of them to remove (the chain drops and
+multiplies, so a per-element tag has no answer and the group is the invariant).
+This is a whole-path number: it would pay off for every order-observing terminal
+at once, which is why `order-min-max-tie-breaks` declined to spend it on two.
+Anyone picking this up starts here rather than from scratch.
 
 Refill from **Now**'s open questions, which is where the loose ends now live —
 `thenComparing()` is the readiest of them, and question 5 exists to turn "the

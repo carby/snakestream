@@ -410,10 +410,14 @@ class Stream(Generic[T]):
         return await self._min_max(comparator, asc=True)
 
     async def _min_max(self, comparator: Comparator[T], asc: bool) -> T | None:
-        # a comparison fold over the same elements gives the same extreme in
-        # any order, so ordering delivery would buy nothing. Ties resolve to
-        # whichever candidate arrives first, as they do under racing today.
-        return await self._evaluate(_MinMaxSink(comparator, asc), False)
+        # the *value* is the same in any order, but which of two equal-comparing
+        # distinguishable elements is returned is not, and comparator-contract
+        # requires the first in encounter order. Hence True, not False: this is
+        # the one place a fold's identity depends on delivery order. It buys the
+        # cheapest split there is - at len(chain), so every op still races and
+        # only the handing over is ordered - and unordered() releases it, which
+        # is where a caller who would rather have the concurrency goes.
+        return await self._evaluate(_MinMaxSink(comparator, asc), True)
 
     async def _match(self, predicate: Predicate[T], short_circuit_on: bool, default: bool) -> bool:
         # a predicate over the whole stream has one answer whatever the order
