@@ -671,3 +671,56 @@ async def test_a_head_cancelled_before_its_first_pull_yields_nothing() -> None:
     # then
     assert res == []
     assert seen == []
+
+
+# --- a racing sort is stable, ordered or not ---------------------------------
+#
+# _SortedOp declares Ordering.SET and _split_point()'s first clause fires on it
+# unconditionally, so a sort sees the whole stream in encounter order wherever
+# it sits - including on a pipeline declared unordered(), where a sort left in
+# the raced head would sort each branch's subset instead. That makes the sort's
+# tie order encounter order, which is what stability means here.
+
+_TIED = [("a", 5), ("b", 3), ("c", 5), ("d", 1), ("e", 3), ("f", 5)]
+_SORTED_BY_SECOND = [("d", 1), ("b", 3), ("e", 3), ("a", 5), ("c", 5), ("f", 5)]
+
+
+def _by_second(x, y):
+    return x[1] - y[1]
+
+
+async def _jittered(pair):
+    """Later elements are cheaper, so the branches finish out of encounter
+    order and an unstable sort would show it."""
+    await asyncio.sleep(0.02 if pair[0] in ("a", "b") else 0.001)
+    return pair
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("run", range(3))
+async def test_a_racing_sort_is_stable(run) -> None:
+    # when
+    it = await Stream.of(_TIED).parallel().map(_jittered).sorted(_by_second).collect(to_list())
+    # then
+    assert it == _SORTED_BY_SECOND
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("run", range(3))
+async def test_a_sort_on_an_unordered_pipeline_is_stable(run) -> None:
+    # when
+    it = await Stream.of(_TIED).parallel().unordered().map(_jittered).sorted(_by_second).collect(to_list())
+    # then: the sort still saw the whole stream, in encounter order
+    assert it == _SORTED_BY_SECOND
+
+
+@pytest.mark.asyncio
+async def test_an_unordered_sort_sorts_the_whole_stream_not_per_branch_subsets() -> None:
+    # given: a source large enough that per-branch subsets would interleave
+    source = [(chr(97 + i), (7 * i) % 13) for i in range(24)]
+
+    # when
+    it = await Stream.of(source).parallel().unordered().sorted(lambda x, y: x[1] - y[1]).collect(to_list())
+
+    # then
+    assert [pair[1] for pair in it] == sorted(pair[1] for pair in source)

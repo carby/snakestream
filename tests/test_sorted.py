@@ -7,6 +7,7 @@ from hypothesis import strategies as st
 
 from snakestream import Stream
 from snakestream.collectors import to_list
+from snakestream.comparator import comparing
 
 
 @pytest.mark.asyncio
@@ -174,3 +175,63 @@ async def test_parallel_sorted_sorts_the_whole_stream_over_a_sync_source() -> No
     # then
     assert actual == list(range(1, 13))
     assert sorted(seen) == list(range(1, 13))
+
+
+# --- stability ---------------------------------------------------------------
+#
+# comparator-contract requires sorted() to be stable: elements comparing equal
+# keep the relative order they entered with. It is the same rule as min()/max()'s
+# tie-break, read over a whole stream rather than one running result, which is
+# why one capability states both.
+#
+# Every comparator form the capability accepts is covered, because they reach
+# three different algorithms in sort.py: a sync comparator goes to Timsort via
+# cmp_to_key, an async one to merge_sort's hand-written merge, and a comparing()
+# key comparator to the decorate-sort-undecorate path.
+
+_STABILITY_SOURCE = [("a", 5), ("b", 3), ("c", 5)]
+
+
+def _by_second(x, y):
+    return x[1] - y[1]
+
+
+@pytest.mark.asyncio
+async def test_sync_comparator_sort_is_stable() -> None:
+    # when
+    it = await Stream.of(_STABILITY_SOURCE).sorted(_by_second).collect(to_list())
+    # then
+    assert it == [("b", 3), ("a", 5), ("c", 5)]
+
+
+@pytest.mark.asyncio
+async def test_async_comparator_sort_is_stable() -> None:
+    async def _async_by_second(x, y):
+        await asyncio.sleep(0.001)
+        return x[1] - y[1]
+
+    # when
+    it = await Stream.of(_STABILITY_SOURCE).sorted(_async_by_second).collect(to_list())
+    # then
+    assert it == [("b", 3), ("a", 5), ("c", 5)]
+
+
+@pytest.mark.asyncio
+async def test_key_comparator_sort_is_stable() -> None:
+    # when
+    it = await Stream.of(_STABILITY_SOURCE).sorted(comparing(lambda pair: pair[1])).collect(to_list())
+    # then
+    assert it == [("b", 3), ("a", 5), ("c", 5)]
+
+
+@pytest.mark.asyncio
+async def test_reversed_key_comparator_is_stable_rather_than_reversing_ties() -> None:
+    # given: reversed() negates the ordering, which is not the same as
+    # reversing the output - the tied pair keeps its encounter order
+    ordering = comparing(lambda pair: pair[1]).reversed()
+
+    # when
+    it = await Stream.of(_STABILITY_SOURCE).sorted(ordering).collect(to_list())
+
+    # then
+    assert it == [("a", 5), ("c", 5), ("b", 3)]
