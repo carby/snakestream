@@ -25,9 +25,15 @@ value rather than a class hierarchy, `summing_int`/`summing_long` sharing a body
 
 ### Queued changes
 
-**None.** The queue is empty. Of the seven questions in **Now**, three are now
-resolved (1, 2 and 3) and four are open; the two items in **Next** are both
-unblocked as of `order-racing-delivery` and are the readiest work.
+**None.** The queue is empty. Of the seven questions in **Now**, three are
+resolved (1, 2 and 3) and four are open — 4, 5, 6 and 7. **Item 4 is the
+readiest of them and the easiest to walk past**, because half of what it used to
+ask has landed (`define-unordered-as-equality`) and the heading now carries a
+change name: what remains is one narrow benchmark, `counting()` and
+`summing_int()` with and without the mark, and the item's own rule says the next
+session to open it decides. Do not close out 5, 6 or 7 without having answered
+it. The two items in **Next** are both unblocked as of `order-racing-delivery`
+and are the readiest work overall.
 
 ### Open questions needing a session
 
@@ -35,7 +41,10 @@ None is queued. Items 1-6 are things the roadmap, the README or a just-landed
 change has been implying without ever stating, found while fleshing out
 **Next** on 2026-08-27, ordered by how ready they are. **Item 7 is the
 exception and the only actual defect in the list** — appended rather than
-sorted in, so the numbering above stays stable.
+sorted in, so the numbering above stays stable. The ordering has since gone
+stale in one place and is left as it is for the same reason: **item 4 is now the
+readiest open item**, narrowed to a single benchmark, and would sort first if
+the numbering were free to move.
 
 **1. `Comparator.thenComparing()` — resolved, landed as `add-comparator-chaining`
 (2026-08-28).** See **Done**.
@@ -69,27 +78,50 @@ of question, where only tie identity varies — has always paid *more*: it split
 at its own index, so its whole head is barriered, where `min`/`max` split at
 `len(chain)` and everything still races.
 
-**4. Marking the collectors Java leaves unmarked — deferred twice now, and `add-collector-characteristics` (landed) hands the question on again as designed.**
+**4. Marking `counting()` and the integer collectors — OPEN, and now a
+benchmark away from an answer.** (The other half of what this item used to ask,
+deriving on `grouping_by()`/`partitioning_by()`, landed as
+`define-unordered-as-equality` on 2026-08-28; see **Done**.)
 `add-collector-characteristics` shipped `Characteristics`/`UNORDERED`,
 `to_set()` declaring it, and `mapping()`/`collecting_and_then()` deriving it —
-matching Java exactly, at parity, with nothing reading the field yet. The
-question below of whether to mark `counting()` and the rest, which parity
-deliberately left open, is unchanged and still `order-racing-delivery`'s to
-weigh with a benchmark:
-`counting()`, `summing_*()`, `averaging_*()`, `summarizing_*()`, `to_map()`,
-`grouping_by()` and `partitioning_by()` are order-blind in fact but `CH_ID` /
-`CH_NOID` in OpenJDK, because Java's `UNORDERED` governs its combine strategy
-where an associative reduction is safe either way and the mark buys nothing.
+matching Java exactly, at parity, with nothing reading the field yet. This item
+was two questions in one, and `define-unordered-as-equality` split them.
+**Derivation is settled:** `grouping_by()` and `partitioning_by()` take their
+downstream's characteristics, because that is what the definition of `UNORDERED`
+— `==`-equality of the result, with no promise about its iteration order —
+requires of them, and because Java documents characteristics for exactly three
+factories (`toSet()`, `groupingByConcurrent()`, `toConcurrentMap()`) and is
+silent about these two. They are out of the list below. **Marking is what
+remains**, and is still `order-racing-delivery`'s to weigh with a benchmark:
+whether `counting()`, `summing_int/long()` and `summarizing_int/long()` should
+*declare* the characteristic — a choice about what to assert, not a correction
+of what is reported. They are order-blind in fact but `CH_ID` / `CH_NOID` in
+OpenJDK, because Java's `UNORDERED` governs its combine strategy where an
+associative reduction is safe either way and the mark buys nothing. The
+`summing_double()` / `averaging_*()` / `summarizing_double()` family and
+`to_map(..., merge)` are **permanently unmarkable** and not part of that
+weighing: float addition is not associative and a caller's merge function need
+not commute, so they are order-*sensitive* in fact — a firmer exclusion than
+`min_by`/`max_by`'s. `to_map()` without a merge function raises on duplicate
+keys, and reordering can change which key the message names, which is a marking
+question too.
 `order-racing-delivery` landed on 2026-08-28, so the mark now *does* buy
 something concrete: skipping the delivery barrier, which that change measured at
 10.01 vs 7.51 us/element on a chain too cheap to race and at nothing at all on
 IO-bound work. It deferred the marking as its second non-goal — land at parity,
-measure, then decide — so **that is the third deferral, and by this item's own
-rule the next pass either brings a benchmark of these specific collectors under
-an ordered racing pipeline or the answer is no.** The benchmark to run is
-narrow: `counting()` and `grouping_by()` with and without the mark, on the two
+measure, then decide — so **the count stands at three deferrals, and by this
+item's own rule the next pass either brings a benchmark of these specific
+collectors under an ordered racing pipeline or the answer is no.**
+`define-unordered-as-equality` did **not** consume that fourth pass and must not
+be read as having spent it: it split this item and answered the derivation half,
+which was a correction to what two factories *reported* and needed no benchmark
+at all. The marking half it did not touch, deliberately — its first non-goal.
+So the next session that opens this item is still the one the rule is waiting
+for. The benchmark to run is
+narrow: `counting()` and `summing_int()` with and without the mark, on the two
 shapes `race_through()`'s docstring already covers, since the +33% figure is the
-whole of what the mark would recover. `min_by`/`max_by` are excluded permanently and no longer by convention:
+whole of what the mark would recover. (`grouping_by()` was the other candidate
+until `define-unordered-as-equality` took it out of the marking half.) `min_by`/`max_by` are excluded permanently and no longer by convention:
 `collector-min-max` now *requires* them not to declare `UNORDERED`, so the
 marking pass has one fewer thing to weigh (`order-min-max-tie-breaks`,
 2026-08-28).
@@ -102,6 +134,14 @@ reason; the genuinely-not-yet set is small and unlisted. Listing it once would
 turn a vague refill source into a real queue, and would show whether Java-8
 parity is close enough to start the Java 9 work **Later** gates on exactly that
 question.
+
+Item 4's open half does **not** belong in that enumeration and must not be
+folded into it: whether `counting()` and the integer collectors declare
+`UNORDERED` is a question about what this library chooses to assert beyond
+Java's documented contract, not a gap where Java has something we lack. If this
+enumeration is what the next session does, close item 4 first or carry it
+forward explicitly — a list of "what's left" that silently omits it is how it
+gets lost.
 
 **6. Repo hygiene: a stray `</content>` closing tag sits at the end of three
 main specs** — `openspec/specs/stream-iterate/spec.md`,
@@ -288,6 +328,37 @@ core semantic.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should instead be documented as intentional next to the `str`/`bytes` note. Surfaced 2026-08-20 in the same code-quality read that produced **Now** items 1-4. |
 
 ## Done
+
+- **`define-unordered-as-equality`** (2026-08-28) — `Characteristics.UNORDERED`
+  now has one definition instead of two. It promises `==`-equality of the
+  collected result and **nothing** about that result's iteration order, stated
+  in the `Characteristics` docstring and in `collector-protocol` rather than
+  inferred from the word "equal". The stricter reading that lived in two source
+  comments — that nothing observable may differ — is withdrawn: a CPython `set`
+  built from the same members in two orders is `==` while iterating
+  differently, so the strict rule was both false in its premise and fatal to
+  `to_set()`, its only declarer.
+
+  Two consequences. `to_set()`'s justification is repaired — the requirement is
+  unchanged, the reason for it is now set equality rather than the false
+  structural claim. And `grouping_by()`/`partitioning_by()` **derive**
+  `UNORDERED` from their downstream, the same one keyword `mapping()` and
+  `collecting_and_then()` already used, on separate reasoning each:
+  `dict.__eq__` is key-order-insensitive and the classifier is a function of
+  the element, versus both partitions being seeded in the supplier. Nothing in
+  `execution.py`, `_split_point()` or the barrier changed — only what two
+  factories report to `collect()`.
+
+  Silent break, recorded in README's migration log: on an ordered racing
+  pipeline these two with an order-blind downstream no longer take the delivery
+  barrier, so the returned mapping's key iteration order stops being
+  deterministic. The value is unchanged under `==`; `.sequential()` or an
+  order-observing downstream restores the order.
+
+  This settles the **derivation** half of **Now** open question 4. The marking
+  half — whether `counting()`, `summing_int/long()` and `summarizing_int/long()`
+  should *declare* it — is still open and still owes a benchmark, and the float
+  family plus `to_map(..., merge)` are recorded there as permanently unmarkable.
 
 - **`order-min-max-tie-breaks`** (2026-08-28) — `.parallel().min()`/`.max()`
   now break ties in encounter order, resolving **Now** open question 3.

@@ -49,7 +49,10 @@ _TO_LIST: Collector[Any, list[Any], list[Any]] = to_list()
 def to_set() -> Collector[T, set[T], set[T]]:
     # The only factory in this module whose Java counterpart carries
     # UNORDERED (CH_UNORDERED_ID). The declaration is true of the behaviour,
-    # not merely asserted: a set retains no record of insertion order.
+    # not merely asserted: two sets holding the same members compare equal
+    # irrespective of the order either was built in, which is what UNORDERED
+    # promises. It promises nothing about iteration order, and a set's does
+    # depend on insertion history.
     return Collector(set, set.add, characteristics=(Characteristics.UNORDERED,))
 
 
@@ -62,16 +65,23 @@ def joining(delimiter: str = "", prefix: str = "", suffix: str = "") -> Collecto
 
 def counting() -> Collector[Any, Any, int]:
     # Order-blind in fact - counting the same elements in any order gives the
-    # same count - but left undeclared, matching Java: OpenJDK gives counting()
-    # and the rest below (summing_*, averaging_*, summarizing_*, to_map,
-    # grouping_by, partitioning_by) CH_ID/CH_NOID rather than CH_UNORDERED_ID,
-    # because Java's UNORDERED governs its combine strategy, where an
-    # associative reduction is safe either way and the mark buys nothing.
+    # same count - but left undeclared. Two separate claims sit behind that,
+    # and only the first is contract: Java's javadoc documents characteristics
+    # for exactly three factories - toSet(), groupingByConcurrent() and
+    # toConcurrentMap() - and is silent for every other, counting() included.
+    # Second, OpenJDK's implementation happens to give counting() and the rest
+    # below (summing_*, averaging_*, summarizing_*, to_map) CH_ID/CH_NOID
+    # rather than CH_UNORDERED_ID, because Java's UNORDERED governs its combine
+    # strategy where an associative reduction is safe either way; those are
+    # private fields in Collectors.java, not a documented contract to match.
     # Now that order-racing-delivery has landed the mark would buy skipping the
-    # reorder barrier here - a real divergence from Java, and the roadmap's open
-    # question 4 to weigh with a benchmark, not this change's to decide by
-    # inspection. min_by/max_by are excluded from that reconsideration for good:
-    # collector-min-max requires them not to declare UNORDERED.
+    # reorder barrier here, and whether to make it is the half of the roadmap's
+    # open question 4 still open - to weigh with a benchmark, not to decide by
+    # inspection. The other half, deriving on grouping_by/partitioning_by, is
+    # settled: define-unordered-as-equality took them out of this list, on the
+    # ground that Java documents nothing about them either. min_by/max_by are
+    # excluded from the marking pass for good: collector-min-max requires them
+    # not to declare UNORDERED.
     def _accumulate(container: Box, element: Any) -> None:
         container.value += 1
 
@@ -453,12 +463,14 @@ def grouping_by(
     classifier: Mapper[T, R],
     downstream: Collector[T, Any, Any] = _TO_LIST,
 ) -> Collector[T, Any, dict[R, Any]]:
-    # Takes a downstream but deliberately does not derive characteristics from
-    # it, unlike mapping()/collecting_and_then(): the downstream's result is a
-    # map *value*, and a trait of the values says nothing about the map itself.
-    # grouping_by(f, to_set()) builds a dict whose insertion order follows
-    # encounter order, so deriving UNORDERED from the inner to_set() would be
-    # wrong, not merely conservative.
+    # Derives characteristics from the downstream, the same one keyword
+    # mapping()/collecting_and_then() use. dict.__eq__ is key-order-insensitive
+    # and compares values pairwise, and the classifier is a function of the
+    # element alone, so any ordering of the same elements yields the same keys.
+    # The result is therefore equal under reordering exactly when every group's
+    # value is - which is the downstream's characteristic and nothing else. The
+    # dict's own key iteration order does follow encounter order, and that is
+    # no obstacle: UNORDERED promises equality, not iteration order.
     _check_downstream(downstream)
 
     def _supply() -> _GroupBox:
@@ -470,16 +482,19 @@ def grouping_by(
     def _finish(container: _GroupBox) -> Any:
         return _finish_groups(downstream, container.groups)
 
-    return Collector(_supply, _accumulate, finisher=_finish)
+    return Collector(_supply, _accumulate, finisher=_finish, characteristics=downstream.characteristics)
 
 
 def partitioning_by(
     predicate: Predicate[T],
     downstream: Collector[T, Any, Any] = _TO_LIST,
 ) -> Collector[T, Any, dict[bool, Any]]:
-    # Same reasoning as grouping_by() above: takes a downstream, deliberately
-    # does not derive characteristics from it, because the downstream's
-    # result is a map value and says nothing about the (always two-key) map.
+    # Derives characteristics from the downstream, on its own structure rather
+    # than grouping_by()'s: both partitions are seeded in the supplier before
+    # any element arrives, so the result is the same two keys in the same order
+    # over any input, the empty stream included. The value collected into each
+    # partition is the only part that depends on encounter order, and that
+    # dependence is exactly the downstream's characteristic.
     _check_downstream(downstream)
 
     async def _supply() -> _GroupBox:
@@ -495,7 +510,7 @@ def partitioning_by(
     def _finish(container: _GroupBox) -> Any:
         return _finish_groups(downstream, container.groups)
 
-    return Collector(_supply, _accumulate, finisher=_finish)
+    return Collector(_supply, _accumulate, finisher=_finish, characteristics=downstream.characteristics)
 
 
 @dataclass(slots=True)
