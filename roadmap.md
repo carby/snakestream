@@ -37,15 +37,8 @@ change has been implying without ever stating, found while fleshing out
 exception and the only actual defect in the list** — appended rather than
 sorted in, so the numbering above stays stable.
 
-**1. `Comparator.thenComparing()` — the precondition just landed.** README
-(line 177) records it as "Not yet. Genuinely useful and cheap to add once the
-unwrapping mechanism `comparing()` establishes exists, but its composition
-rules deserve their own design pass rather than riding along here."
-`add-comparator-comparing` has landed, so the "once" is satisfied and only the
-design pass is outstanding. The pass has to answer how a chained comparator
-survives `sort()`'s `_KeyComparator` unwrapping — the fast path extracts one
-key per element, and a chain has several — and whether the tuple-key workaround
-the README offers stays the recommendation for the sync case.
+**1. `Comparator.thenComparing()` — resolved, landed as `add-comparator-chaining`
+(2026-08-28).** See **Done**.
 
 **2. `ExceptionGroup` in `Stream.close()` — parked since 2026-08-25 and still
 needing a yes or no.** `close()` collects every handler exception, raises the
@@ -281,6 +274,43 @@ core semantic.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should instead be documented as intentional next to the `str`/`bytes` note. Surfaced 2026-08-20 in the same code-quality read that produced **Now** items 1-4. |
 
 ## Done
+
+- **`Comparator.thenComparing()`/`reversed()` chaining lands** (2026-08-28),
+  resolving **Now** open question 1. The previously-private `_KeyComparator`
+  becomes public `KeyComparator` holding an ordered tuple of
+  `(key_extractor, descending)` segments instead of one extractor;
+  `comparing(f)` still produces exactly one ascending segment, so every
+  existing call reaches the code it reached before.
+  `KeyComparator.then_comparing(other)` appends a segment or splices in
+  another `KeyComparator`'s segments with their directions intact;
+  `.reversed()` flips every current segment's direction — flipping each
+  component of a lexicographic order equals negating the composite, which is
+  what reproduces Java's before/after-chaining distinction with one
+  implementation rather than two.
+
+  `sort()`'s fast path generalizes from one key to k: columns are extracted
+  concurrently across segments (not just within one, as before) via
+  `asyncio.gather`, zipped into per-element tuples, and sorted in one Timsort
+  pass across three lanes — all-ascending, all-descending via
+  `sort(reverse=True)` (CPython's sort is stable in the strong sense under
+  `reverse=True`, so this is exactly comparator negation, ties included, not
+  a post-hoc buffer reversal), and mixed via a `_Descending` wrapper applied
+  only to the columns that asked for one. Measured: a 2-segment chain over
+  20,000 `(int, int)` tuples costs ~12ms all-ascending against ~40ms mixed
+  (one descending segment) — the `_Descending.__lt__` indirection is the only
+  place this capability leaves C, and it is paid only in the mixed lane. The
+  single-ascending-segment case takes the exact pre-chaining code path — no
+  tuple build, no outer gather — so `add-comparator-comparing`'s measured
+  figures stand unchanged.
+
+  README's `java.util.Comparator` table moves `thenComparing`/`reversed` from
+  struck-through "decided against" to implemented, and records the
+  `keyComparator` overloads as a deliberate skip instead — Python cannot
+  disambiguate a one-argument key extractor from a two-argument comparator by
+  signature, and accepting one would break the "every segment yields a key"
+  invariant the fast path depends on being total. Not breaking: purely
+  additive apart from the rename of a name with two in-repo references and no
+  outside callers. See `openspec/changes/add-comparator-chaining`.
 
 - **An ordered racing pipeline delivers in encounter order** (2026-08-28).
   **BREAKING**, and the break is the point: `.parallel().map(f).collect(to_list())`

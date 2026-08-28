@@ -5,7 +5,7 @@ from typing import Any, cast
 from collections.abc import Callable
 
 from snakestream.callable_dispatch import is_async_callable
-from snakestream.comparator import _KeyComparator, check_comparator_result_type
+from snakestream.comparator import KeyComparator, Segment, check_comparator_result_type
 from snakestream.type import AsyncComparator, Comparator
 
 
@@ -55,8 +55,8 @@ async def sort(arr: list[Any], comparator: Comparator) -> list[Any]:
     one - list.sort is in place, and unifying the signature is worth more than
     saving the rebind.
     """
-    if isinstance(comparator, _KeyComparator):
-        return await _sort_by_key(arr, comparator.key_extractor)
+    if isinstance(comparator, KeyComparator):
+        return await _sort_by_key(arr, comparator.segments)
     if is_async_callable(comparator):
         return await merge_sort(arr, cast("AsyncComparator", comparator))
     if len(arr) > 1:
@@ -69,16 +69,10 @@ async def sort(arr: list[Any], comparator: Comparator) -> list[Any]:
     return arr
 
 
-async def _sort_by_key(arr: list[Any], key_extractor: Callable[[Any], Any]) -> list[Any]:
-    """Decorate-sort-undecorate: extract each element's key once, sort on the
-    key alone, undecorate. No cmp_to_key, no merge_sort, and no sign/bool
-    validation - there is no comparator sign on this path, just a key.
-
-    Sorting on the key alone (list.sort(key=...) over the paired list, not a
-    bare (key, element) tuple sort) means Timsort's stability gives encounter
-    order for equal keys for free, with no tie-break index needed, and that
-    elements are never compared - only their keys - so an element that does
-    not itself support < still sorts fine as long as its key does.
+async def _column(extractor: Callable[[Any], Any], arr: list[Any]) -> list[Any]:
+    """Extract one segment's key for every element, concurrently across
+    elements. No cmp_to_key, no merge_sort, and no sign/bool validation -
+    there is no comparator sign on this path, just a key.
 
     An async extractor's keys are gathered concurrently rather than awaited
     one at a time in a loop. Measured (design.md's open question, settled
@@ -91,18 +85,97 @@ async def _sort_by_key(arr: list[Any], key_extractor: Callable[[Any], Any]) -> l
     coroutine it produces joins the gather instead of being discarded, so it
     costs no extra invocation.
     """
+    if is_async_callable(extractor):
+        return list(await asyncio.gather(*(extractor(element) for element in arr)))
+    trial = extractor(arr[0])
+    if isawaitable(trial):
+        return list(await asyncio.gather(trial, *(extractor(element) for element in arr[1:])))
+    return [trial, *(extractor(element) for element in arr[1:])]
+
+
+class _Descending:  # noqa: PLW1641 - only ever compared inside a sort tuple, never hashed
+    """Wraps a key so tuple comparison treats it as negated - the mixed-
+    direction lane's only cost. `__lt__` and `__eq__` are the only dunders
+    tuple comparison uses, so nothing else is needed. Paid only on the
+    columns a chain marked descending, and only when the chain mixes
+    directions: an all-ascending or all-descending chain never builds one.
+    """
+
+    __slots__ = ("key",)
+
+    def __init__(self, key: Any) -> None:
+        self.key = key
+
+    def __lt__(self, other: "_Descending") -> bool:
+        return other.key < self.key
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _Descending) and other.key == self.key
+
+
+async def _sort_by_key(arr: list[Any], segments: tuple[Segment, ...]) -> list[Any]:
+    """Decorate-sort-undecorate: extract every segment's key once per
+    element, sort on the keys alone, undecorate.
+
+    Sorting on the key(s) alone (list.sort(key=...) over the paired list, not
+    a bare (key, element) tuple sort) means Timsort's stability gives
+    encounter order for equal keys for free, with no tie-break index needed,
+    and that elements are never compared - only their keys - so an element
+    that does not itself support < still sorts fine as long as its key does.
+
+    A single ascending segment - what every pre-chaining `comparing()` call
+    produces - takes today's exact path: one column, no tuple build, no outer
+    gather, so add-comparator-comparing's measured figures stand unchanged.
+    A single descending segment (only reachable via `reversed()`) adds
+    `reverse=True`, which is comparator negation exactly (see below) rather
+    than a second code path.
+
+    Two or more segments extract their columns concurrently with each other
+    via `asyncio.gather` - not just concurrently within a column - so a chain
+    of k async extractors over n elements has k*n extractions in flight
+    rather than k sequential rounds of n; this is the capability's main
+    reason to exist. The columns zip into one tuple per element, and tuple
+    comparison is lexicographic and short-circuits on the first unequal
+    component in C, which is exactly tie-break semantics - so k segments still
+    cost one Timsort pass, in one of three lanes:
+
+    - all ascending: plain tuple sort.
+    - all descending: `sort(reverse=True)`. CPython's sort is stable in the
+      strong sense under `reverse=True` - equal elements keep their original
+      relative order, it is not a post-hoc list reversal - so this equals
+      comparator negation exactly, ties included.
+    - mixed: only the descending columns are wrapped in `_Descending`, and
+      the wrapped tuples sort ascending. This is the only lane that pays for
+      a wrapper, and only on the columns that asked for one.
+
+    Measured: a 2-segment chain sorting 20,000 `(int, int)` tuples costs
+    ~12ms all-ascending against ~40ms with the second segment descending -
+    roughly 3.3x, from `_Descending.__lt__`'s Python-level indirection
+    replacing a plain tuple comparison in C on every element the earlier
+    column ties on. Paid only in the mixed lane; both single-lane cases above
+    stay in C throughout.
+    """
     if not arr:
         return arr
-    if is_async_callable(key_extractor):
-        keys = await asyncio.gather(*(key_extractor(element) for element in arr))
-    else:
-        trial = key_extractor(arr[0])
-        if isawaitable(trial):
-            keys = await asyncio.gather(trial, *(key_extractor(element) for element in arr[1:]))
-        else:
-            keys = [trial, *(key_extractor(element) for element in arr[1:])]
 
-    paired = sorted(zip(keys, arr, strict=True), key=lambda pair: pair[0])
+    if len(segments) == 1:
+        extractor, descending = segments[0]
+        keys = await _column(extractor, arr)
+        paired = sorted(zip(keys, arr, strict=True), key=lambda pair: pair[0], reverse=descending)
+        return [element for _, element in paired]
+
+    columns = await asyncio.gather(*(_column(extractor, arr) for extractor, _ in segments))
+    directions = [descending for _, descending in segments]
+    rows = zip(*columns, strict=True)
+
+    if all(directions):
+        paired = sorted(zip(rows, arr, strict=True), key=lambda pair: pair[0], reverse=True)
+    elif not any(directions):
+        paired = sorted(zip(rows, arr, strict=True), key=lambda pair: pair[0])
+    else:
+        wrapped = (tuple(_Descending(v) if d else v for v, d in zip(row, directions, strict=True)) for row in rows)
+        paired = sorted(zip(wrapped, arr, strict=True), key=lambda pair: pair[0])
+
     return [element for _, element in paired]
 
 

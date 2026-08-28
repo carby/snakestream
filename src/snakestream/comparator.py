@@ -1,7 +1,7 @@
 from typing import Any, cast
 
 from snakestream.callable_dispatch import is_async_callable
-from snakestream.type import Comparator, KeyExtractor
+from snakestream.type import KeyExtractor
 
 
 def check_comparator_result_type(value: int) -> None:
@@ -31,54 +31,114 @@ def is_new_extremum(sign: int, asc: bool) -> bool:
     return sign < 0 if asc else sign > 0
 
 
-class _KeyComparator:
+Segment = tuple[KeyExtractor, bool]
+
+
+class KeyComparator:
     """The `Comparator` a `comparing()` call returns.
 
-    Exposes `key_extractor` as a plain attribute so sort() can unwrap it and
-    extract each key once, rather than the twice-per-comparison cost __call__
-    below pays; __call__ exists so this is still a working Comparator for any
+    Exposes `segments` - an ordered tuple of `(key_extractor, descending)`
+    pairs - as a plain attribute so sort() can unwrap it and extract each
+    segment's key once, rather than the per-comparison cost __call__ below
+    pays; __call__ exists so this is still a working Comparator for any
     consumer - min(), max(), min_by(), max_by() - that does not know to look
     for the attribute.
+
+    Each segment's extractor is classified sync/async independently
+    (`callable-dispatch`), once here at construction rather than per element
+    or per comparison.
     """
 
-    def __init__(self, key_extractor: KeyExtractor) -> None:
-        self.key_extractor = key_extractor
-        self._is_async = is_async_callable(key_extractor)
+    def __init__(self, segments: tuple[Segment, ...]) -> None:
+        self.segments = segments
+        self._is_async = tuple(is_async_callable(extractor) for extractor, _ in segments)
+        self._any_async = any(self._is_async)
+
+    def then_comparing(self, other: "KeyExtractor | KeyComparator") -> "KeyComparator":
+        """Append a tie-break ordering, matching Java's
+        `Comparator.thenComparing`. `other` may be a bare key extractor,
+        contributing one ascending segment, or another `KeyComparator`, whose
+        whole segment list - directions intact - is spliced in. Returns a new
+        `KeyComparator`; the receiver is unchanged.
+        """
+        if isinstance(other, KeyComparator):
+            return KeyComparator(self.segments + other.segments)
+        return KeyComparator((*self.segments, (other, False)))
+
+    def reversed(self) -> "KeyComparator":
+        """Negate the whole ordering, matching Java's `Comparator.reversed`.
+
+        Flips every segment's direction rather than wrapping __call__'s
+        result, because flipping each component of a lexicographic order is
+        the same as negating the composite - which is why calling this before
+        or after `then_comparing()` reproduces Java's two distinct outcomes
+        with one implementation. Returns a new `KeyComparator`; the receiver
+        is unchanged.
+        """
+        return KeyComparator(tuple((extractor, not descending) for extractor, descending in self.segments))
 
     def __call__(self, a: Any, b: Any) -> Any:
-        if self._is_async:
+        if self._any_async:
             return self._compare_async(a, b)
-        # not self._is_async is what makes this branch reachable, so the
-        # extractor's sync arm is the one that ran - Any, not Awaitable[Any].
-        ka = cast("Any", self.key_extractor(a))
-        kb = cast("Any", self.key_extractor(b))
-        return (ka > kb) - (ka < kb)
+        return self._compare_sync(a, b)
+
+    def _compare_sync(self, a: Any, b: Any) -> int:
+        for extractor, descending in self.segments:
+            # not self._any_async is what makes this branch reachable, so
+            # every segment's sync arm is the one that ran - Any, not
+            # Awaitable[Any].
+            ka = cast("Any", extractor(a))
+            kb = cast("Any", extractor(b))
+            sign = (ka > kb) - (ka < kb)
+            if descending:
+                sign = -sign
+            if sign != 0:
+                return sign
+        return 0
 
     async def _compare_async(self, a: Any, b: Any) -> int:
-        ka = await self.key_extractor(a)
-        kb = await self.key_extractor(b)
-        return (ka > kb) - (ka < kb)
+        for (extractor, descending), is_async in zip(self.segments, self._is_async, strict=True):
+            if is_async:
+                ka = await extractor(a)
+                kb = await extractor(b)
+            else:
+                ka = cast("Any", extractor(a))
+                kb = cast("Any", extractor(b))
+            sign = (ka > kb) - (ka < kb)
+            if descending:
+                sign = -sign
+            if sign != 0:
+                return sign
+        return 0
 
 
-def comparing(key_extractor: KeyExtractor) -> Comparator:
+def comparing(key_extractor: KeyExtractor) -> KeyComparator:
     """Build a Comparator that orders by an extracted key, matching Java's
     `Comparator.comparing(keyExtractor)`.
 
     Returns an object rather than a plain `lambda a, b: ...` closure, because a
     closure would call key_extractor twice per comparison - O(n log n) times,
     which for an async key extractor is `2n log n` awaits. sort() recognizes
-    this object (via its `key_extractor` attribute) and instead extracts each
-    key exactly once and sorts on the keys directly, which is the whole reason
-    this capability exists - see this change's proposal.md for the measured
-    win. Every other comparator-consuming operation - min(), max(), min_by(),
-    max_by() - still works via the ordinary __call__ path above, just without
-    that fast path.
+    this object (via its `segments` attribute) and instead extracts each
+    segment's key exactly once and sorts on the keys directly, which is the
+    whole reason this capability exists - see this change's proposal.md for
+    the measured win. Every other comparator-consuming operation - min(),
+    max(), min_by(), max_by() - still works via the ordinary __call__ path
+    above, just without that fast path.
 
     key_extractor may be sync or async, like every other user-supplied
     callable in this library.
 
-    There is no thenComparing() here to chain multiple keys - deliberately out
-    of scope (see proposal.md). A tuple key gets the same effect in one pass:
-    `comparing(lambda x: (x.last, x.first))`.
+    The result composes: `.then_comparing(other)` appends a tie-break
+    ordering - a bare key extractor or another `KeyComparator`, chainable to
+    any depth - and `.reversed()` negates the ordering built so far. Reverse
+    before chaining to flip only that segment; reverse after to flip the
+    whole composite. A hand-written tuple key
+    (`comparing(lambda x: (x.last, x.first))`) is still the better answer for
+    a sync, single-direction, multi-key ordering: one call per element, no
+    wrapper object, no gather. Chaining earns its keep once an extractor is
+    async - a tuple literal cannot await, and an `async def` equivalent
+    resolves its keys in sequence rather than concurrently - or once directions
+    mix.
     """
-    return _KeyComparator(key_extractor)
+    return KeyComparator(((key_extractor, False),))
