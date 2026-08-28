@@ -79,9 +79,15 @@ comparison uses:
 ```python
 class _Descending:
     __slots__ = ("key",)
-    def __init__(self, key): self.key = key
-    def __lt__(self, other): return other.key < self.key
-    def __eq__(self, other): return other.key == self.key
+
+    def __init__(self, key):
+        self.key = key
+
+    def __lt__(self, other):
+        return other.key < self.key
+
+    def __eq__(self, other):
+        return other.key == self.key
 ```
 
 Alternative considered: a stable multi-pass sort — sort by the least significant
