@@ -95,9 +95,16 @@ item 3's answer flipped to "export it".
 
 ---
 
-**2. Collapse `find_first()` and `for_each_ordered()` onto the barrier.** Both
-name `SEQUENTIAL` at their own call site to get encounter order, which the
-barrier now provides while still racing everything upstream. Scoped out of
+**2. Collapse `find_first()` onto the barrier** — the `for_each_ordered()` half
+landed 2026-08-31, see
+`openspec/changes/archive/collapse-for-each-ordered-onto-barrier`. Both named
+`SEQUENTIAL` at their own call site to get encounter order, which the
+barrier now provides while still racing everything upstream. `for_each_ordered()`
+was the straight deletion of the two: its demand is conditional on the pipeline
+being ordered, which is `_split_point()`'s third clause exactly, so it now
+declares `observes_order` like every other order-observing terminal. What
+remains is `find_first()`'s unconditional demand, which clause 3 cannot express
+and which needs the three-valued widening. Scoped out of
 `order-stateful-ops-under-racing` deliberately: it was fixing a wrong answer,
 and this changes a right one. `find_first()`'s unconditional-`SEQUENTIAL` rule
 is now correctly spec'd (the `stream-execution-model` delta removed and
@@ -117,10 +124,14 @@ for the drive, and `_split_point()` is reused verbatim. There is precedent for
 a sink-less op: `_UnorderedOp` links to nothing and exists purely to declare a
 characteristic.
 
-**What disappears:** `_evaluate()`'s `executor` parameter (these two terminals
-are its only callers), the `SEQUENTIAL` name in `stream.py` outside
-`sequential()` itself, and `Stream._is_ordered()` — `for_each_ordered()` is its
-sole caller, and `_split_point()` reaches the `sink.py` fold directly.
+**What disappears — corrected, and it is one entry rather than three.**
+`_evaluate()`'s `executor` parameter goes, once `find_first()` stops being its
+last caller. The other two entries were wrong, and the error was copied here
+from `CLAUDE.md` (now fixed at both sites): **`Stream._is_ordered()` stays**,
+because `for_each_ordered()` was never its sole caller — `Stream.concat()` uses
+it at `stream.py:402` to decide whether the concatenation inherits
+`unordered()` — and **the `SEQUENTIAL` name stays in `stream.py`** for the same
+reason, named on the line above it.
 
 **Two corrections to how this item was first written.** First,
 **`order-racing-delivery` shrank it, as predicted, and it has now landed**
@@ -138,15 +149,30 @@ already wall-clock optimal; racing can only do *more* work, up to `_READ_AHEAD`
 maps to return element 0. The win exists only where the head can *drop*
 elements:
 
+**Measured 2026-08-31** (N=200, 4 workers, 10ms/element, best of 5), which
+corrects both halves of the guess above:
+
 ```
-  .parallel().map(f).find_first()        racing buys nothing, wastes <=15 maps
-  .parallel().filter(slow).find_first()  racing buys ~4x - several elements must
-  .parallel().flat_map(g).find_first()   be processed before an answer exists
+                       sequential (today)        barrier (after)     speedup
+  map(10ms)             10.5 ms   1 call       10.9 ms   4 calls      0.96x
+  filter(10ms, >=12)   133.4 ms  13 calls      42.9 ms  16 calls      3.11x
+  flat_map(10ms, >=12) 137.8 ms  13 calls      42.9 ms  16 calls      3.21x
 ```
 
-Benchmark the `filter` shape before claiming it. `for_each_ordered()` carries no
-such caveat — it drains everything, so its head-racing win is unconditional.
-The simplification case stands on the deletions alone either way.
+`filter` and `flat_map` land at ~3.1x against a 4-worker ceiling, so "~4x" was
+the right order. But **`map` is not a regression** — 0.96x is noise. The
+speculative maps run concurrently with the one that matters, not in front of
+it, so racing a non-dropping head costs work without costing latency.
+
+**"wastes <=15 maps" is wrong in the common case**: the bound is `PROCESSES`,
+not `_READ_AHEAD`, because `find_first()` settles at the first *released group*
+and no branch can be more than one group ahead by then. The window only fills
+when element 0 is slower than what follows it — `map()` with element 0 at 50ms
+and the rest at 1ms gives 16 calls at 0.98x wall clock. Two regimes, and the
+proposal states both.
+
+`for_each_ordered()` carried no such caveat — it drains everything, so its
+head-racing win was unconditional, which is part of why it went first.
 
 ---
 

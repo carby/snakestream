@@ -1,6 +1,6 @@
 ## Purpose
 
-Defines how a stream's terminal operations execute: as terminal sinks fed by the same push protocol the intermediate operations use, driven by a loop that pushes source elements through the chain and returns the terminal's finished result — rather than pulling elements out of a composed `AsyncGenerator`. Covers what a short-circuiting terminal is entitled to do (request cancellation so upstream operations stop), which terminals still go through a generator, and the ordered-drive variant that `for_each_ordered()` and an ordered `find_first()` under `RACING` execution rely on.
+Defines how a stream's terminal operations execute: as terminal sinks fed by the same push protocol the intermediate operations use, driven by a loop that pushes source elements through the chain and returns the terminal's finished result — rather than pulling elements out of a composed `AsyncGenerator`. Covers what a short-circuiting terminal is entitled to do (request cancellation so upstream operations stop), which terminals still go through a generator, and the ordered-drive variant that `find_first()` relies on unconditionally under `RACING` execution — and which it is now the only user of, `for_each_ordered()` having moved to the delivery barrier the `racing-encounter-order` capability specifies.
 
 ## Requirements
 
@@ -77,28 +77,33 @@ terminal's `result()` SHALL be the result fixed before the stop.
 - **WHEN** a chain `.sorted().peek(fn).find_first()` is driven over an unsorted source
 - **THEN** the terminal returns the smallest element, and `fn` is called exactly once — the sort's flush stops rather than pushing its whole buffer past the settled terminal
 
-### Requirement: An ordered drive is available regardless of stream mode
+### Requirement: An ordered drive is available regardless of stream mode, and find_first() is its only user
 
 A terminal SHALL be able to request a strictly ordered, single-flight push
 through the chain, bypassing any racing execution the stream's executor would
 otherwise use. It SHALL do so by naming the sequential executor explicitly.
-`for_each_ordered()` SHALL use it unconditionally, and `find_first()` SHALL use
-it whenever the stream is ordered.
+
+`find_first()` SHALL use it unconditionally, and SHALL be its only user.
+
+`for_each_ordered()` SHALL NOT use it. An ordered `for_each_ordered()` obtains
+encounter order from the racing executor's delivery barrier instead, which
+orders the handing over of finished elements without serializing the chain that
+produced them; see the `stream-foreach-ordered` capability.
 
 The ordered drive SHALL deliver elements to the terminal in source encounter
 order whichever executor the stream carries.
-
-#### Scenario: for_each_ordered() stays in source order on a parallel stream
-- **WHEN** `for_each_ordered(consumer)` is called on a parallel stream whose chain reorders arrival timing (for example a `map()` with a positional delay)
-- **THEN** `consumer` is invoked with the elements in source encounter order
 
 #### Scenario: An ordered parallel find_first() returns the true first element
 - **WHEN** `find_first()` is called on an ordered parallel stream whose chain reorders arrival timing
 - **THEN** it returns the first element in source encounter order, not the first to arrive
 
-#### Scenario: An unordered parallel find_first() still races
+#### Scenario: An unordered parallel find_first() also returns the true first element
 - **WHEN** `find_first()` is called on a parallel stream that has been marked `unordered()`
-- **THEN** it behaves as `find_any()` does, returning the first element to arrive
+- **THEN** it still uses the ordered drive and returns the first element in source encounter order, per the `stream-find-first` capability
+
+#### Scenario: for_each_ordered() stays in source order without the ordered drive
+- **WHEN** `for_each_ordered(consumer)` is called on a parallel stream whose chain reorders arrival timing (for example a `map()` with a positional delay)
+- **THEN** `consumer` is invoked with the elements in source encounter order, and the chain is not driven single-flight
 
 ### Requirement: A parallel stream's terminal accumulates across all branches
 

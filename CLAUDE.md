@@ -58,7 +58,9 @@ RACING.elements     = race_through        RACING.value     = inherited generic
 
 `Executor.value()`'s generic default is `drain(self.elements(...), terminal)`, which `Racing` uses unchanged — each racing branch owns its own sink chain, so there is no single chain to fuse a terminal onto. `Sequential.value()` overrides it with the fused push purely on measurement: composing and then draining costs +125% per element on `count()`. That override is the one asymmetry in the protocol; its docstring carries the figures.
 
-A stream consults its executor in exactly two places: `iterator()` (`self._executor.elements(...)`) and `_evaluate()` (`self._executor.value(...)`). Both operations carry the consumer's `observes_order` declaration alongside the chain and the source — a second axis, orthogonal to which executor is named, and the input to the delivery barrier described below. A terminal that needs encounter order regardless of the stream's mode names `SEQUENTIAL` explicitly at its own call site: `find_first()` always and unconditionally, and `for_each_ordered()` when `_is_ordered()` — the private fold over the chain's ordering characteristic, whose sole caller that is. That is why `find_first` has one implementation rather than a per-mode pair. `_is_ordered()` is deliberately not public: Java exposes only `isParallel()` and keeps `ORDERED` in the package-private `StreamOpFlag`.
+A stream consults its executor in exactly two places: `iterator()` (`self._executor.elements(...)`) and `_evaluate()` (`self._executor.value(...)`). Both operations carry the consumer's `observes_order` declaration alongside the chain and the source — a second axis, orthogonal to which executor is named, and the input to the delivery barrier described below. A terminal that needs encounter order regardless of the stream's mode names `SEQUENTIAL` explicitly at its own call site — `find_first()`, always and unconditionally, and now the only one. That is why `find_first` has one implementation rather than a per-mode pair. `for_each_ordered()` used to be the other, and stopped: its demand is conditional on the pipeline being ordered, which is exactly what the delivery barrier already asks, so it declares `observes_order` like every other order-observing terminal and keeps the stream's executor. Naming `SEQUENTIAL` there had gone a step further than Java, whose `ForEachOrderedTask` is itself a fork-join task.
+
+`_is_ordered()`, the private fold over the chain's ordering characteristic, has one caller left: `Stream.concat()`, which uses it to decide whether the concatenation inherits `unordered()`. It is deliberately not public: Java exposes only `isParallel()` and keeps `ORDERED` in the package-private `StreamOpFlag`.
 
 `.parallel()` / `.sequential()` each derive with no op and their target executor — `_derive()` with its `op` argument omitted and `executor` set to `RACING`/`SEQUENTIAL` — giving a new stream over the **same source and same chain**, differing only in its executor, with the receiver consumed. `sequential()`'s docstring carries the rules both obey and `parallel()` points at it. They deliberately do **not** compose — that is what makes them position-independent, matching Java, where `parallel()` sets a flag on the source stage. The last mode switch before a terminal governs the whole pipeline.
 
@@ -107,9 +109,10 @@ Which terminals observe order is declared at each terminal's own call site, as
 a bool passed to `_evaluate()` and on through `Executor.value()`/`elements()`.
 `count()`, `for_each()`, `find_any()`, `max`/`min` and the `*_match` family
 declare `False` and pay nothing; `reduce()`, `to_array()`, the three-argument
-`collect()` and `iterator()` declare `True`; `collect(collector)` reads the
-collector's `Characteristics.UNORDERED`. `find_first()` and `for_each_ordered()`
-still name `SEQUENTIAL` at their own call sites and are untouched by this.
+`collect()`, `for_each_ordered()` and `iterator()` declare `True`;
+`collect(collector)` reads the collector's `Characteristics.UNORDERED`.
+`find_first()` still names `SEQUENTIAL` at its own call site and is untouched by
+this — the last terminal that does.
 
 Read-ahead is bounded by `_READ_AHEAD`, enforced in `_guarded()` where the index
 is assigned — the only place a pull happens, so the bound costs no new

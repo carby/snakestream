@@ -1,19 +1,4 @@
-## Purpose
-
-Defines the contract for `Stream.for_each_ordered(consumer)`, an ordered variant of `for_each()` that invokes the consumer in the stream's encounter order, even under `RACING` execution whose racing-branch execution model does not otherwise preserve order. Mirrors Java's `Stream.forEachOrdered()`, including the javadoc's "if the stream has a defined encounter order" caveat: a pipeline whose queued operations have cleared the ordering characteristic (see `stream-ordering`) has none, so there the guarantee is released and no delivery barrier is engaged — the same split Java's `ForEachOps` makes between `ForEachOrderedTask` and `ForEachTask`. Both cases run under the stream's own executor: the ordered one takes the racing executor's delivery barrier rather than forfeiting the concurrency the caller asked for, so every operation still races and only the invocation of the consumer is ordered. The guarantee therefore covers the consumer and nothing queued upstream of it.
-
-## Requirements
-
-### Requirement: for_each_ordered() invokes the consumer in encounter order
-`Stream.for_each_ordered(consumer)` SHALL invoke `consumer` once per element of the composed stream, in the stream's encounter order, and SHALL NOT return a value (matching `for_each()`'s `None` return).
-
-#### Scenario: Sequential Stream preserves source order
-- **WHEN** `Stream.of([1, 2, 3, 4]).for_each_ordered(consumer)` is called
-- **THEN** `consumer` is invoked with `1`, then `2`, then `3`, then `4`, in that order
-
-#### Scenario: Both sync and async consumers are supported
-- **WHEN** `for_each_ordered()` is called with a synchronous consumer, and separately with an `async def` consumer
-- **THEN** both invocations complete successfully, each consumer call awaited if it returns an awaitable, matching `for_each()`'s existing sync/async dispatch convention
+## MODIFIED Requirements
 
 ### Requirement: for_each_ordered() preserves encounter order under RACING execution
 `Stream.for_each_ordered(consumer)`, when called on an **ordered** stream whose
@@ -96,6 +81,8 @@ awaited if it returns an awaitable, in both the ordered and unordered cases.
   `.sorted(c)`, and `.for_each_ordered(consumer)` is awaited
 - **THEN** the consumer is invoked in the sorted encounter order, because
   `sorted()` restores the ordering characteristic downstream
+
+## ADDED Requirements
 
 ### Requirement: An operation upstream of for_each_ordered() carries no ordering guarantee
 `Stream.for_each_ordered(consumer)` SHALL guarantee encounter order for the

@@ -1,5 +1,6 @@
 import pytest
 import asyncio
+import time
 
 from snakestream import Stream
 
@@ -76,9 +77,10 @@ async def test_for_each_ordered_preserves_encounter_order_on_parallel_stream() -
 @pytest.mark.asyncio
 async def test_for_each_ordered_on_unordered_parallel_stream_delivers_every_element() -> None:
     # given: an unordered pipeline releases for_each_ordered() from the
-    # encounter-order guarantee, so it runs under the stream's own executor
-    # rather than forfeiting the concurrency the caller asked for - the same
-    # split Java's ForEachOps makes between ForEachOrderedTask and ForEachTask
+    # encounter-order guarantee, so no delivery barrier is engaged and nothing
+    # is held back waiting for an earlier element - the same split Java's
+    # ForEachOps makes between ForEachOrderedTask and ForEachTask. Both cases
+    # run under the stream's own executor; the barrier is the only difference
     seen: list[int] = []
 
     # when
@@ -105,8 +107,9 @@ async def test_for_each_ordered_on_unordered_sequential_stream_still_delivers_in
 async def test_for_each_ordered_on_unordered_parallel_stream_does_not_deliver_in_order() -> None:
     # given the same unordered pipeline as above. The test above pins that
     # every element arrives; this one pins that the relaxation actually
-    # happened - without it, for_each_ordered() would forfeit the concurrency
-    # and deliver in source order, and nothing else in the suite would notice
+    # happened - without it the barrier would engage on a pipeline that
+    # declared it did not want one, and delivery would be held back for no
+    # reason the caller asked for
     seen: list[int] = []
 
     # when
@@ -139,3 +142,94 @@ async def test_sorted_after_unordered_restores_the_for_each_ordered_guarantee() 
     # then: sorted() set the ordering characteristic again, so the encounter
     # order for_each_ordered() honours is the sorted one
     assert seen == sorted(values)
+
+
+# --- the ordered guarantee does not serialize the chain --------------------
+#
+# The guarantee used to be bought by naming SEQUENTIAL, which forfeited every
+# drop of concurrency the caller asked for. It is now the racing executor's
+# delivery barrier, so the chain still races and only the handing over to the
+# consumer is ordered. These pin that difference: without them, a regression to
+# the single-flight drive would leave the whole suite green.
+
+
+@pytest.mark.asyncio
+async def test_ordered_for_each_ordered_does_not_serialize_the_chain() -> None:
+    # given a mapper that records when it was inside, so the claim is tested
+    # directly rather than through a wall-clock threshold
+    intervals: list[tuple[float, float]] = []
+
+    async def timed(n: int) -> int:
+        entered = time.perf_counter()
+        await asyncio.sleep(delay_by_position[n])
+        intervals.append((entered, time.perf_counter()))
+        return n
+
+    seen: list[int] = []
+
+    # when
+    await Stream.of(values).parallel().map(timed).for_each_ordered(seen.append)
+
+    # then the consumer saw encounter order
+    assert seen == values
+
+    # and at least two mapper calls were in flight at once, which a
+    # single-flight drive could never produce
+    overlapping = any(
+        a_start < b_end and b_start < a_end
+        for i, (a_start, a_end) in enumerate(intervals)
+        for b_start, b_end in intervals[i + 1 :]
+    )
+    assert overlapping, "the chain ran one element at a time"
+
+
+@pytest.mark.asyncio
+async def test_ordered_for_each_ordered_is_faster_than_sequential() -> None:
+    # given the same pipeline under each mode. Loose threshold on purpose: the
+    # test above is the one that pins the claim, and this one is here because
+    # wall clock is what a caller actually notices
+    async def run(stream: Stream[int]) -> float:
+        started = time.perf_counter()
+        await stream.map(_delay_by_position).for_each_ordered(lambda _: None)
+        return time.perf_counter() - started
+
+    # when
+    parallel = await run(Stream.of(values).parallel())
+    sequential = await run(Stream.of(values).sequential())
+
+    # then
+    assert parallel < sequential / 2
+
+
+# --- the guarantee's boundary: the consumer, and nothing upstream ----------
+
+
+@pytest.mark.asyncio
+async def test_an_op_upstream_of_for_each_ordered_is_not_ordered() -> None:
+    # given a side effect queued upstream of the terminal, and one inside it
+    peeked: list[int] = []
+    consumed: list[int] = []
+
+    # when
+    await Stream.of(values).parallel().peek(peeked.append).map(_delay_by_position).for_each_ordered(consumed.append)
+
+    # then the consumer is ordered, as promised
+    assert consumed == values
+
+    # and peek() saw every element exactly once, in an order this call does not
+    # constrain - Java promises encounter order for the action and says nothing
+    # about upstream stages
+    assert sorted(peeked) == sorted(values)
+
+
+@pytest.mark.asyncio
+async def test_the_same_side_effect_in_the_consumer_is_ordered() -> None:
+    # given the side effect moved from peek() into the consumer - the migration
+    # the README entry points a caller at
+    recorded: list[int] = []
+
+    # when
+    await Stream.of(values).parallel().map(_delay_by_position).for_each_ordered(recorded.append)
+
+    # then
+    assert recorded == values
