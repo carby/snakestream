@@ -19,23 +19,60 @@ value rather than a class hierarchy, `summing_int`/`summing_long` sharing a body
 **Opened 2026-08-26:** `collapse-derive-wrappers`,
 `order-stateful-ops-under-racing`, `collapse-compose-into-iterator`, and
 `add-comparator-comparing` are all in **Done**. **`add-collector-characteristics`**
-(2026-08-27), **`unify-derive-signature`** (2026-08-27) and
-**`order-racing-delivery`** (2026-08-28) and **`order-min-max-tie-breaks`**
-(2026-08-28) have landed too — see **Done**.
+(2026-08-27), **`unify-derive-signature`** (2026-08-27),
+**`order-racing-delivery`** (2026-08-28), **`order-min-max-tie-breaks`**
+(2026-08-28), **`mark-order-blind-collectors`** (2026-08-31) and
+**`enumerate-java-8-parity-gaps`** (2026-08-31) have landed too — see **Done**.
 
 ### Queued changes
 
-**None.** The queue is empty. Of the seven questions in **Now**, four are
-resolved (1, 2, 3 and 4) and three are open — 5, 6 and 7. **Item 6 is a
-one-line fix** and has been rediscovered three times; **item 7 is the only
-actual defect** in the list and wants a session; **item 5 is the one that
-refills this queue**, and item 4's closure means it no longer has to carry that
-question forward. The two items in **Next** are both unblocked as of
-`order-racing-delivery` and are the readiest work overall.
+**The five Java 8 parity gaps below**, put here by
+`enumerate-java-8-parity-gaps` (2026-08-31). Of the seven
+questions in **Now**, five are resolved (1, 2, 3, 4 and 5) and two are open —
+6 and 7. **Item 5 is the one that filled this queue**; **item 6 is a one-line
+fix** and has been rediscovered three times; **item 7 is the only actual
+defect** in the list and wants a session. The two items in **Next** are both
+unblocked as of `order-racing-delivery`.
+
+**The five real gaps.** Filed as five and not one batched entry: they share a
+shape only at the surface (see the change's design.md, decision 6), and
+whoever picks them up should make the batching call themselves.
+
+1. **`Stream.reduce(identity, accumulator, combiner)`** (`stream.py`) — the
+   third of Java's three `reduce` overloads. The two shipped ones already
+   perform the fold; the third argument merges independently-reduced
+   partitions, which no execution mode here produces. So the question is not
+   how to build it but whether signature parity is worth a parameter that must
+   be documented as inert — exactly what `collect(supplier, accumulator,
+   combiner)` already did. **This is the half of the combiner entry in **Later**
+   that does not belong there** — that entry claims `reduce()` already accepts
+   a combiner and never invokes it, and it does not accept one at all.
+2. **`Collectors.toMap(k, v, merge, map_supplier)`** (`collectors.py`) — the
+   fourth argument, choosing the result container. Interacts with the still-open
+   piece of question 4 below: whether `to_map()` should declare `UNORDERED`.
+3. **`Collectors.groupingBy(classifier, map_factory, downstream)`**
+   (`collectors.py`) — same container-choice argument, third of three
+   overloads. A caller-supplied mapping type has its own order semantics, so
+   this one has to say what it does to the `UNORDERED` derivation the shipped
+   two-argument form performs.
+4. **`Comparator.thenComparing(Comparator)`** (`comparator.py`) — the bare
+   comparator overload. README already declines `thenComparing(f,
+   key_comparator)` because accepting a comparator segment breaks the "every
+   segment yields a key" invariant `KeyComparator` uses to keep the sort fast
+   path total; this overload faces the same invariant and has never been
+   addressed either way.
+5. **`Comparator.nullsFirst` / `nullsLast`** (`comparator.py`) — **the one with
+   an argument already attached, and the likeliest of the five to be worth
+   building on its own merits.** It is on the list because Java has it, but it
+   earns its keep for a reason Java does not have: `sorted()` over a stream
+   containing `None` raises `TypeError` out of Python's comparison, and there is
+   currently no way to say where the `None`s go. The other four are parity for
+   parity's sake; this one is a user-facing hole.
 
 ### Open questions needing a session
 
-None is queued. Items 1-6 are things the roadmap, the README or a just-landed
+Nothing here is queued; item 5's queue is the five parity gaps above, not the
+item itself. Items 1-6 are things the roadmap, the README or a just-landed
 change has been implying without ever stating, found while fleshing out
 **Next** on 2026-08-27, ordered by how ready they are. **Item 7 is the
 exception and the only actual defect in the list** — appended rather than
@@ -101,14 +138,40 @@ was the **rule** saying so, since for a collector whose result is a scalar no
 correctness assertion can distinguish the two paths and a timing one must not be
 used. `racing-encounter-order` now states it.
 
-**5. Enumerate the remaining Java-8 parity gaps, once, concretely.** Three
-places in this file offer "the Java-8 parity gaps README still tracks as
-unimplemented" as a refill source for **Next**, and none of them says what they
-are. README's tables mark most absent methods as deliberately-skipped with a
-reason; the genuinely-not-yet set is small and unlisted. Listing it once would
-turn a vague refill source into a real queue, and would show whether Java-8
-parity is close enough to start the Java 9 work **Later** gates on exactly that
-question.
+**5. Enumerate the remaining Java-8 parity gaps, once, concretely — resolved
+2026-08-31, and the answer is five.** Landed as
+`enumerate-java-8-parity-gaps`; the five are in **Queued changes** above.
+**The item's own premise was the finding.** Three places in this file offered
+"the Java-8 parity gaps README still tracks as unimplemented" as a refill
+source for **Next**, and README was tracking no such thing: its parity tables
+had two row states — `x`, and struck-through-with-a-reason — where Java's
+surface has three, so a method nobody wrote a row for was invisible rather
+than deferred. Absence was not something the table could express. That is why
+the refill source could be pointed at from three places without any of them
+being able to name a member, and it is why the fix had to be structural: the
+tables now carry a third row state, are declared total over Java 8's surface,
+and a Java 8 method with no row is from now on a defect in the table rather
+than a silence.
+
+The audit's totals, so the next reader can see the shape without re-deriving
+it, counted in table rows (a row can stand for several Java overloads —
+`joining` covers three, `reducing` three): `Stream` + `BaseStream` — 35
+implemented, 12 skipped, 1 gap. `Collectors` — 22 implemented, 3 skipped, 2
+gaps; per Java method rather than per row that is 29 of the class's 37
+implemented, the 6 skipped being the `groupingByConcurrent` and
+`toConcurrentMap` overloads. `Comparator` — 3 implemented, 8 skipped, 2 gaps;
+per method, 3 of 17 implemented, 11 skipped, 3 gaps, this being the table
+where snakestream's surface is genuinely thinnest against Java's. Everything
+else Java 8 has, this library either has or declines on a stated reason.
+
+**The Java 9 gate is met.** **Later** parks `takeWhile`/`dropWhile`/
+`ofNullable`/3-arg `iterate` behind "once Java 8 parity is substantially
+done", and it is: none of the five gaps is structural — three are overload
+widenings on existing machinery and two are self-contained `comparator.py`
+additions — and the only two genuinely blocked items, `spliterator()` and
+`collect()`'s inert `combiner`, sit behind the real-parallelism decision that
+same section says needs explicit buy-in. They cannot be what Java 9 waits on
+without waiting forever.
 
 Item 4 is closed as of 2026-08-31, so this enumeration no longer has to carry
 it. The note that used to sit here — that whether `counting()` and the integer
@@ -286,10 +349,11 @@ This is a whole-path number: it would pay off for every order-observing terminal
 at once, which is why `order-min-max-tie-breaks` declined to spend it on two.
 Anyone picking this up starts here rather than from scratch.
 
-Refill from **Now**'s open questions, which is where the loose ends now live —
-`thenComparing()` is the readiest of them, and question 5 exists to turn "the
-Java-8 parity gaps README tracks as unimplemented" into an actual list rather
-than the vague refill source this line used to be.
+Refill from **Now**'s **Queued changes**, which is where the loose ends now
+live. Question 5 did what this line used to gesture at: the "Java-8 parity
+gaps README tracks as unimplemented" was never a set README could express, and
+the five that the 2026-08-31 audit found are now queued by name rather than
+alluded to.
 
 
 ## Later
@@ -301,11 +365,77 @@ core semantic.
 |---|---|
 | **Implement real (multiprocess) parallelism for `.parallel()` / `ParallelStream` / `PROCESSES`** — today it's just `asyncio` tasks racing over a shared generator (I/O-bound only, GIL-bound, no multiprocessing). Decided to keep the `.parallel()`/`PROCESSES` naming as-is (see README) rather than rename to the more accurate `.concurrent()`/`CONCURRENCY`, specifically so that *if* real parallelism is ever implemented under the same names, it's not a second breaking rename. | No concrete use case for true CPU parallelism has come up yet, and the path there is blocked on a real problem, not just unscoped effort: a `ProcessPoolExecutor`-backed implementation needs to serialize the mapper/predicate/comparator/accumulator/combiner across the process boundary, and stdlib `pickle` can't handle lambdas or local closures (the idiomatic way to call every op in this library), can't pickle generators/async generators at all (so the source itself can never be shipped whole), and even picklable *sync* callables don't solve it since async user callables would need each worker to bootstrap its own event loop rather than just running a function. Revisit only once there's both a concrete need and an answer for lambdas/closures across the process boundary (`cloudpickle`/`dill`, or a restricted sync-only picklable-callable mode) and for running async user callables inside a worker process. **The executor-value redesign is done** (see **Done**), which is the enabler this entry used to point forward to: real parallelism is now *a third executor* implementing `elements()`/`value()`, not a third subclass, and `execution.py` is the natural owner for whatever has to cross the process boundary. It does not solve the pickling blocker. The `ParallelStream` name in this item's title is retired; the mode is now `Racing`. |
 | **`BaseStream.spliterator()`** — Java's parallel-decomposition iterator, used by `parallelStream()` to split a source into chunks shared threads can each work over. | Depends on the item above: Java's `Spliterator` assumes shared-memory thread decomposition, which only becomes meaningful once real (multiprocess) partitioned execution is decided — until then there's nothing for it to expose, and it may end up intentionally-skipped rather than implemented. Moved down from **Now**, where it was flagged as decision-blocked rather than ready to build. |
-| **Wire up `reduce(identity, accumulator, combiner)` and `collect(supplier, accumulator, combiner)`'s `combiner`** — both accept a `combiner` for Java signature parity but never invoke it, since `stream.py` always folds over one composed stream, sequential or parallel, with no independent partitions to merge. | Same blocker as the item above: a real combine step only makes sense once real partitioned (multiprocess) execution exists, which is now explicitly parked until there's both concrete demand and a solution for the pickling/async-worker problem. See `openspec/changes/add-collect-supplier-accumulator-combiner`. |
-| **Java 9 `Stream` additions** — `takeWhile(predicate)`, `dropWhile(predicate)`, `Stream.ofNullable(t)`, and the 3-arg `iterate(seed, hasNext, next)` overload (distinct from the already-implemented 2-arg `iterate(seed, next)`). | README states the project's intent explicitly: "once we reach some sort of feature parity with Java 8 then maybe we move on to implement the improvements in Java 9." The **Now**/**Next** buckets are still closing out Java 8 parity gaps (`unordered()`, the `Collectors` framework, etc.), so pulling Java 9 work forward would jump the stated sequencing rather than reflecting lower value — revisit once Java 8 parity is substantially done. |
+| **Wire up `collect(supplier, accumulator, combiner)`'s `combiner`** — it accepts a `combiner` for Java signature parity but never invokes it, since `stream.py` always folds over one composed stream, sequential or parallel, with no independent partitions to merge. **Corrected 2026-08-31 by `enumerate-java-8-parity-gaps`:** this entry used to name `reduce(identity, accumulator, combiner)` alongside `collect()` and say "both accept a `combiner` … but never invoke it". `Stream.reduce()` does not accept one — it has two overloads, and a third positional argument is a `TypeError` — so half of this entry was blocking on a decision that could not apply to it. Adding the parameter is possible today, exactly as `collect()` did; whether it is worth adding a parameter that must be documented as inert is a different question from this one, and is now gap 1 in **Now** → **Queued changes**. `collect()`'s half, below, is unaffected. | Same blocker as the item above: a real combine step only makes sense once real partitioned (multiprocess) execution exists, which is now explicitly parked until there's both concrete demand and a solution for the pickling/async-worker problem. That blocker is real for `collect()`, whose parameter already exists and would have to start doing something. See `openspec/changes/add-collect-supplier-accumulator-combiner`. |
+| **Java 9 `Stream` additions** — `takeWhile(predicate)`, `dropWhile(predicate)`, `Stream.ofNullable(t)`, and the 3-arg `iterate(seed, hasNext, next)` overload (distinct from the already-implemented 2-arg `iterate(seed, next)`). | README states the project's intent explicitly: "once we reach some sort of feature parity with Java 8 then maybe we move on to implement the improvements in Java 9." **That gate is met as of 2026-08-31** — see **Now** question 5, whose audit enumerated what is left: five gaps, none structural, three of them overload widenings and two self-contained `comparator.py` additions. The only Java 8 items genuinely blocked are `spliterator()` and `collect()`'s inert `combiner`, both parked behind the real-parallelism decision two rows up, which this section says needs explicit buy-in — so they cannot be what Java 9 waits on without waiting forever. This entry is no longer sequencing-blocked; it is unstarted, and it competes with the five gaps on merit rather than sitting behind them. |
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should instead be documented as intentional next to the `str`/`bytes` note. Surfaced 2026-08-20 in the same code-quality read that produced **Now** items 1-4. |
 
 ## Done
+
+- **`enumerate-java-8-parity-gaps`** (2026-08-31) — README's three parity
+  tables are now **total over Java 8's surface**, and the five methods this
+  library genuinely lacks are queued by name in **Now**. Closes question 5.
+
+  **The question's own premise was the finding.** Three places in this file
+  offered "the Java-8 parity gaps README still tracks as unimplemented" as a
+  refill source for **Next**, and README tracked no such set. Its tables had two
+  row states — `x`, and struck-through-with-a-reason — where Java's surface has
+  three: a method nobody wrote a row for had no row at all, so absence was
+  invisible rather than deferred. A row existed only because someone wrote one.
+  That is why the refill source could be pointed at from three places without
+  any of them naming a member, and why an enumeration alone would have been half
+  a fix — a list in a roadmap paragraph decays the moment a method lands. The
+  tables carry a third row state now, declare their own totality, and make a
+  Java 8 method with no row a defect in the table rather than a silence.
+
+  Rows added: `close()`, `on_close()`, the 3-arg `reduce`, `spliterator()`,
+  `Optional`, the 4-arg `to_map`, the 3-arg `grouping_by`,
+  `grouping_by_concurrent`, `to_concurrent_map`, `Collector.of`,
+  `then_comparing(comparator)`, `nulls_first`/`nulls_last`, the six
+  `comparingInt`-family skips, and `compare`/`equals`. Final counts in rows:
+  `Stream` + `BaseStream` 35 implemented / 12 skipped / 1 gap, `Collectors`
+  22 / 3 / 2, `Comparator` 3 / 8 / 2 — per Java method the last is 3 of 17,
+  which is where the surface is genuinely thinnest.
+
+  **Two documents asserted a signature that does not exist**, and both are
+  corrected. The **Later** entry bundling `reduce()` and `collect()` as "both
+  accept a `combiner` for Java signature parity but never invoke it", and
+  `collector.py`'s `Collector` docstring repeating it, were wrong about
+  `reduce()`: it has two overloads and a third positional argument is a
+  `TypeError`. Only `collect()` ever grew the parity argument. That split the
+  **Later** entry — `collect()`'s half keeps the real-parallelism blocker, since
+  its parameter exists and would have to start doing something; `reduce()`'s
+  half is gap 1, where the question is whether parity is worth a parameter that
+  must be documented as inert.
+
+  **Four rows claimed a type this library does not have.** `find_any()`,
+  `find_first()`, `max()` and `min()` were typed `Optional[T]` and described in
+  Java's vocabulary ("an Optional describing…", "an empty Optional"); they
+  return `T | None`, and nothing here has `is_present`/`or_else`/`if_present`.
+  Almost certainly `typing.Optional` written in Java's idiom rather than a claim
+  anyone defended — which is exactly why it needed correcting, since it read as
+  one. `Optional` now has a struck-through row stating the skip: `is None`
+  answers the membership question, the chaining half is a second fluent layer
+  over a value the caller already holds, and adopting it would be a new public
+  type plus a return-type break on four terminals and `reduce()`, so it wants
+  its own proposal rather than a place in a queue of overload widenings.
+
+  **The Java 9 gate is met**, which is the question this item existed to settle.
+  None of the five gaps is structural — three are overload widenings on existing
+  machinery, two are self-contained `comparator.py` additions — and the only
+  genuinely blocked Java 8 items, `spliterator()` and `collect()`'s combiner,
+  sit behind the real-parallelism decision **Later** says needs explicit buy-in.
+  They cannot be what Java 9 waits on without waiting forever, so that entry is
+  no longer sequencing-blocked; it competes with the five on merit.
+
+  Gap 5, `nulls_first`/`nulls_last`, is the one worth building on its own
+  merits: `sorted()` over a stream containing `None` raises `TypeError` out of
+  Python's comparison and there is no way to say where the `None`s go. The other
+  four are parity for parity's sake. The five are filed as five rather than one
+  batched entry — gaps 1-3 resemble each other only at the surface, and the
+  batching call belongs to whoever picks them up.
+
+  No behaviour changed: one docstring in `src/`, and `git diff -- tests/` empty
+  at the end, which was the change's own tripwire.
 
 - **`mark-order-blind-collectors`** (2026-08-31) — `counting()`,
   `summing_int()`/`summing_long()` and `summarizing_int()`/`summarizing_long()`

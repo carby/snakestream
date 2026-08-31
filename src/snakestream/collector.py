@@ -82,7 +82,10 @@ class Collector(Generic[T, A, R]):
     Java and never invoked: a collection always folds over one composed
     stream, sequential or parallel, with no independently accumulated
     partitions to merge - the same posture `Stream.collect(supplier,
-    accumulator, combiner)` and `reduce()`'s `combiner` already have.
+    accumulator, combiner)` already has. `Stream.reduce()` is *not* a
+    precedent: it has two overloads and no combiner at all, and whether it
+    should grow one is an open parity question (roadmap **Now** -> **Queued
+    changes**, gap 1).
 
     Every part may be sync or async. A `Collector` holds these four callables
     plus one immutable datum, `characteristics`: a `frozenset` of
