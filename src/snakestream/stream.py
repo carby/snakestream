@@ -173,7 +173,23 @@ class Stream(Generic[T]):
         This is the one place the library refuses something Python allows on
         every other object. A loud refusal beats a silent wrong answer, and the
         message has to name the async alternative or the caller is no better
-        off than the wrong True left them."""
+        off than the wrong True left them.
+
+        The precedent being broken is worth naming, because it is CPython's
+        own: a generator, an async generator, map, filter, zip and a bare
+        iterator all define neither __bool__ nor __len__, so an empty one and
+        an exhausted one are alike truthy. range is the exception that states
+        the rule - it is the one lazy builtin that knows its size without
+        pulling, and the one that answers honestly. We side instead with numpy
+        and pandas, which raise rather than let bool() mislead.
+
+        Shape is what earns the deviation, not asyncness. Nobody writing
+        `if gen:` believes they asked about contents; a generator advertises
+        itself as a one-shot cursor. A Stream presents as a collection -
+        of(), count(), to_list(), collect() - so the collection reflex fires
+        and the wrong True is believed. filter() alone would justify this in a
+        synchronous port: being async is why the answer cannot be given, being
+        collection-shaped is why it must not be given wrong."""
         raise TypeError(
             "a Stream has no truth value: whether it is empty can only be "
             "answered by consuming it, which is asynchronous. Await "
