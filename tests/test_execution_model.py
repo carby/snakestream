@@ -207,28 +207,33 @@ async def test_for_each_ordered_follows_the_streams_executor_when_unordered() ->
 
 
 @pytest.mark.asyncio
-async def test_find_first_on_an_ordered_parallel_stream_ignores_the_executor() -> None:
+async def test_find_first_on_an_ordered_parallel_stream_follows_the_executor() -> None:
     # when
     it = await Stream.of([1, 2, 3, 4]).parallel().map(_delayed).find_first()
-    # then: the true first element, not the first to arrive
+    # then: the true first element, not the first to arrive - and obtained
+    # under the racing executor, not by dropping to a sequential drive
     assert it == 1
 
 
 @pytest.mark.asyncio
 async def test_find_first_holds_when_the_op_is_declared_before_parallel() -> None:
-    # when: the map now runs under the racing executor for ordinary terminals,
-    # but find_first drives under SEQUENTIAL regardless
+    # when: the map runs under the racing executor here as it does for every
+    # ordinary terminal - find_first() no longer overrides that
     it = await Stream.of([1, 2, 3, 4]).map(_delayed).parallel().find_first()
     # then
     assert it == 1
 
 
 @pytest.mark.asyncio
-async def test_find_first_on_an_unordered_stream_does_not_force_sequential() -> None:
+async def test_find_first_on_an_unordered_stream_is_not_released_by_it() -> None:
     # when
     it = await Stream.of([1, 2, 3, 4]).parallel().unordered().map(_delayed).find_first()
-    # then: behaves as find_any(), so any element is admissible
-    assert it in [1, 2, 3, 4]
+    # then the true first element, not any element. This assertion used to be
+    # `it in [1, 2, 3, 4]` with a comment saying find_first() behaves as
+    # find_any() here - which contradicted both the stream-find-first
+    # capability and test_terminal_sinks.py, and passed only because it
+    # admitted every answer. ALWAYS is the demand that survives unordered()
+    assert it == 1
 
 
 # --- the executor protocol -------------------------------------------------

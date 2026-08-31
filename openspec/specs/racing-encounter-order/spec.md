@@ -95,8 +95,17 @@ A terminal operation SHALL declare whether it observes encounter order:
 - `count()`, `for_each()`, `find_any()`, `all_match()`, `any_match()` and
   `none_match()` do NOT observe it and SHALL pay nothing for this requirement —
   neither reorder buffering nor head-of-line delay.
-- `find_first()` is unaffected: it names the sequential executor at its own call
-  site as it does today, per the `stream-execution-model` capability.
+- `find_first()` observes it **unconditionally**. It is the only terminal whose
+  demand survives `unordered()`: the barrier can always restore encounter order,
+  because the source index is assigned at the point elements are pulled and
+  `unordered()` clears the ordering *requirement* rather than the ability to
+  meet it. See the `stream-find-first` capability.
+
+A terminal's declaration is therefore three-valued — it does not observe
+encounter order, it observes it where the pipeline is ordered, or it observes it
+unconditionally — mirroring the two ways an *operation* can need order restored
+before it: `sorted()` needs it wherever it sits, while `limit`, `skip` and
+`distinct` need it only at a position where the pipeline is ordered.
 
 Restoring order for delivery SHALL NOT serialize the chain. Every operation in
 the chain SHALL still run across all branches concurrently; only the handing of
@@ -144,6 +153,19 @@ finished elements to the terminal is ordered.
 - **WHEN** an ordered racing pipeline is collected with `to_set()`, which
   declares `Characteristics.UNORDERED`
 - **THEN** no delivery barrier is engaged, and the collected set is correct
+
+#### Scenario: An unconditional observer is not released by unordered()
+- **WHEN** `.parallel().unordered().map(f).find_first()` is awaited on a chain
+  whose elements complete out of encounter order
+- **THEN** the delivery barrier is engaged despite the cleared ordering
+  characteristic, and the first element in the source's encounter order is
+  returned
+
+#### Scenario: An unconditional observer still races its chain
+- **WHEN** `.parallel().filter(p).find_first()` is awaited on a source whose
+  first several elements fail an expensive `p`
+- **THEN** the correct element is returned, and `p` runs across all branches
+  concurrently rather than one element at a time
 
 #### Scenario: An unordered pipeline delivers unordered
 - **WHEN** `.parallel().unordered().map(f).collect(to_list())` is run

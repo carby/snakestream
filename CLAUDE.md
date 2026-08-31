@@ -58,7 +58,7 @@ RACING.elements     = race_through        RACING.value     = inherited generic
 
 `Executor.value()`'s generic default is `drain(self.elements(...), terminal)`, which `Racing` uses unchanged — each racing branch owns its own sink chain, so there is no single chain to fuse a terminal onto. `Sequential.value()` overrides it with the fused push purely on measurement: composing and then draining costs +125% per element on `count()`. That override is the one asymmetry in the protocol; its docstring carries the figures.
 
-A stream consults its executor in exactly two places: `iterator()` (`self._executor.elements(...)`) and `_evaluate()` (`self._executor.value(...)`). Both operations carry the consumer's `observes_order` declaration alongside the chain and the source — a second axis, orthogonal to which executor is named, and the input to the delivery barrier described below. A terminal that needs encounter order regardless of the stream's mode names `SEQUENTIAL` explicitly at its own call site — `find_first()`, always and unconditionally, and now the only one. That is why `find_first` has one implementation rather than a per-mode pair. `for_each_ordered()` used to be the other, and stopped: its demand is conditional on the pipeline being ordered, which is exactly what the delivery barrier already asks, so it declares `observes_order` like every other order-observing terminal and keeps the stream's executor. Naming `SEQUENTIAL` there had gone a step further than Java, whose `ForEachOrderedTask` is itself a fork-join task.
+A stream consults its executor in exactly two places: `iterator()` (`self._executor.elements(...)`) and `_evaluate()` (`self._executor.value(...)`). Both operations carry the consumer's `OrderDemand` declaration alongside the chain and the source — a second axis, orthogonal to which executor the stream carries, and the input to the delivery barrier described below. No terminal names an executor for itself any more. A terminal that needs encounter order says so as a *demand* — `OrderDemand`, the value it passes alongside the chain — and the executor it runs under is always the stream's. `find_first()` is the one terminal whose demand is unconditional (`ALWAYS`), which is why it has one implementation rather than a per-mode pair; `for_each_ordered()`'s is conditional (`IF_ORDERED`) like every other order-observing terminal's. Both used to name `SEQUENTIAL` and both stopped, because naming it forfeited the caller's mode to express an ordering demand, and went a step further than Java: `ForEachOrderedTask` is itself a fork-join task, and `FindTask` scans leftmost *across* branches rather than dropping to a sequential traversal.
 
 `_is_ordered()`, the private fold over the chain's ordering characteristic, has one caller left: `Stream.concat()`, which uses it to decide whether the concatenation inherits `unordered()`. It is deliberately not public: Java exposes only `isParallel()` and keeps `ORDERED` in the package-private `StreamOpFlag`.
 
@@ -71,17 +71,20 @@ it back, and one mechanism gives it to both: `race_through()` has a second gear,
 and whether it engages is a property of the chain plus the consumer, not of the
 executor.
 
-`_split_point(chain, observes_order, ordered_in)` returns where order has to be
-restored. Three clauses, first hit wins:
+`_split_point(chain, demand, ordered_in)` returns where order has to be
+restored. Three clauses, first hit wins, and the third is the first two again
+one level up — `Ordering.SET` is to `OrderDemand.ALWAYS` what `order_sensitive`
+is to `OrderDemand.IF_ORDERED`:
 
 - an op declaring `Ordering.SET` (`sorted()`, wherever it sits — a sort claims
   its output is ordered, so it must see the whole stream), or
 - an op declaring `order_sensitive` **and** sitting at a position
   `is_ordered()` reports ordered (`limit`/`skip`/`distinct`) — an operation
   whose answer depends on an element's *position*, and
-- `len(chain)`, when the **terminal** observes encounter order and the pipeline
-  is ordered at the end of the chain. A split at the end means every op still
-  races and only delivery is reordered, which is Java's shape and costs no
+- `len(chain)`, when the **terminal** demands it — unconditionally
+  (`ALWAYS`, `find_first()` alone), or conditionally (`IF_ORDERED`) with the
+  pipeline ordered at the end of the chain. A split at the end means every op
+  still races and only delivery is reordered, which is Java's shape and costs no
   per-element concurrency.
 
 When there is no split — every pipeline the caller declared `unordered()` before
@@ -108,11 +111,13 @@ list.
 Which terminals observe order is declared at each terminal's own call site, as
 a bool passed to `_evaluate()` and on through `Executor.value()`/`elements()`.
 `count()`, `for_each()`, `find_any()`, `max`/`min` and the `*_match` family
-declare `False` and pay nothing; `reduce()`, `to_array()`, the three-argument
-`collect()`, `for_each_ordered()` and `iterator()` declare `True`;
-`collect(collector)` reads the collector's `Characteristics.UNORDERED`.
-`find_first()` still names `SEQUENTIAL` at its own call site and is untouched by
-this — the last terminal that does.
+declare `NONE` and pay nothing; `reduce()`, `to_array()`, the three-argument
+`collect()`, `for_each_ordered()` and `iterator()` declare `IF_ORDERED`;
+`collect(collector)` reads the collector's `Characteristics.UNORDERED` to pick
+between those two. `find_first()` declares `ALWAYS`, alone: its demand survives
+`unordered()`, which is coherent because the barrier can always restore
+encounter order — `_guarded()` assigns the source index under the lock, and
+`unordered()` clears the requirement to honour it, never the ability.
 
 Read-ahead is bounded by `_READ_AHEAD`, enforced in `_guarded()` where the index
 is assigned — the only place a pull happens, so the bound costs no new
