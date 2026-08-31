@@ -111,6 +111,14 @@ on every `.map()`.
 
 ## Migration Plan
 
+**Sequencing: none.** This change is independent of the two others queued
+alongside it. `Stream.concat()` builds its result directly rather than through
+`_derive()`, so `concat-carries-characteristics` shares no code with it, and
+their `pipeline-immutability` deltas touch disjoint requirements. It can land
+before, between or after them. The roadmap recommends second, on the grounds
+that nothing depends on it and the other two carry a live wrong answer between
+them.
+
 No deprecation path. The behaviour change is observable only to `Stream`
 subclasses, of which the repository has none outside tests, and the direction is
 strictly toward what the documented use case already intended. CLAUDE.md's

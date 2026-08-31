@@ -32,24 +32,53 @@ and came out as three queued changes rather than one. The two items in **Next**
 are both unblocked as of `order-racing-delivery`.
 
 **Three changes from question 7's session (2026-08-31), in landing order.**
-They must land in this order; each dependency is one line of the next one's
-behaviour:
+**They are not a chain**, and the first draft of this entry said they were —
+the correction matters because it decides what can be deferred. There is
+exactly one hard dependency:
 
-1. **`derive-without-reinit`** — question 7 as filed. `_derive()` derives via
-   `copy.copy` instead of `type(self)(...)`, so a subclass constructor runs once
-   per pipeline rather than once per stage, and a subclass may define any
-   `__init__` signature. **BREAKING for subclasses only.**
-2. **`concat-carries-characteristics`** — found in the same session and wrong
-   today with **zero subclasses in play**, which is why it is its own change.
-   `Stream.concat(a, b)` returns a base `Stream` with an empty chain and the
-   default executor, so it drops both characteristics Java's one documented
-   sentence requires it to carry — *"ordered if both of the input streams are
-   ordered, and parallel if either of the input streams is parallel"*. Measured:
+```
+  concat-carries-characteristics ──► implement-python-data-model
+  derive-without-reinit ─────────────  (independent of both)
+```
+
+`concat()` builds its result with `Stream(...)` directly and never calls
+`_derive()`, so `derive-without-reinit` has no code coupling to either of the
+others. Its spec delta and `concat-carries-characteristics`' both land in
+`pipeline-immutability`, but on disjoint requirements — one adds four, the
+other modifies `Using an already-extended reference raises`, which the first
+never touches — so either archive order merges cleanly. The one real edge is
+`__add__` delegating to `concat()`: `implement-python-data-model`'s scenario
+*"The operator invalidates both operands"* cannot pass before
+`concat-carries-characteristics` exists.
+
+The order below is therefore a **recommendation**, chosen on two grounds that
+agree: severity, since (1) is a wrong answer shipping to everyone today while
+(2) only bites a subclass the repo does not have; and critical path, since
+anything scheduled ahead of (1) pushes (3) back by that much while (2) costs
+nothing to defer. It also happens to put (2) before (3), which both edit
+CLAUDE.md's AutoClose section — (2) adding the constructor-runs-once guarantee,
+(3) swapping `contextlib.closing()` for `with stream:` as the idiom.
+
+1. **`concat-carries-characteristics`** — found while exploring question 7, and
+   **wrong today with zero subclasses in play**, which is why it is its own
+   change and why it goes first. `Stream.concat(a, b)` returns a base `Stream`
+   with an empty chain and the default executor, so it drops both
+   characteristics Java's one documented sentence requires it to carry —
+   *"ordered if both of the input streams are ordered, and parallel if either of
+   the input streams is parallel"*. Measured:
    `concat(a.parallel(), b.parallel()).is_parallel()` is `False`, and
    `concat(a.unordered(), b.unordered())` is ordered. It also **does not consume
    its operands**, so draining one afterwards silently shortens the
    concatenation's output — `[1,2,3]` then `[4,5]`, no exception, where Java
    raises. **BREAKING**, and the silent wrong answer is the reason.
+2. **`derive-without-reinit`** — question 7 as filed. `_derive()` derives via
+   `copy.copy` instead of `type(self)(...)`, so a subclass constructor runs once
+   per pipeline rather than once per stage, and a subclass may define any
+   `__init__` signature. **BREAKING for subclasses only.** Independent of the
+   other two: it can move anywhere in the order, and sits here rather than first
+   only because nothing depends on it. The case for pulling it forward, if
+   anyone wants it, is that it is one line in the library's most load-bearing
+   method and isolating it makes a later bisect trivial.
 3. **`implement-python-data-model`** — `Stream` implements *no* dunder methods
    at all. Adds `__aiter__`, `__enter__`/`__exit__` and `__repr__` as **parity**
    (Java's stream satisfies its own language's iteration, resource and
@@ -60,8 +89,8 @@ behaviour:
    time. `__getitem__` is excluded on a mechanical finding worth not
    rediscovering: Python synthesizes iteration from it when `__iter__` is
    absent, so `s[10:20]` would make `for x in stream` loop forever over an
-   infinite sequence of `Stream`s. Must land after (2), since `__add__`
-   delegates to `concat()`. `async with` was split off and parked in **Later**.
+   infinite sequence of `Stream`s. **Must land after (1)**, this being the one
+   hard edge. `async with` was split off and parked in **Later**.
 
 **The five Java 8 parity gaps below** remain queued, put here by
 `enumerate-java-8-parity-gaps` (2026-08-31). **Item 5 is the one that filled
