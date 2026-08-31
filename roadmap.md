@@ -28,10 +28,10 @@ value rather than a class hierarchy, `summing_int`/`summing_long` sharing a body
 
 **The five Java 8 parity gaps below**, put here by
 `enumerate-java-8-parity-gaps` (2026-08-31). Of the seven
-questions in **Now**, five are resolved (1, 2, 3, 4 and 5) and two are open —
-6 and 7. **Item 5 is the one that filled this queue**; **item 6 is a one-line
-fix** and has been rediscovered three times; **item 7 is the only actual
-defect** in the list and wants a session. The two items in **Next** are both
+questions in **Now**, six are resolved (1 through 6) and one is open — item 7.
+**Item 5 is the one that filled this queue**; **item 6 was the one-line fix**
+and was deleted on 2026-08-31; **item 7 is the only actual defect** left in
+the list and wants a session. The two items in **Next** are both
 unblocked as of `order-racing-delivery`.
 
 **The five real gaps.** Filed as five and not one batched entry: they share a
@@ -77,7 +77,7 @@ change has been implying without ever stating, found while fleshing out
 **Next** on 2026-08-27, ordered by how ready they are. **Item 7 is the
 exception and the only actual defect in the list** — appended rather than
 sorted in, so the numbering above stays stable. The readiness ordering is now
-stale throughout, four of the seven being resolved, and is left as it is for
+stale throughout, six of the seven being resolved, and is left as it is for
 that same reason: the numbers are referenced from archived proposals.
 
 **1. `Comparator.thenComparing()` — resolved, landed as `add-comparator-chaining`
@@ -184,12 +184,19 @@ and reordering can change which key the message names, and a caller-supplied
 merge function need not commute. Neither is settled by the benchmark that closed
 the rest, so it wants its own pass.
 
-**6. Repo hygiene: a stray `</content>` closing tag sits at the end of three
-main specs** — `openspec/specs/stream-iterate/spec.md`,
-`collector-to-map/spec.md` and `collector-to-set/spec.md`. Committed, harmless
-to the parser, and clearly an artifact of however those files were first
-written. A one-line fix, listed here only so it is not rediscovered a fourth
-time.
+**6. Repo hygiene: a stray `</content>` closing tag at the end of three main
+specs — resolved 2026-08-31, and the answer was to just delete it.** By the
+time anyone looked, it was two files, not three: `stream-iterate/spec.md` and
+`collector-to-map/spec.md`. `collector-to-set/spec.md` had lost its copy
+without anyone noticing, because `mark-order-blind-collectors` (2026-08-31)
+rewrote that file's tail for its own reasons. That is the whole finding worth
+keeping: the tag was never fixed, it was *overwritten*, and a defect that
+disappears only when something else happens to rewrite the same lines is one
+nothing was watching. `openspec validate --specs` passes with the tag and
+passes without it — the parser ignores trailing junk — so no gate here would
+have caught it, which is why it was rediscoverable three times in the first
+place. Fixed by deletion, no change proposal: two lines, no spec text touched,
+41/41 specs still validating.
 
 **7. A subclass's `__init__` re-runs on every derivation — a real defect, found
 2026-08-27.** `_derive()` builds the next stage with

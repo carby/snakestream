@@ -104,4 +104,3 @@ short-circuiting operation such as `limit()` or a short-circuiting terminal.
 - **WHEN** `Stream.iterate(0, nxt).parallel().limit(10)` is collected, where
   `nxt` is an `async def`
 - **THEN** ten elements are produced and none of them is a coroutine object
-</content>

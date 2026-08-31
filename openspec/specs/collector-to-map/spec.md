@@ -61,4 +61,3 @@ valueMapper, mergeFunction)`.
 #### Scenario: no collision means merge_function is never called
 - **WHEN** `Stream.of([1, 2, 3]).collect(to_map(lambda x: x, lambda x: x, merge_function))` is called with all-distinct keys
 - **THEN** the result is `{1: 1, 2: 2, 3: 3}` and `merge_function` is never invoked
-</content>
