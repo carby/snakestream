@@ -176,15 +176,34 @@ async def test_an_ordinary_terminal_follows_the_streams_executor() -> None:
 
 
 @pytest.mark.asyncio
-async def test_for_each_ordered_ignores_the_streams_executor() -> None:
+async def test_for_each_ordered_follows_the_streams_executor_when_ordered() -> None:
+    # given a mapper slow enough that a single-flight drive would show up in
+    # wall clock: four elements, each sleeping, under four workers
+    seen: list[int] = []
+
+    # when
+    started = time.time()
+    await Stream.of([1, 2, 3, 4]).parallel().map(_delayed).for_each_ordered(seen.append)
+    elapsed = time.time() - started
+
+    # then the consumer saw encounter order, and the chain still raced - the
+    # sequential drive would cost the sum of the sleeps (0.08 + 0.06 + 0.04 +
+    # 0.02 = 0.2s), the racing one the longest of them (0.08s)
+    assert seen == [1, 2, 3, 4]
+    assert elapsed < 0.15
+
+
+@pytest.mark.asyncio
+async def test_for_each_ordered_follows_the_streams_executor_when_unordered() -> None:
     # given
     seen: list[int] = []
 
     # when
-    await Stream.of([1, 2, 3, 4]).parallel().map(_delayed).for_each_ordered(seen.append)
+    await Stream.of([1, 2, 3, 4]).parallel().unordered().map(_delayed).for_each_ordered(seen.append)
 
-    # then
-    assert seen == [1, 2, 3, 4]
+    # then every element exactly once, under the stream's own executor, with no
+    # barrier engaged - so no order is promised
+    assert sorted(seen) == [1, 2, 3, 4]
 
 
 @pytest.mark.asyncio

@@ -83,6 +83,10 @@ A terminal operation SHALL declare whether it observes encounter order:
   `Characteristics.UNORDERED`.
 - `collect(supplier, accumulator, combiner)`, `reduce()`, `to_array()`,
   `collect(to_generator)` and `iterator()` observe it.
+- `for_each_ordered()` observes it. Its encounter-order guarantee is exactly
+  this requirement applied to a consumer rather than to a collected result, and
+  it is released on an unordered pipeline for exactly the reason every other
+  entry in this list is; see the `stream-foreach-ordered` capability.
 - `max()` and `min()` observe it. Their *value* is the same in any order, but
   which of two equal-comparing distinguishable elements they return is not, and
   `comparator-contract` requires the first in encounter order. They take the
@@ -91,9 +95,8 @@ A terminal operation SHALL declare whether it observes encounter order:
 - `count()`, `for_each()`, `find_any()`, `all_match()`, `any_match()` and
   `none_match()` do NOT observe it and SHALL pay nothing for this requirement —
   neither reorder buffering nor head-of-line delay.
-- `find_first()` and `for_each_ordered()` are unaffected: each names the
-  sequential executor at its own call site as it does today, per the
-  `stream-execution-model` capability.
+- `find_first()` is unaffected: it names the sequential executor at its own call
+  site as it does today, per the `stream-execution-model` capability.
 
 Restoring order for delivery SHALL NOT serialize the chain. Every operation in
 the chain SHALL still run across all branches concurrently; only the handing of
@@ -112,6 +115,13 @@ finished elements to the terminal is ordered.
 - **THEN** it completes in substantially less wall-clock time than the
   sequential pipeline over the same source, because the mapping still runs
   across all branches concurrently
+
+#### Scenario: for_each_ordered takes the delivery barrier like any other observer
+- **WHEN** an ordered racing pipeline whose mapping operation sleeps per element
+  is drained with `for_each_ordered(consumer)`
+- **THEN** the consumer is invoked in encounter order, and the call completes in
+  substantially less wall-clock time than the sequential pipeline over the same
+  source
 
 #### Scenario: reduce() over an ordered racing pipeline folds in encounter order
 - **WHEN** `.parallel()` is used with a non-commutative accumulator, for
@@ -139,6 +149,11 @@ finished elements to the terminal is ordered.
 - **WHEN** `.parallel().unordered().map(f).collect(to_list())` is run
 - **THEN** elements may arrive in any order, no delivery barrier is engaged, and
   the collected list is the mapped elements as a multiset
+
+#### Scenario: An unordered for_each_ordered delivers unordered
+- **WHEN** `.parallel().unordered().map(f).for_each_ordered(consumer)` is awaited
+- **THEN** no delivery barrier is engaged, the consumer receives every element
+  exactly once, and it may receive them in any order
 
 #### Scenario: unordered() after an order-sensitive operation still clears delivery
 - **WHEN** `.parallel().limit(5).unordered().map(f).collect(to_list())` is run
@@ -253,6 +268,7 @@ measurable and SHALL be measured.
 - **WHEN** `.parallel().unordered().max(c)` is awaited
 - **THEN** no delivery barrier is engaged, no element is held back waiting for
   an earlier one, and the returned value is correct
+
 ### Requirement: Read-ahead under an ordered racing pipeline is bounded
 
 Honouring encounter order requires holding a finished element until every

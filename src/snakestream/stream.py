@@ -532,17 +532,22 @@ class Stream(Generic[T]):
         return await self._evaluate(_ForEachSink(consumer), False)
 
     async def for_each_ordered(self, consumer: Consumer[T]) -> None:
-        """Encounter order costs the racing executor, so it is only paid when
-        the pipeline is ordered; an unordered one runs under whatever executor
-        the stream carries and is then just for_each(). Java splits the same
-        way - ForEachOps.OfRef.evaluateParallel() picks ForEachOrderedTask or
-        plain ForEachTask on whether ORDERED is known upstream - and it is what
-        the javadoc's "if the stream has a defined encounter order" means."""
-        executor = SEQUENTIAL if self._is_ordered() else None
-        # True on both branches, and free on both: SEQUENTIAL ignores it, and
-        # the branch that does not name SEQUENTIAL is the unordered one, where
-        # the pipeline carries no requirement for a barrier to restore
-        return await self._evaluate(_ForEachSink(consumer), True, executor)
+        """for_each() that observes encounter order - the whole difference
+        between the two, and the only thing this declares.
+
+        It asks for order rather than for an executor. _split_point() releases
+        the demand on an unordered pipeline, which is the javadoc's "if the
+        stream has a defined encounter order" caveat and the same condition
+        ForEachOps.OfRef.evaluateParallel() reads when it picks between
+        ForEachOrderedTask and plain ForEachTask.
+
+        Naming SEQUENTIAL here, as this once did, went a step further than Java
+        does: ForEachOrderedTask is itself a CountedCompleter over the
+        fork-join pool, so Java's ordered path stays parallel and only its
+        *delivery* is ordered. The barrier is that shape. Every op still races;
+        an op queued upstream is therefore not ordered by this call, and a side
+        effect that needs to be belongs in `consumer`."""
+        return await self._evaluate(_ForEachSink(consumer), True)
 
     async def to_array(self) -> list[T]:
         # collect() runs _check_not_consumed() itself, and to_list() declares no
