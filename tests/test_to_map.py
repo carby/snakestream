@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 
+from snakestream.collector import Characteristics
 from snakestream.collectors import to_map
 from snakestream.exception import IllegalStateException
 from snakestream.stream import Stream
@@ -128,3 +129,33 @@ async def test_to_map_sync_mappers_with_async_merge_function() -> None:
 
     # then
     assert result == {1: "AB", 2: "AA"}
+
+
+# --- what the two forms declare ---------------------------------------------
+
+
+def test_to_map_without_a_merge_function_declares_unordered() -> None:
+    # given the form whose result is a function of the element multiset alone
+    # then it declares the mark that lets a racing collect() skip the barrier
+    assert Characteristics.UNORDERED in to_map(len, str.upper).characteristics
+
+
+def test_to_map_with_a_merge_function_does_not_declare_unordered() -> None:
+    # given a merge that keeps whichever value arrived first, which is why this
+    # form can never declare: the surviving value is chosen by arrival order
+    def keep_first(a: str, b: str) -> str:
+        return a
+
+    # then
+    assert Characteristics.UNORDERED not in to_map(len, str.upper, keep_first).characteristics
+
+
+@pytest.mark.asyncio
+async def test_to_map_without_a_merge_function_is_equal_under_any_ordering() -> None:
+    """The declaration above is true of the behaviour, not merely asserted."""
+    # given the same elements in two orders, with no key collision
+    forwards = await Stream.of(["a", "bb", "ccc"]).collect(to_map(len, str.upper))
+    backwards = await Stream.of(["ccc", "bb", "a"]).collect(to_map(len, str.upper))
+
+    # then the collected dicts compare equal, whatever order they were built in
+    assert forwards == backwards
