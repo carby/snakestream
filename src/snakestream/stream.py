@@ -240,8 +240,43 @@ class Stream(Generic[T]):
 
     @staticmethod
     def concat(a: Stream[T], b: Stream[T]) -> Stream[T]:
+        """Every element of `a` then every element of `b`, carrying forward what
+        both operands knew about themselves.
+
+        Java's one sentence is the whole contract: the result "is ordered if
+        both of the input streams are ordered, and parallel if either of the
+        input streams is parallel". The two halves arrive by different
+        mechanisms, and the asymmetry is the same one stream-ordering already
+        documents rather than a new one - mode is a value on the stream and so
+        is assigned, ordering is positional and so has to occupy a position.
+        That is what the unordered() call below is: a stage this concatenation
+        introduces on the caller's behalf, not a stage the caller wrote. It is
+        also the only mechanism available, pipeline-immutability requiring that
+        the ordering characteristic not be carried as state beside the chain.
+
+        Both operands are consumed. concat() links their pipelines into the
+        result, so they are superseded exactly as a receiver is superseded by an
+        intermediate op called on it - and Java's AbstractPipeline marks them
+        the same way. Leaving them live was a silent wrong answer rather than a
+        lenient one: an operand and the concatenation draw on one source, so
+        draining the operand afterwards removed elements from the
+        concatenation's output with no signal at all.
+
+        The result is a plain `Stream` even when both operands share a subclass.
+        `type(a)` and `type(b)` may differ with no principled tie-break, and a
+        subclass constructor may want arguments concat() has no way to supply;
+        Java returns an internal type for the same reason. See the stream-concat
+        capability, which specifies this as a decision rather than leaving the
+        next reader to guess it was one."""
+        # eager: the argument expressions run here, so an already-extended
+        # operand raises at call time rather than at the first pull.
         new_stream = _concat(a.iterator(), b.iterator())
-        return Stream(new_stream, a._close_handlers + b._close_handlers)
+        concatenated = Stream(new_stream, a._close_handlers + b._close_handlers)
+        concatenated._executor = RACING if a.is_parallel() or b.is_parallel() else SEQUENTIAL
+        if not (a._is_ordered() and b._is_ordered()):
+            concatenated = concatenated.unordered()
+        a._consumed = b._consumed = True
+        return concatenated
 
     @staticmethod
     def builder() -> StreamBuilder:

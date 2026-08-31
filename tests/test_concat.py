@@ -1,7 +1,10 @@
+import asyncio
+
 import pytest
 
 from snakestream.collector import to_generator
 from snakestream.collectors import to_list
+from snakestream.exception import IllegalStateException
 from snakestream.stream import Stream
 
 
@@ -194,3 +197,170 @@ def test_concat_raising_handler_on_a_does_not_skip_bs_handler(mocker) -> None:
     # then
     bad_a.assert_called_once()
     good_b.assert_called_once()
+
+
+# --- the concatenated stream carries both operands' characteristics ---------
+#
+# Java's Stream.concat documents one sentence this file's tests split in two:
+# the result "is ordered if both of the input streams are ordered, and parallel
+# if either of the input streams is parallel". Before
+# concat-carries-characteristics, concat() built a base Stream with an empty
+# chain and the default executor, so it carried the operands' elements and
+# close handlers and nothing else they knew about themselves.
+
+
+@pytest.mark.asyncio
+async def test_concat_of_two_parallel_streams_is_parallel() -> None:
+    assert Stream.concat(Stream.of([1, 2, 3]).parallel(), Stream.of([4, 5]).parallel()).is_parallel() is True
+
+
+@pytest.mark.asyncio
+async def test_concat_is_parallel_when_only_one_operand_is() -> None:
+    assert Stream.concat(Stream.of([1, 2, 3]).parallel(), Stream.of([4, 5])).is_parallel() is True
+    assert Stream.concat(Stream.of([1, 2, 3]), Stream.of([4, 5]).parallel()).is_parallel() is True
+
+
+@pytest.mark.asyncio
+async def test_concat_of_two_sequential_streams_is_sequential() -> None:
+    assert Stream.concat(Stream.of([1, 2, 3]), Stream.of([4, 5])).is_parallel() is False
+
+
+@pytest.mark.asyncio
+async def test_a_later_mode_switch_still_governs_a_concatenation() -> None:
+    # the mode concat() derives is an ordinary executor, not a special status:
+    # sequential() overrides it exactly as it overrides a parallel() call
+    c = Stream.concat(Stream.of([1, 2, 3]).parallel(), Stream.of([4, 5]).parallel())
+    assert c.sequential().is_parallel() is False
+
+
+@pytest.mark.asyncio
+async def test_concat_of_two_ordered_streams_is_ordered() -> None:
+    assert Stream.concat(Stream.of([1, 2, 3]), Stream.of([4, 5]))._is_ordered() is True
+
+
+@pytest.mark.asyncio
+async def test_concat_is_unordered_when_either_operand_is() -> None:
+    assert Stream.concat(Stream.of([1, 2, 3]).unordered(), Stream.of([4, 5]))._is_ordered() is False
+    assert Stream.concat(Stream.of([1, 2, 3]), Stream.of([4, 5]).unordered())._is_ordered() is False
+    assert Stream.concat(Stream.of([1, 2, 3]).unordered(), Stream.of([4, 5]).unordered())._is_ordered() is False
+
+
+@pytest.mark.asyncio
+async def test_an_unordered_concatenation_stays_unordered_when_extended() -> None:
+    # the characteristic is derived from the chain rather than stored, so ops
+    # queued onto the result see it the way they see any positional answer
+    c = Stream.concat(Stream.of([1, 2, 3]).unordered(), Stream.of([4, 5]))
+    assert c.map(lambda x: x).filter(lambda x: True)._is_ordered() is False
+
+
+@pytest.mark.asyncio
+async def test_concat_invalidates_the_first_operand() -> None:
+    a, b = Stream.of([1, 2, 3]), Stream.of([4, 5])
+    Stream.concat(a, b)
+    with pytest.raises(IllegalStateException):
+        await a.collect(to_list())
+
+
+@pytest.mark.asyncio
+async def test_concat_invalidates_the_second_operand() -> None:
+    a, b = Stream.of([1, 2, 3]), Stream.of([4, 5])
+    Stream.concat(a, b)
+    with pytest.raises(IllegalStateException):
+        b.map(lambda x: x)
+
+
+@pytest.mark.asyncio
+async def test_draining_an_operand_after_concat_raises_rather_than_shortening() -> None:
+    # the defect this replaces, recorded because the wrongness is the point:
+    # concat() left both operands live over the source the concatenation also
+    # draws from, so `await a.collect(to_list())` returned [1, 2, 3] and the
+    # concatenation then yielded [4, 5] - a silently shortened result, no
+    # exception anywhere. Java raises here; AbstractPipeline marks the operands
+    # of concat linked, and a later operation on one throws.
+    a, b = Stream.of([1, 2, 3]), Stream.of([4, 5])
+    c = Stream.concat(a, b)
+    with pytest.raises(IllegalStateException):
+        await a.collect(to_list())
+    assert await c.collect(to_list()) == [1, 2, 3, 4, 5]
+
+
+@pytest.mark.asyncio
+async def test_invalidation_fires_at_call_time() -> None:
+    a, b = Stream.of([1, 2, 3]), Stream.of([4, 5])
+    Stream.concat(a, b)
+    # nothing has been pulled from the concatenation yet
+    with pytest.raises(IllegalStateException):
+        a.map(lambda x: x)
+
+
+@pytest.mark.asyncio
+async def test_the_same_operand_cannot_be_concatenated_twice() -> None:
+    a, b, c = Stream.of([1, 2, 3]), Stream.of([4, 5]), Stream.of([6])
+    Stream.concat(a, b)
+    with pytest.raises(IllegalStateException):
+        Stream.concat(a, c)
+
+
+@pytest.mark.asyncio
+async def test_the_concatenated_stream_itself_is_unaffected_by_the_invalidation() -> None:
+    c = Stream.concat(Stream.of([1, 2, 3]), Stream.of([4, 5]))
+    assert await c.map(lambda x: x * 2).collect(to_list()) == [2, 4, 6, 8, 10]
+
+
+@pytest.mark.asyncio
+async def test_an_unordered_concatenation_takes_no_delivery_barrier() -> None:
+    # given the shape the racing tests use throughout: the early elements are
+    # the expensive ones, so under a plain race the cheap tail overtakes the
+    # slow head and arrival order and encounter order disagree visibly. Without
+    # it a passing assertion would prove nothing.
+    source = list(range(20))
+
+    async def slow_head(n: int) -> int:
+        await asyncio.sleep(0.05 if n < 5 else 0.001)
+        return n
+
+    # when a concatenation of unordered operands is raced into an
+    # order-observing terminal
+    c = Stream.concat(Stream.of(source).unordered(), Stream.of([]).unordered())
+    seen = await c.parallel().map(slow_head).collect(to_list())
+
+    # then everything arrived and nothing was held back to put it in order:
+    # the operands' unordered() survived the concat, which is what buys the
+    # concurrency back
+    assert sorted(seen) == source
+    assert seen != source
+
+
+@pytest.mark.asyncio
+async def test_an_ordered_concatenation_still_delivers_in_encounter_order() -> None:
+    # the other side of the same coin, so the test above is known to be
+    # measuring the characteristic rather than the racing executor's mood
+    source = list(range(20))
+
+    async def slow_head(n: int) -> int:
+        await asyncio.sleep(0.05 if n < 5 else 0.001)
+        return n
+
+    c = Stream.concat(Stream.of(source), Stream.of([]))
+    assert await c.parallel().map(slow_head).collect(to_list()) == source
+
+
+def test_concat_of_two_instances_of_one_subclass_is_a_base_stream() -> None:
+    class MyStream(Stream):
+        pass
+
+    c = Stream.concat(MyStream([1, 2]), MyStream([3]))
+    assert type(c) is Stream
+
+
+@pytest.mark.asyncio
+async def test_concat_of_two_different_subclasses_does_not_raise() -> None:
+    class OneStream(Stream):
+        pass
+
+    class OtherStream(Stream):
+        pass
+
+    c = Stream.concat(OneStream([1, 2]), OtherStream([3]))
+    assert type(c) is Stream
+    assert await c.collect(to_list()) == [1, 2, 3]
