@@ -155,6 +155,8 @@ rather than something to await. Passing anything else raises
 
 `on_close()`/`close()` on `Stream` implement Java's AutoClose equivalent, meant to be paired with `contextlib.closing()`. Close handlers are plain no-arg callables, not stream-aware — useful when subclassing `Stream` to wrap an I/O-like resource.
 
+Two guarantees that subclass relies on, both from `_derive()` copying the next stage rather than constructing it. A subclass's `__init__` runs **once per pipeline**, at the caller's own construction, not once per stage — so a resource acquired there is acquired once, and every stage shares it by identity, which is what makes the already-shared `_close_handlers` list coherent: registered once, released once by a single `close()`. And a subclass may define **any** `__init__` signature; nothing requires it to accept `(source, close_handlers)`, so `DsnStream(dsn)` acquiring a connection and calling `super().__init__(conn.rows())` is a supported shape. Both were false before `derive-without-reinit`, which is what made this use case close to unwritable.
+
 ## Feature-parity tracking
 
 README.md tracks Java Stream API parity in detail (implemented / not-yet-implemented / intentionally-skipped methods, and a migration log of breaking renames pre-1.0). Check it before assuming a Java Stream method is or isn't implemented, and update it when adding or renaming public API surface.

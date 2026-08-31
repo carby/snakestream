@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from copy import copy
 from inspect import isawaitable, iscoroutinefunction
 from typing import TYPE_CHECKING, Any, Generic, cast, overload
 from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Coroutine, Iterable
@@ -119,10 +120,31 @@ class Stream(Generic[T]):
         what a mode switch derives from - and on that no-op path the chain
         passes through by identity rather than being copied, safe only because
         the receiver is consumed on the way out and chains are only ever
-        extended by copy. Called with no executor the receiver's carries
-        over."""
+        extended by copy. Called with no executor the receiver's carries over.
+
+        The next stage is *copied*, not constructed. Constructing it re-entered
+        a subclass's __init__ once per stage - five times for a three-op
+        pipeline plus a mode switch - so a subclass wrapping an I/O resource,
+        which is the use case CLAUDE.md documents, acquired one resource per
+        stage and kept the last. It also silently required every subclass to
+        accept (source, close_handlers) positionally, with an already-normalized
+        AsyncGenerator first, which is not how anyone would write that subclass:
+        `DsnStream(dsn)` raised TypeError on its first intermediate op.
+
+        Java has neither problem because its derived stages are an internal
+        type holding no resource, and Stream is an interface nobody subclasses.
+        This library went the other way on purpose - type(self) was here to
+        preserve subclass identity across derivation - and once identity is the
+        requirement, copying is the only way to have it without construction.
+
+        copy.copy shares _source, _close_handlers and any subclass attributes
+        by reference and carries _consumed as False, which is exactly what the
+        four assignments below and the receiver's own invalidation expect. It
+        also honours a subclass's __copy__, which is a feature: a subclass with
+        genuinely per-stage state has one place to say so. Stream itself defines
+        none, so the default applies."""
         self._check_not_consumed()
-        new_stream = type(self)(self._source, self._close_handlers)
+        new_stream = copy(self)
         new_stream._chain = [*self._chain, op] if op is not None else self._chain
         new_stream._executor = executor or self._executor
         self._consumed = True
