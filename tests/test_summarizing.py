@@ -1,5 +1,6 @@
 import pytest
 
+from snakestream.collector import Characteristics
 from snakestream.collectors import summarizing_double, summarizing_int, summarizing_long
 from snakestream.stream import Stream
 
@@ -65,3 +66,29 @@ async def test_summarizing_int_empty_stream() -> None:
     assert result.min is None
     assert result.max is None
     assert result.average == 0.0
+
+
+def test_summarizing_int_and_long_report_unordered() -> None:
+    assert Characteristics.UNORDERED in summarizing_int(len).characteristics
+    assert Characteristics.UNORDERED in summarizing_long(len).characteristics
+
+
+def test_summarizing_double_does_not_report_unordered() -> None:
+    # its sum accumulates in float, and SummaryStatistics compares by value
+    # across every field, so that one field decides the whole result
+    assert Characteristics.UNORDERED not in summarizing_double(len).characteristics
+
+
+@pytest.mark.asyncio
+async def test_summarizing_int_is_order_invariant_in_every_field() -> None:
+    # given the same elements in two different orders
+    forward = await Stream.of(["a", "bb", "ccc", "dddd"]).collect(summarizing_int(len))
+    backward = await Stream.of(["dddd", "ccc", "bb", "a"]).collect(summarizing_int(len))
+
+    # then the whole NamedTuple compares equal, which is the claim UNORDERED
+    # makes, and every field is equal individually - including average, the one
+    # field that divides
+    assert forward == backward
+    assert forward.min == backward.min
+    assert forward.max == backward.max
+    assert forward.average == backward.average

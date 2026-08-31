@@ -1,5 +1,6 @@
 import pytest
 
+from snakestream.collector import Characteristics
 from snakestream.collectors import summing_double, summing_int, summing_long
 from snakestream.stream import Stream
 
@@ -92,3 +93,23 @@ async def test_summing_double_empty_stream() -> None:
 
     # then
     assert result == 0.0
+
+
+def test_summing_int_and_long_report_unordered() -> None:
+    assert Characteristics.UNORDERED in summing_int(len).characteristics
+    assert Characteristics.UNORDERED in summing_long(len).characteristics
+
+
+def test_summing_double_does_not_report_unordered() -> None:
+    # float addition is not associative, so this one is order-sensitive in fact
+    assert Characteristics.UNORDERED not in summing_double(len).characteristics
+
+
+@pytest.mark.asyncio
+async def test_summing_int_declaration_matches_behaviour_across_orderings() -> None:
+    # given the same elements in two different orders
+    forward = await Stream.of(["a", "bb", "ccc"]).collect(summing_int(len))
+    backward = await Stream.of(["ccc", "bb", "a"]).collect(summing_int(len))
+
+    # then the sums compare equal
+    assert forward == backward
