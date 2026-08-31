@@ -26,8 +26,10 @@ from snakestream.collectors import (
     summing_double,
     summing_int,
     to_list,
+    to_map,
     to_set,
 )
+from snakestream.exception import IllegalStateException
 from snakestream.execution import _READ_AHEAD
 
 
@@ -42,6 +44,11 @@ SLOW_HEAD = 5
 async def _slow_head(n: int) -> int:
     await asyncio.sleep(0.05 if n < SLOW_HEAD else 0.001)
     return n
+
+
+async def _slow_head_str(s: str) -> str:
+    await asyncio.sleep(0.05 if len(s) < 2 else 0.001)
+    return s
 
 
 async def _agen(values):
@@ -236,6 +243,53 @@ async def test_partitioning_by_into_an_unordered_downstream_skips_the_barrier() 
 async def test_partitioning_by_into_a_set_collects_correctly_under_racing() -> None:
     res = await Stream.of(SOURCE).parallel().map(_slow_head).collect(partitioning_by(lambda n: n % 2 == 0, to_set()))
     assert res == {True: {n for n in SOURCE if n % 2 == 0}, False: {n for n in SOURCE if n % 2}}
+
+
+@pytest.mark.asyncio
+async def test_to_map_without_a_merge_function_skips_the_barrier() -> None:
+    # given the dict-building collector, whose result does betray arrival order
+    # even though its declaration promises only equality: a dict's key
+    # iteration order follows insertion, so unlike to_set() this one can be
+    # verified by observation rather than by asserting the declaration alone
+    assert Characteristics.UNORDERED in to_map(lambda n: n, lambda n: n * n).characteristics
+
+    # when
+    res = await Stream.of(SOURCE).parallel().map(_slow_head).collect(to_map(lambda n: n, lambda n: n * n))
+
+    # then every pair is there, and the keys arrived in the race's order
+    assert res == {n: n * n for n in SOURCE}
+    assert list(res) != SOURCE
+    assert sorted(res) == SOURCE
+
+
+@pytest.mark.asyncio
+async def test_to_map_with_a_merge_function_keeps_its_barrier() -> None:
+    # given a merge that keeps whichever value arrived first, so the collected
+    # value records the delivery order - the mirror of the test above, and what
+    # fails if someone marks both forms of to_map from the one conditional
+    def keep_first(a: int, b: int) -> int:
+        return a
+
+    assert Characteristics.UNORDERED not in to_map(lambda n: n % 2, lambda n: n, keep_first).characteristics
+
+    # when every element collides into one of two keys
+    res = await Stream.of(SOURCE).parallel().map(_slow_head).collect(to_map(lambda n: n % 2, lambda n: n, keep_first))
+
+    # then the survivors are the encounter-order firsts, not the race's
+    assert res == {0: 0, 1: 1}
+
+
+@pytest.mark.asyncio
+async def test_to_map_raises_on_a_duplicate_key_under_either_executor() -> None:
+    # given elements with two distinct collisions, and no merge function
+    source = ["a", "b", "cc", "dd"]
+
+    # then whether it raises is a property of the elements, not of their order:
+    # the mark changes which key the message names, never that one is named
+    with pytest.raises(IllegalStateException):
+        await Stream.of(source).collect(to_map(len, str.upper))
+    with pytest.raises(IllegalStateException):
+        await Stream.of(source).parallel().map(_slow_head_str).collect(to_map(len, str.upper))
 
 
 @pytest.mark.asyncio

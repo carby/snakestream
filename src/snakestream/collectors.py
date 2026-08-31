@@ -437,7 +437,28 @@ def to_map(
     def _finish(container: _ToMapBox) -> dict[R, Any]:
         return container.result
 
-    return Collector(_supply, _accumulate, finisher=_finish)
+    # The one factory here whose characteristics come from its arguments rather
+    # than from its identity or from a downstream's. The two forms differ in
+    # exactly what UNORDERED asserts (see _ORDER_BLIND for what that is):
+    #
+    # With no merge_function the collected dict is a function of the element
+    # multiset alone - each key and value comes from one element and consults no
+    # other, dict equality ignores key order, and any multiset that would make
+    # the result depend on order raises instead. So it declares.
+    #
+    # With one it cannot, and never will: merge_function is caller-supplied and
+    # need not commute. `lambda a, b: a` keeps whichever value arrived first,
+    # which is a different dict under a different order. This exclusion is
+    # permanent rather than merely undeclared, the same statement summing_double
+    # carries: the collector is order-sensitive in fact, and the mark is one
+    # conditional away from being applied to both forms by mistake. A caller who
+    # knows their own merge commutes has unordered(), one level up.
+    #
+    # The mark costs one thing, on the failure path. *Whether* a duplicate key
+    # raises is a property of the multiset and does not change; which colliding
+    # key IllegalStateException names can, under RACING, once two or more
+    # distinct collisions are in play and no barrier orders their arrival.
+    return Collector(_supply, _accumulate, finisher=_finish, characteristics=_ORDER_BLIND if merge_function is None else ())
 
 
 @dataclass(slots=True)

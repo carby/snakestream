@@ -35,8 +35,13 @@ whoever picks them up should make the batching call themselves.
    that does not belong there** — that entry claims `reduce()` already accepts
    a combiner and never invokes it, and it does not accept one at all.
 2. **`Collectors.toMap(k, v, merge, map_supplier)`** (`collectors.py`) — the
-   fourth argument, choosing the result container. Interacts with the open
-   `to_map()` question below.
+   fourth argument, choosing the result container. Inherits a constraint from
+   `mark-to-map-order-blind` (see **Done**): the no-merge form's `UNORDERED`
+   declaration rests on `dict` equality ignoring key order, and a
+   caller-supplied mapping type need not, so this overload has to say what the
+   declaration means once the container is no longer a `dict`. That is the same
+   question gap 3 faces, which is the strongest argument for taking the two
+   together.
 3. **`Collectors.groupingBy(classifier, map_factory, downstream)`**
    (`collectors.py`) — same container-choice argument, third of three
    overloads. A caller-supplied mapping type has its own order semantics, so
@@ -55,24 +60,6 @@ whoever picks them up should make the batching call themselves.
    containing `None` raises `TypeError` out of Python's comparison, and there is
    currently no way to say where the `None`s go. The other four are parity for
    parity's sake; this one is a user-facing hole.
-
-### Open questions needing a session
-
-**Does `to_map()` declare `Characteristics.UNORDERED`?** The one piece of the
-seven questions this section opened that is still open; the other six resolved
-between 2026-08-28 and 2026-08-31 and their findings are in **Done**, under the
-changes that closed them.
-
-`mark-order-blind-collectors` (2026-08-31) settled the rest of the family on a
-tail-latency benchmark and deliberately did not settle this one. Two things stop
-the answer following from that benchmark: the no-merge form raises on a
-duplicate key, and reordering can change *which* key the message names; and a
-caller-supplied merge function need not commute. So it wants its own pass.
-
-It is **not** a parity gap and does not belong in the queue above — Java has
-nothing here this library lacks. It is a question about what this library
-asserts *beyond* Java's documented contract, which is why no parity audit will
-ever surface it and why it has to be carried here by name.
 
 ## Next
 
@@ -237,6 +224,52 @@ core semantic.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should instead be documented as intentional next to the `str`/`bytes` note. Surfaced 2026-08-20 in the same code-quality read that produced the first batch of **Now** items, all since closed. |
 
 ## Done
+
+- **`mark-to-map-order-blind`** (2026-08-31) — closes the last of the seven
+  questions the **Open questions needing a session** section was opened to
+  carry, and **that section is now gone** rather than left standing empty; the
+  queue above it is where the next open item goes.
+
+  **The answer is two answers, because `to_map()` is two collectors behind one
+  factory.** Called without `merge_function` it declares
+  `Characteristics.UNORDERED`: the `dict` is a function of the element multiset
+  alone — each key and value comes from one element and consults no other,
+  `dict` equality ignores key order, and any multiset whose result would depend
+  on order raises instead. Called with one it declares nothing, **permanently**
+  and by written requirement rather than by silence, on the precedent
+  `mark-order-blind-collectors` set for `summing_double()`: `merge_function` is
+  caller-supplied and need not commute, and `lambda a, b: a` is the one-line
+  proof. It is the first factory here whose characteristics come from its
+  *arguments* rather than from its identity or a downstream's.
+
+  **The obstacle that kept it open did not survive contact with the contract.**
+  `mark-order-blind-collectors` declined to fold this in partly because the
+  no-merge form raises on a duplicate key and reordering can change which key
+  the message names. `UNORDERED` claims that two orderings collect to an equal
+  *result*, and an exception is not a result; what a caller can act on —
+  whether it raises, and the type — is order-invariant either way. Only the key
+  named varies, only with two or more distinct collisions, and only under
+  `RACING`, on a path where even the sequential answer was an artifact of
+  ordering rather than a documented choice.
+
+  **No benchmark was run, deliberately.** The barrier's cost is a property of
+  `race_through()` and not of the collector behind it, already measured at
+  1.12–1.27x on tail-latency IO. More per-element work in a collector makes the
+  barrier's relative cost *smaller*, so re-measuring with a dict-building
+  accumulator could only have weakened a case being made on semantics. This is
+  the shape of question that a benchmark cannot settle, which is exactly why the
+  section carried it separately from the parity queue.
+
+  **`to_map()` gets the stronger guard, not the weaker one.** `counting()` and
+  `to_set()` are verified by asserting the declaration plus the separately
+  pinned mechanism, because no public surface distinguishes their two paths. A
+  `dict` does: key iteration order follows insertion, so the order-blind path is
+  verified by *observation*, and the 3-arg form is verified from the other side
+  — a first-argument-winning merge must yield the encounter-order value. Both
+  were mutation-checked: marking both forms fails the second, marking neither
+  fails the first. `racing-encounter-order` gained the sentence that makes this
+  legible — a property the declaration does not *promise* is still admissible as
+  *evidence* of which path ran.
 
 - **The stray `</content>` tag in the main specs is gone** (2026-08-31),
   resolving the repo-hygiene item **Now** carried as open question 6, with no
