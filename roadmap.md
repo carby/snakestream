@@ -22,7 +22,9 @@ value rather than a class hierarchy, `summing_int`/`summing_long` sharing a body
 (2026-08-27), **`unify-derive-signature`** (2026-08-27),
 **`order-racing-delivery`** (2026-08-28), **`order-min-max-tie-breaks`**
 (2026-08-28), **`mark-order-blind-collectors`** (2026-08-31) and
-**`enumerate-java-8-parity-gaps`** (2026-08-31) have landed too — see **Done**.
+**`enumerate-java-8-parity-gaps`**, **`concat-carries-characteristics`**,
+**`derive-without-reinit`** and **`implement-python-data-model`** (all
+2026-08-31) have landed too — see **Done**.
 
 ### Queued changes
 
@@ -31,66 +33,9 @@ item 6 was deleted on 2026-08-31, and **item 7 got its session on 2026-08-31**
 and came out as three queued changes rather than one. The two items in **Next**
 are both unblocked as of `order-racing-delivery`.
 
-**Three changes from question 7's session (2026-08-31), in landing order.**
-**They are not a chain**, and the first draft of this entry said they were —
-the correction matters because it decides what can be deferred. There is
-exactly one hard dependency:
-
-```
-  concat-carries-characteristics ──► implement-python-data-model
-  derive-without-reinit ─────────────  (independent of both)
-```
-
-`concat()` builds its result with `Stream(...)` directly and never calls
-`_derive()`, so `derive-without-reinit` has no code coupling to either of the
-others. Its spec delta and `concat-carries-characteristics`' both land in
-`pipeline-immutability`, but on disjoint requirements — one adds four, the
-other modifies `Using an already-extended reference raises`, which the first
-never touches — so either archive order merges cleanly. The one real edge is
-`__add__` delegating to `concat()`: `implement-python-data-model`'s scenario
-*"The operator invalidates both operands"* cannot pass before
-`concat-carries-characteristics` exists.
-
-The order below is therefore a **recommendation**, chosen on two grounds that
-agree: severity, since (1) is a wrong answer shipping to everyone today while
-(2) only bites a subclass the repo does not have; and critical path, since
-anything scheduled ahead of (1) pushes (3) back by that much while (2) costs
-nothing to defer. It also happens to put (2) before (3), which both edit
-CLAUDE.md's AutoClose section — (2) adding the constructor-runs-once guarantee,
-(3) swapping `contextlib.closing()` for `with stream:` as the idiom.
-
-1. **`concat-carries-characteristics`** — found while exploring question 7, and
-   **wrong today with zero subclasses in play**, which is why it is its own
-   change and why it goes first. `Stream.concat(a, b)` returns a base `Stream`
-   with an empty chain and the default executor, so it drops both
-   characteristics Java's one documented sentence requires it to carry —
-   *"ordered if both of the input streams are ordered, and parallel if either of
-   the input streams is parallel"*. Measured:
-   `concat(a.parallel(), b.parallel()).is_parallel()` is `False`, and
-   `concat(a.unordered(), b.unordered())` is ordered. It also **does not consume
-   its operands**, so draining one afterwards silently shortens the
-   concatenation's output — `[1,2,3]` then `[4,5]`, no exception, where Java
-   raises. **BREAKING**, and the silent wrong answer is the reason.
-2. **`derive-without-reinit`** — question 7 as filed. `_derive()` derives via
-   `copy.copy` instead of `type(self)(...)`, so a subclass constructor runs once
-   per pipeline rather than once per stage, and a subclass may define any
-   `__init__` signature. **BREAKING for subclasses only.** Independent of the
-   other two: it can move anywhere in the order, and sits here rather than first
-   only because nothing depends on it. The case for pulling it forward, if
-   anyone wants it, is that it is one line in the library's most load-bearing
-   method and isolating it makes a later bisect trivial.
-3. **`implement-python-data-model`** — `Stream` implements *no* dunder methods
-   at all. Adds `__aiter__`, `__enter__`/`__exit__` and `__repr__` as **parity**
-   (Java's stream satisfies its own language's iteration, resource and
-   `toString` protocols; ours satisfies none of Python's), `__add__` as a
-   **deliberate expansion** argued as an exception to the 1:1-surface principle,
-   and `__bool__` **raising** to close a silently wrong default —
-   `bool(Stream.empty())` is `True` today, so `if stream:` answers wrong every
-   time. `__getitem__` is excluded on a mechanical finding worth not
-   rediscovering: Python synthesizes iteration from it when `__iter__` is
-   absent, so `s[10:20]` would make `for x in stream` loop forever over an
-   infinite sequence of `Stream`s. **Must land after (1)**, this being the one
-   hard edge. `async with` was split off and parked in **Later**.
+**Question 7's three changes all landed on 2026-08-31**, in the order
+`concat-carries-characteristics` -> `derive-without-reinit` ->
+`implement-python-data-model`. See **Done**.
 
 **The five Java 8 parity gaps below** remain queued, put here by
 `enumerate-java-8-parity-gaps` (2026-08-31). **Item 5 is the one that filled
@@ -298,9 +243,9 @@ verified not to re-enter `__init__` and to share `_source`, `_chain`,
 `_close_handlers` and subclass attributes by reference with `_consumed` copied
 as `False`: exactly the four assignments `_derive()` already makes.
 
-Queued as **`derive-without-reinit`**. The same session found two further
-things and queued them as their own changes — see **Queued changes** above for
-all three and their sequencing.
+Landed as **`derive-without-reinit`**. The same session found two further
+things and made them their own changes, `concat-carries-characteristics` and
+`implement-python-data-model`; all three landed 2026-08-31 — see **Done**.
 
 ## Next
 
@@ -465,6 +410,118 @@ core semantic.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should instead be documented as intentional next to the `str`/`bytes` note. Surfaced 2026-08-20 in the same code-quality read that produced **Now** items 1-4. |
 
 ## Done
+
+- **`implement-python-data-model`** (2026-08-31) — `Stream` implemented **no**
+  dunder methods at all, so the library's own guiding principle, Java's surface
+  with Python underneath, was unmet at exactly the place Python shows through.
+  Adds `__aiter__`, `__enter__`/`__exit__` and `__repr__` as **parity** — Java's
+  stream satisfies its language's iteration, resource and `toString` protocols
+  and ours satisfied none of Python's equivalents — plus `__add__` over
+  `Stream.concat` as the one **deliberate expansion**, argued as an exception
+  rather than smuggled in with the others. Third of question 7's three.
+
+  **`__bool__` raising is the member that justified the change existing.**
+  `bool(Stream.empty())` was `True`, not because anyone decided it but because
+  `object.__bool__` is the default and nobody overrode it, so `if stream:`
+  answered a question the caller plainly meant to ask, answered it wrong, and
+  said nothing. There is no correct synchronous answer to give instead, so
+  refusing is the fix — the one operation this library declines that Python
+  permits on every other object. The message names `count()`, `any_match()` and
+  `find_any()`, because a `TypeError` that only says no leaves the caller no
+  better off than the wrong `True` did.
+
+  **The `__getitem__` finding is the one worth not rediscovering.** It is the
+  only refused protocol that could have worked — `s[10:20]` is lazy and returns
+  a `Stream` — and it is excluded on a mechanical hazard verified on 3.14:
+  Python synthesizes an iterator from `__getitem__` when `__iter__` is absent,
+  so defining it would make `for x in stream` call `stream[0]`, receive a
+  `Stream`, and loop forever without ever raising. It cannot be added alone;
+  `__iter__` defined-to-raise must land in the same change, never after. All six
+  refusals are now **specified rather than merely absent**, which is the same
+  failure mode question 5 found in README's parity tables: absence that no
+  artifact could express reads as an oversight rather than a decision.
+
+  `async with` was split off and parked in **Later** — `CloseHandler` is a sync
+  no-arg callable and `close()` never awaits, so `with` is the honest protocol
+  for the contract as it stands, and the async pair would be a claim about
+  `stream-close-handling` rather than about two methods.
+
+- **`derive-without-reinit`** (2026-08-31) — `_derive()` built the next stage
+  with `type(self)(self._source, self._close_handlers)`, re-entering the user's
+  constructor: a three-op pipeline plus one mode switch ran it **five times**.
+  Now derives by `copy.copy`, so a subclass's `__init__` runs once per pipeline
+  and its state is shared across stages by identity. Question 7 as filed;
+  second of its three changes. **BREAKING for subclasses only.**
+
+  **The item's leak claim was conditional, and the exploration found two larger
+  problems it had not named.** With `on_close()` registered inside `__init__` —
+  the idiom CLAUDE.md documents — nothing leaked: `_close_handlers` is passed by
+  reference, so all five handlers landed in the same list and one `close()`
+  fired all five. The shared list accidentally masked it. The leak was real only
+  for a subclass overriding `close()` (measured: 3 opened, 1 closed, 2 orphans).
+  Either way the **churn** was the defect regardless of the leak — five
+  connections opened and one used, and perfect cleanup of four resources that
+  should never have existed is still wrong.
+
+  The problem nobody had named is **the signature contract**: passing
+  `(source, close_handlers)` positionally silently required every subclass to
+  accept exactly that, with an already-normalized `AsyncGenerator` first. The
+  natural way to write the documented use case — `DsnStream(dsn)` acquiring a
+  connection and calling `super().__init__(conn.rows())` — raised `TypeError` on
+  its first intermediate op, so the documented feature was close to unwritable.
+  README's own subclassing paragraph described that shape.
+
+  **Why copying rather than Java's answer.** Java never had this bug because its
+  derived stages are an internal type holding no resource and `Stream` is an
+  interface nobody subclasses. This library went the other way deliberately —
+  `type(self)` was there to preserve subclass identity across derivation, which
+  `test_a_user_subclass_survives_a_mode_switch` pins — and once identity is the
+  requirement, copying is the only way to have it without construction.
+
+  **That test could not have caught this**, and is the third instance of the
+  pattern this file keeps recording: it asserted `seq.resource == "db-handle"`
+  against a string literal, pinning that the attribute *survived* rather than
+  that it was the object the constructor assigned, so it passed throughout.
+  Changing the one assertion to `is` turned it into a reproduction.
+
+- **`concat-carries-characteristics`** (2026-08-31) — `Stream.concat(a, b)`
+  returned a base `Stream` with an empty chain and the default executor, so it
+  carried its operands' elements and close handlers and nothing else they knew
+  about themselves. Java's one sentence is the whole contract: the result *"is
+  ordered if both of the input streams are ordered, and parallel if either of
+  the input streams is parallel"*. First of question 7's three, and the reason
+  it went first: **it was wrong today with zero subclasses in play**, where the
+  item that opened the session only bit a subclass the repo does not have.
+
+  Measured before: `concat(a.parallel(), b.parallel()).is_parallel()` was
+  `False`, and `concat(a.unordered(), b.unordered())` was ordered — so
+  `unordered()`, the documented performance lever, was silently revoked past the
+  concat boundary and the caller paid a barrier they had explicitly opted out of.
+
+  **The two halves arrive by different mechanisms, and the asymmetry is not
+  new.** Mode is a value on the stream and is assigned; ordering is positional
+  and has to occupy a position, so the result seeds its chain with the stage
+  `unordered()` queues. That is not a stylistic pick: `pipeline-immutability`
+  forbids carrying the characteristic as state beside the chain, so a field was
+  never available. It reads oddly — a chain the caller did not write — but it is
+  correct in Java's own terms, `unordered()` being a pipeline stage there for
+  exactly this reason.
+
+  **BREAKING, and the silent wrong answer is why.** `concat()` now consumes both
+  operands. It previously left them live over the source the concatenation also
+  drew from, so `await a.collect(to_list())` returned `[1, 2, 3]` and the
+  concatenation then yielded `[4, 5]` — a shortened result with no exception
+  anywhere. Java raises here; `AbstractPipeline` marks the operands linked.
+  `iterator()` is untouched, its non-destructive composition being a
+  `stream-iterator` requirement that `collect(to_generator)` and `flat_map`
+  depend on, so the invalidation belongs to `concat()`.
+
+  One decision recorded rather than fixed: the result stays a base `Stream` even
+  when both operands share a subclass. `type(a)` and `type(b)` may differ with no
+  principled tie-break, a subclass constructor may want arguments `concat()`
+  cannot supply, and Java returns an internal type for the same reason. It has no
+  executable guard and cannot have one — nothing would make `concat()` start
+  returning a subclass by accident — so the spec is the record.
 
 - **`enumerate-java-8-parity-gaps`** (2026-08-31) — README's three parity
   tables are now **total over Java 8's surface**, and the five methods this
