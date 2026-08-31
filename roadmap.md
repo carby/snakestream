@@ -16,33 +16,13 @@ value rather than a class hierarchy, `summing_int`/`summing_long` sharing a body
 
 ## Now
 
-**Opened 2026-08-26:** `collapse-derive-wrappers`,
-`order-stateful-ops-under-racing`, `collapse-compose-into-iterator`, and
-`add-comparator-comparing` are all in **Done**. **`add-collector-characteristics`**
-(2026-08-27), **`unify-derive-signature`** (2026-08-27),
-**`order-racing-delivery`** (2026-08-28), **`order-min-max-tie-breaks`**
-(2026-08-28), **`mark-order-blind-collectors`** (2026-08-31) and
-**`enumerate-java-8-parity-gaps`**, **`concat-carries-characteristics`**,
-**`derive-without-reinit`** and **`implement-python-data-model`** (all
-2026-08-31) have landed too — see **Done**.
-
 ### Queued changes
 
-**All seven questions in Now are now resolved.** Items 1-5 landed as changes,
-item 6 was deleted on 2026-08-31, and **item 7 got its session on 2026-08-31**
-and came out as three queued changes rather than one. The two items in **Next**
-are both unblocked as of `order-racing-delivery`.
-
-**Question 7's three changes all landed on 2026-08-31**, in the order
-`concat-carries-characteristics` -> `derive-without-reinit` ->
-`implement-python-data-model`. See **Done**.
-
-**The five Java 8 parity gaps below** remain queued, put here by
-`enumerate-java-8-parity-gaps` (2026-08-31). **Item 5 is the one that filled
-this queue.**
-
-**The five real gaps.** Filed as five and not one batched entry: they share a
-shape only at the surface (see the change's design.md, decision 6), and
+**Five Java 8 parity gaps**, queued by `enumerate-java-8-parity-gaps`
+(2026-08-31) — the audit that found README's parity tables could not express
+*absence* at all, so a Java method nobody had written a row for read as an
+oversight rather than a decision. Filed as five and not one batched entry: they
+share a shape only at the surface (see that change's design.md, decision 6), and
 whoever picks them up should make the batching call themselves.
 
 1. **`Stream.reduce(identity, accumulator, combiner)`** (`stream.py`) — the
@@ -55,8 +35,8 @@ whoever picks them up should make the batching call themselves.
    that does not belong there** — that entry claims `reduce()` already accepts
    a combiner and never invokes it, and it does not accept one at all.
 2. **`Collectors.toMap(k, v, merge, map_supplier)`** (`collectors.py`) — the
-   fourth argument, choosing the result container. Interacts with the still-open
-   piece of question 4 below: whether `to_map()` should declare `UNORDERED`.
+   fourth argument, choosing the result container. Interacts with the open
+   `to_map()` question below.
 3. **`Collectors.groupingBy(classifier, map_factory, downstream)`**
    (`collectors.py`) — same container-choice argument, third of three
    overloads. A caller-supplied mapping type has its own order semantics, so
@@ -78,174 +58,21 @@ whoever picks them up should make the batching call themselves.
 
 ### Open questions needing a session
 
-Nothing here is queued; item 5's queue is the five parity gaps above and item
-7's is the three changes above it, not the items themselves. Items 1-6 are things the roadmap, the README or a just-landed
-change has been implying without ever stating, found while fleshing out
-**Next** on 2026-08-27, ordered by how ready they are. **Item 7 is the
-exception and the only actual defect in the list** — appended rather than
-sorted in, so the numbering above stays stable. The readiness ordering is now
-stale throughout, all seven now being resolved, and is left as it is for
-that same reason: the numbers are referenced from archived proposals.
+**Does `to_map()` declare `Characteristics.UNORDERED`?** The one piece of the
+seven questions this section opened that is still open; the other six resolved
+between 2026-08-28 and 2026-08-31 and their findings are in **Done**, under the
+changes that closed them.
 
-**1. `Comparator.thenComparing()` — resolved, landed as `add-comparator-chaining`
-(2026-08-28).** See **Done**.
+`mark-order-blind-collectors` (2026-08-31) settled the rest of the family on a
+tail-latency benchmark and deliberately did not settle this one. Two things stop
+the answer following from that benchmark: the no-merge form raises on a
+duplicate key, and reordering can change *which* key the message names; and a
+caller-supplied merge function need not commute. So it wants its own pass.
 
-**2. `ExceptionGroup` in `Stream.close()` — resolved 2026-08-28, and the
-answer is no.** See **Done**.
-
-**3. `.parallel().min()` / `.max()` tie-breaking — resolved 2026-08-28, and
-the answer is to pay the barrier.** Landed as `order-min-max-tie-breaks`; see
-**Done**. **This item predicted its own answer wrong twice and both predictions
-are worth keeping.** It first expected `order-racing-delivery` to fix the
-divergence as a side effect; `min`/`max` landed in that change's *order-blind*
-column instead, deliberately, on the reasoning that ordering delivery would buy
-nothing but deterministic tie-breaking on a fold whose value is identical in any
-order. It then framed the remaining choice as "state the contract and pay the
-barrier, or spec ties as unspecified" — and the second option was never really
-open. Two facts found while writing the change closed it:
-
-- `comparator-contract` **already required** first-of-tied-in-encounter-order
-  ("retain the earlier-encountered element"). The racing path was violating an
-  existing requirement, not filling a gap. The item's "no spec says either way"
-  was simply wrong.
-- `Stream.min()` and `collect(min_by(c))` **disagreed with each other**. The
-  collectors declare no `UNORDERED`, so they took the barrier and were already
-  deterministic, while `Stream.min()` was not — two callers of
-  `is_new_extremum()`, which calls itself the one home for the rule, giving
-  different answers on the same pipeline.
-
-The cost objection did not survive either, because `sorted()` — the same shape
-of question, where only tie identity varies — has always paid *more*: it splits
-at its own index, so its whole head is barriered, where `min`/`max` split at
-`len(chain)` and everything still races.
-
-**4. Marking `counting()` and the integer collectors — resolved 2026-08-31,
-and the answer is yes.** Landed as `mark-order-blind-collectors`; see **Done**.
-The fourth pass brought the benchmark this item's own rule demanded, and the
-figure that decided it was not the one the item expected. **This item's framing
-was wrong in the same way twice, and the correction is the point.** It held that
-the mark could only ever recover the +33% charged on a chain too cheap to race —
-a configuration whose real fix is not racing — and so leaned toward no. That
-rested on `race_through()`'s docstring claiming the barrier costs "nothing at
-all on IO-bound work". The benchmark behind that claim used 40 elements at a
-**uniform** 10ms, where elements complete in the order they were pulled and the
-reorder buffer cannot stall: the barrier was free by construction, not by
-measurement, and no such benchmark could have detected its cost. Under tail
-latency the barrier costs 1.12–1.27x, on exactly the shape racing exists for.
-So the mark buys something real, and the docstring has been corrected.
-
-The second correction was to this file. It reported that
-`test_to_set_takes_the_order_blind_path` asserted only that the collected set
-was right, making the one shipped declarer of `UNORDERED` "guarded by nothing".
-That was a misreading: the test asserts the declaration too, and removing the
-mark from `to_set()` fails it. The guard was already the right shape — the
-declaration pinned at the collector, the mechanism pinned by the
-`grouping_by`/`partitioning_by` recording tests — and what was actually missing
-was the **rule** saying so, since for a collector whose result is a scalar no
-correctness assertion can distinguish the two paths and a timing one must not be
-used. `racing-encounter-order` now states it.
-
-**5. Enumerate the remaining Java-8 parity gaps, once, concretely — resolved
-2026-08-31, and the answer is five.** Landed as
-`enumerate-java-8-parity-gaps`; the five are in **Queued changes** above.
-**The item's own premise was the finding.** Three places in this file offered
-"the Java-8 parity gaps README still tracks as unimplemented" as a refill
-source for **Next**, and README was tracking no such thing: its parity tables
-had two row states — `x`, and struck-through-with-a-reason — where Java's
-surface has three, so a method nobody wrote a row for was invisible rather
-than deferred. Absence was not something the table could express. That is why
-the refill source could be pointed at from three places without any of them
-being able to name a member, and it is why the fix had to be structural: the
-tables now carry a third row state, are declared total over Java 8's surface,
-and a Java 8 method with no row is from now on a defect in the table rather
-than a silence.
-
-The audit's totals, so the next reader can see the shape without re-deriving
-it, counted in table rows (a row can stand for several Java overloads —
-`joining` covers three, `reducing` three): `Stream` + `BaseStream` — 35
-implemented, 12 skipped, 1 gap. `Collectors` — 22 implemented, 3 skipped, 2
-gaps; per Java method rather than per row that is 29 of the class's 37
-implemented, the 6 skipped being the `groupingByConcurrent` and
-`toConcurrentMap` overloads. `Comparator` — 3 implemented, 8 skipped, 2 gaps;
-per method, 3 of 17 implemented, 11 skipped, 3 gaps, this being the table
-where snakestream's surface is genuinely thinnest against Java's. Everything
-else Java 8 has, this library either has or declines on a stated reason.
-
-**The Java 9 gate is met.** **Later** parks `takeWhile`/`dropWhile`/
-`ofNullable`/3-arg `iterate` behind "once Java 8 parity is substantially
-done", and it is: none of the five gaps is structural — three are overload
-widenings on existing machinery and two are self-contained `comparator.py`
-additions — and the only two genuinely blocked items, `spliterator()` and
-`collect()`'s inert `combiner`, sit behind the real-parallelism decision that
-same section says needs explicit buy-in. They cannot be what Java 9 waits on
-without waiting forever.
-
-Item 4 is closed as of 2026-08-31, so this enumeration no longer has to carry
-it. The note that used to sit here — that whether `counting()` and the integer
-collectors declare `UNORDERED` is a question about what this library asserts
-beyond Java's documented contract, not a gap where Java has something we lack —
-still holds and is still the reason it never belonged in a parity list. One
-piece of item 4 was deliberately left open and is **not** a parity gap either:
-whether `to_map()` should be marked. Its no-merge form raises on a duplicate key
-and reordering can change which key the message names, and a caller-supplied
-merge function need not commute. Neither is settled by the benchmark that closed
-the rest, so it wants its own pass.
-
-**6. Repo hygiene: a stray `</content>` closing tag at the end of three main
-specs — resolved 2026-08-31, and the answer was to just delete it.** By the
-time anyone looked, it was two files, not three: `stream-iterate/spec.md` and
-`collector-to-map/spec.md`. `collector-to-set/spec.md` had lost its copy
-without anyone noticing, because `mark-order-blind-collectors` (2026-08-31)
-rewrote that file's tail for its own reasons. That is the whole finding worth
-keeping: the tag was never fixed, it was *overwritten*, and a defect that
-disappears only when something else happens to rewrite the same lines is one
-nothing was watching. `openspec validate --specs` passes with the tag and
-passes without it — the parser ignores trailing junk — so no gate here would
-have caught it, which is why it was rediscoverable three times in the first
-place. Fixed by deletion, no change proposal: two lines, no spec text touched,
-41/41 specs still validating.
-
-**7. A subclass's `__init__` re-runs on every derivation — a real defect, found
-2026-08-27, explored 2026-08-31 and now queued as three changes.** `_derive()`
-built the next stage with `type(self)(self._source, self._close_handlers)`,
-re-entering the user's constructor. Measured: a three-op pipeline plus one mode
-switch runs it **five times**, and the final stage's attribute is not the object
-the first constructor assigned.
-
-**The exploration found the item's leak claim to be conditional, and found two
-larger problems it had not named.** The claim was that
-`MyStream(src).map(f).filter(g)` acquires three resources, keeps one, and never
-closes the other two. With `on_close()` registered inside `__init__` — the idiom
-CLAUDE.md actually documents — nothing leaks: `_close_handlers` is passed by
-reference, so all five handlers land in the same list and one `close()` fires
-all five. The shared list accidentally masks it. The leak is real for the other
-natural shape, a subclass overriding `close()` (measured: 3 opened, 1 closed, 2
-orphans). Either way **the churn is the defect regardless of the leak** — a
-four-stage pipeline opens five connections and uses one, and perfect cleanup of
-four resources that should never have existed is still wrong.
-
-The problem the item never named is **the signature contract**. Passing
-`(source, close_handlers)` positionally requires every subclass to accept
-exactly that shape, with an already-normalized `AsyncGenerator` first. The
-natural way to write the documented use case — `DsnStream(dsn)` acquiring a
-connection and calling `super().__init__(conn.rows())` — raises `TypeError` on
-its first intermediate operation. The documented feature is close to unwritable.
-
-The mechanism question the item posed resolved as it predicted, on a reason it
-did not give. Java never had this bug because its derived stages are an
-*internal* type (`ReferencePipeline.StatelessOp`) holding no resource, and
-`Stream` is an interface nobody subclasses. snakestream deliberately went the
-other way: `type(self)` exists to preserve subclass identity across derivation,
-and `test_a_user_subclass_survives_a_mode_switch` pins it. **Having committed to
-identity preservation, shallow-copying is the only way to have identity without
-construction** — that, and not the leak, is the argument. `copy.copy` was
-verified not to re-enter `__init__` and to share `_source`, `_chain`,
-`_close_handlers` and subclass attributes by reference with `_consumed` copied
-as `False`: exactly the four assignments `_derive()` already makes.
-
-Landed as **`derive-without-reinit`**. The same session found two further
-things and made them their own changes, `concat-carries-characteristics` and
-`implement-python-data-model`; all three landed 2026-08-31 — see **Done**.
+It is **not** a parity gap and does not belong in the queue above — Java has
+nothing here this library lacks. It is a question about what this library
+asserts *beyond* Java's documented contract, which is why no parity audit will
+ever surface it and why it has to be carried here by name.
 
 ## Next
 
@@ -254,9 +81,9 @@ things and made them their own changes, `concat-carries-characteristics` and
 fleshed out 2026-08-27. None is a defect; each is a decision that change
 deliberately declined to take while it was fixing a wrong answer.
 
-**Items 1 and 4 landed** as `order-racing-delivery` (2026-08-28) and
-`add-collector-characteristics` (2026-08-27), both in **Done**. **The numbering
-here is deliberately not compacted** — the two archived proposals cite "the
+**Items 1 and 4 are gone** — landed as `order-racing-delivery` (2026-08-28)
+and `add-collector-characteristics` (2026-08-27), both in **Done**. **The
+numbering is deliberately not compacted**: two archived proposals cite "the
 roadmap's **Next** item 2" and "item 3", and renumbering would silently break
 those references. Items 2 and 3 keep their numbers for as long as anything
 points at them.
@@ -378,10 +205,10 @@ at once, which is why `order-min-max-tie-breaks` declined to spend it on two.
 Anyone picking this up starts here rather than from scratch.
 
 Refill from **Now**'s **Queued changes**, which is where the loose ends now
-live. Question 5 did what this line used to gesture at: the "Java-8 parity
-gaps README tracks as unimplemented" was never a set README could express, and
-the five that the 2026-08-31 audit found are now queued by name rather than
-alluded to.
+live. This line used to point at "the Java-8 parity gaps README tracks as
+unimplemented", which was never a set README could express;
+`enumerate-java-8-parity-gaps` fixed the tables and the five it found are now
+queued by name rather than alluded to.
 
 
 ## Later
@@ -406,10 +233,26 @@ core semantic.
 | **Implement real (multiprocess) parallelism for `.parallel()` / `ParallelStream` / `PROCESSES`** — today it's just `asyncio` tasks racing over a shared generator (I/O-bound only, GIL-bound, no multiprocessing). Decided to keep the `.parallel()`/`PROCESSES` naming as-is (see README) rather than rename to the more accurate `.concurrent()`/`CONCURRENCY`, specifically so that *if* real parallelism is ever implemented under the same names, it's not a second breaking rename. | No concrete use case for true CPU parallelism has come up yet, and the path there is blocked on a real problem, not just unscoped effort: a `ProcessPoolExecutor`-backed implementation needs to serialize the mapper/predicate/comparator/accumulator/combiner across the process boundary, and stdlib `pickle` can't handle lambdas or local closures (the idiomatic way to call every op in this library), can't pickle generators/async generators at all (so the source itself can never be shipped whole), and even picklable *sync* callables don't solve it since async user callables would need each worker to bootstrap its own event loop rather than just running a function. Revisit only once there's both a concrete need and an answer for lambdas/closures across the process boundary (`cloudpickle`/`dill`, or a restricted sync-only picklable-callable mode) and for running async user callables inside a worker process. **The executor-value redesign is done** (see **Done**), which is the enabler this entry used to point forward to: real parallelism is now *a third executor* implementing `elements()`/`value()`, not a third subclass, and `execution.py` is the natural owner for whatever has to cross the process boundary. It does not solve the pickling blocker. The `ParallelStream` name in this item's title is retired; the mode is now `Racing`. |
 | **`BaseStream.spliterator()`** — Java's parallel-decomposition iterator, used by `parallelStream()` to split a source into chunks shared threads can each work over. | Depends on the item above: Java's `Spliterator` assumes shared-memory thread decomposition, which only becomes meaningful once real (multiprocess) partitioned execution is decided — until then there's nothing for it to expose, and it may end up intentionally-skipped rather than implemented. Moved down from **Now**, where it was flagged as decision-blocked rather than ready to build. |
 | **Wire up `collect(supplier, accumulator, combiner)`'s `combiner`** — it accepts a `combiner` for Java signature parity but never invokes it, since `stream.py` always folds over one composed stream, sequential or parallel, with no independent partitions to merge. **Corrected 2026-08-31 by `enumerate-java-8-parity-gaps`:** this entry used to name `reduce(identity, accumulator, combiner)` alongside `collect()` and say "both accept a `combiner` … but never invoke it". `Stream.reduce()` does not accept one — it has two overloads, and a third positional argument is a `TypeError` — so half of this entry was blocking on a decision that could not apply to it. Adding the parameter is possible today, exactly as `collect()` did; whether it is worth adding a parameter that must be documented as inert is a different question from this one, and is now gap 1 in **Now** → **Queued changes**. `collect()`'s half, below, is unaffected. | Same blocker as the item above: a real combine step only makes sense once real partitioned (multiprocess) execution exists, which is now explicitly parked until there's both concrete demand and a solution for the pickling/async-worker problem. That blocker is real for `collect()`, whose parameter already exists and would have to start doing something. See `openspec/changes/add-collect-supplier-accumulator-combiner`. |
-| **Java 9 `Stream` additions** — `takeWhile(predicate)`, `dropWhile(predicate)`, `Stream.ofNullable(t)`, and the 3-arg `iterate(seed, hasNext, next)` overload (distinct from the already-implemented 2-arg `iterate(seed, next)`). | README states the project's intent explicitly: "once we reach some sort of feature parity with Java 8 then maybe we move on to implement the improvements in Java 9." **That gate is met as of 2026-08-31** — see **Now** question 5, whose audit enumerated what is left: five gaps, none structural, three of them overload widenings and two self-contained `comparator.py` additions. The only Java 8 items genuinely blocked are `spliterator()` and `collect()`'s inert `combiner`, both parked behind the real-parallelism decision two rows up, which this section says needs explicit buy-in — so they cannot be what Java 9 waits on without waiting forever. This entry is no longer sequencing-blocked; it is unstarted, and it competes with the five gaps on merit rather than sitting behind them. |
-| **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should instead be documented as intentional next to the `str`/`bytes` note. Surfaced 2026-08-20 in the same code-quality read that produced **Now** items 1-4. |
+| **Java 9 `Stream` additions** — `takeWhile(predicate)`, `dropWhile(predicate)`, `Stream.ofNullable(t)`, and the 3-arg `iterate(seed, hasNext, next)` overload (distinct from the already-implemented 2-arg `iterate(seed, next)`). | README states the project's intent explicitly: "once we reach some sort of feature parity with Java 8 then maybe we move on to implement the improvements in Java 9." **That gate is met as of 2026-08-31** — see `enumerate-java-8-parity-gaps` in **Done**, whose audit enumerated what is left: five gaps, none structural, three of them overload widenings and two self-contained `comparator.py` additions. The only Java 8 items genuinely blocked are `spliterator()` and `collect()`'s inert `combiner`, both parked behind the real-parallelism decision two rows up, which this section says needs explicit buy-in — so they cannot be what Java 9 waits on without waiting forever. This entry is no longer sequencing-blocked; it is unstarted, and it competes with the five gaps on merit rather than sitting behind them. |
+| **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should instead be documented as intentional next to the `str`/`bytes` note. Surfaced 2026-08-20 in the same code-quality read that produced the first batch of **Now** items, all since closed. |
 
 ## Done
+
+- **The stray `</content>` tag in the main specs is gone** (2026-08-31),
+  resolving the repo-hygiene item **Now** carried as open question 6, with no
+  change proposal: two lines, no spec text touched, 41/41 specs still
+  validating. By the time anyone
+  looked it was two files and not the three the item recorded —
+  `stream-iterate/spec.md` and `collector-to-map/spec.md`.
+  `collector-to-set/spec.md` had lost its copy without anyone noticing, because
+  `mark-order-blind-collectors` rewrote that file's tail for its own reasons.
+
+  **That is the finding worth keeping: the tag was never fixed, it was
+  *overwritten*.** A defect that disappears only when something else happens to
+  rewrite the same lines is one nothing was watching, which is why this one was
+  rediscoverable three times. `openspec validate --specs` passes with the tag
+  and passes without it — the parser ignores trailing junk — so no gate here
+  would ever have caught it.
 
 - **`implement-python-data-model`** (2026-08-31) — `Stream` implemented **no**
   dunder methods at all, so the library's own guiding principle, Java's surface
