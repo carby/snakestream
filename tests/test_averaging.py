@@ -1,5 +1,6 @@
 import pytest
 
+from snakestream.collector import Characteristics
 from snakestream.collectors import averaging_double, averaging_int, averaging_long
 from snakestream.stream import Stream
 
@@ -87,3 +88,11 @@ async def test_averaging_double_empty_stream() -> None:
 
     # then
     assert result == 0.0
+
+
+def test_the_averaging_family_does_not_report_unordered() -> None:
+    # each divides a float accumulator, so all three are order-sensitive in
+    # fact - averaging_int and averaging_long included, despite their int inputs
+    assert Characteristics.UNORDERED not in averaging_int(lambda x: x).characteristics
+    assert Characteristics.UNORDERED not in averaging_long(lambda x: x).characteristics
+    assert Characteristics.UNORDERED not in averaging_double(lambda x: x).characteristics

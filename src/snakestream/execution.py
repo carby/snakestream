@@ -447,10 +447,23 @@ async def race_through(
         racing, unordered()           106.9 ms
         sequential                    420.0 ms
 
-      so the +33% is real but is charged only where per-element work is too
-      cheap to race in the first place; on work worth racing the barrier
-      disappears into the concurrency it does not block. unordered() remains
-      the lever, and remains measurably one.
+      that second shape says less than it appears to. Every element costs the
+      same 10ms, so elements complete in the order they were pulled and the
+      reorder buffer never holds one back: the barrier is free by construction
+      there, not by measurement, and a uniform-latency benchmark cannot detect
+      what it costs. Under *tail* latency it does cost something, by filling the
+      _READ_AHEAD window behind a straggler while the branches idle (200
+      elements, 90% at 2ms and 10% at 50ms, 4 workers, ideal ~424 ms):
+
+        racing, ordered delivery      545.5 ms
+        racing, order-blind collector 487.2 ms   1.12x
+
+      so the +33% on the cheap chain is charged only where per-element work is
+      too cheap to race in the first place — but the barrier is not free on work
+      worth racing either, once the latencies are skewed, as real IO's are. That
+      is why the order-blind collectors declare UNORDERED (roadmap question 4,
+      closed 2026-08-31) rather than leaving the mark to buy nothing.
+      unordered() remains the lever, and remains measurably one.
 
       .parallel().limit(8).map(50ms), which the old resume rule ran in a single
       ordered pass because the suffix read no position:

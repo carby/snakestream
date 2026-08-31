@@ -18,7 +18,16 @@ import pytest
 
 from snakestream import Stream
 from snakestream.collector import Characteristics, Collector, to_generator
-from snakestream.collectors import grouping_by, partitioning_by, to_list, to_set
+from snakestream.collectors import (
+    counting,
+    grouping_by,
+    partitioning_by,
+    summarizing_int,
+    summing_double,
+    summing_int,
+    to_list,
+    to_set,
+)
 from snakestream.execution import _READ_AHEAD
 
 
@@ -171,6 +180,13 @@ async def test_min_and_max_are_unaffected() -> None:
 # --- the collector answers for itself ---------------------------------------
 
 
+# A set gives no arrival order to inspect, so this test cannot show the barrier
+# was skipped the way the two recording-downstream tests below do. It carries
+# one half of the guard - that to_set() still declares UNORDERED - and
+# test_grouping_by_into_an_unordered_downstream_skips_the_barrier carries the
+# other, that collect() still acts on the declaration. The result assertion
+# below is not the part that does the work: to_set() collects the same set
+# under either path, so it passes whether or not a barrier ran.
 @pytest.mark.asyncio
 async def test_to_set_takes_the_order_blind_path() -> None:
     # given the one shipped collector declaring UNORDERED
@@ -481,3 +497,46 @@ async def test_read_ahead_under_a_delivery_barrier_is_bounded() -> None:
     # then the delivery barrier is bounded exactly as an operation's is
     assert first == 0
     assert pulled_before_first_release <= _READ_AHEAD
+
+
+# --- the marked scalar collectors -------------------------------------------
+#
+# Like to_set() above, none of these can show the barrier was skipped: each
+# returns the same value under either path. The declaration assertion is the
+# half of the guard that lives here; the mechanism is pinned by the recording
+# tests above. What these add is that the value is right while racing, which is
+# what the declaration would break if it were wrong.
+
+
+@pytest.mark.asyncio
+async def test_counting_takes_the_order_blind_path() -> None:
+    assert Characteristics.UNORDERED in counting().characteristics
+    res = await Stream.of(SOURCE).parallel().map(_slow_head).collect(counting())
+    assert res == len(SOURCE)
+    assert res == await Stream.of(SOURCE).map(_slow_head).collect(counting())
+
+
+@pytest.mark.asyncio
+async def test_summing_int_takes_the_order_blind_path() -> None:
+    assert Characteristics.UNORDERED in summing_int(lambda n: n).characteristics
+    res = await Stream.of(SOURCE).parallel().map(_slow_head).collect(summing_int(lambda n: n))
+    assert res == sum(SOURCE)
+    assert res == await Stream.of(SOURCE).map(_slow_head).collect(summing_int(lambda n: n))
+
+
+@pytest.mark.asyncio
+async def test_summarizing_int_takes_the_order_blind_path() -> None:
+    assert Characteristics.UNORDERED in summarizing_int(lambda n: n).characteristics
+    res = await Stream.of(SOURCE).parallel().map(_slow_head).collect(summarizing_int(lambda n: n))
+    # every field, since UNORDERED on a NamedTuple is a claim about all of them
+    assert res == await Stream.of(SOURCE).map(_slow_head).collect(summarizing_int(lambda n: n))
+
+
+@pytest.mark.asyncio
+async def test_summing_double_is_delivered_in_encounter_order() -> None:
+    # the other side of the rule: an unmarked collector takes the barrier, and
+    # for a float sum that is what makes the racing result bit-for-bit equal to
+    # the sequential one rather than merely close to it
+    assert Characteristics.UNORDERED not in summing_double(lambda n: n).characteristics
+    res = await Stream.of(SOURCE).parallel().map(_slow_head).collect(summing_double(lambda n: n))
+    assert res == await Stream.of(SOURCE).map(_slow_head).collect(summing_double(lambda n: n))

@@ -29,6 +29,21 @@ from snakestream.type import (
 )
 
 
+# The mark the order-blind factories below declare. Named once so the reason
+# lives in one place: UNORDERED here means "any two orderings of the same
+# elements collect to a result that compares equal", which is a claim about the
+# collected value and nothing else. Java's javadoc documents characteristics for
+# toSet(), groupingByConcurrent() and toConcurrentMap() only, so declaring it
+# elsewhere diverges from no documented contract; OpenJDK's private CH_ID on
+# these factories reflects that Java's UNORDERED governs its *combine* strategy,
+# where an associative reduction is safe either way and the mark buys nothing.
+# Here it governs the racing delivery barrier instead, which is why the same
+# declaration is worth making (roadmap question 4, closed 2026-08-31 on a
+# tail-latency benchmark: the barrier costs 1.12-1.27x on IO work whose
+# latencies are skewed, where a uniform-latency benchmark had shown nothing).
+_ORDER_BLIND = (Characteristics.UNORDERED,)
+
+
 # Every name in this module is a factory, like Java's Collectors.toList().
 # A Collector holds no per-collection state, so the instance one call returns
 # is still safe to reuse across collections - the factory shape is about one
@@ -64,31 +79,18 @@ def joining(delimiter: str = "", prefix: str = "", suffix: str = "") -> Collecto
 
 
 def counting() -> Collector[Any, Any, int]:
-    # Order-blind in fact - counting the same elements in any order gives the
-    # same count - but left undeclared. Two separate claims sit behind that,
-    # and only the first is contract: Java's javadoc documents characteristics
-    # for exactly three factories - toSet(), groupingByConcurrent() and
-    # toConcurrentMap() - and is silent for every other, counting() included.
-    # Second, OpenJDK's implementation happens to give counting() and the rest
-    # below (summing_*, averaging_*, summarizing_*, to_map) CH_ID/CH_NOID
-    # rather than CH_UNORDERED_ID, because Java's UNORDERED governs its combine
-    # strategy where an associative reduction is safe either way; those are
-    # private fields in Collectors.java, not a documented contract to match.
-    # Now that order-racing-delivery has landed the mark would buy skipping the
-    # reorder barrier here, and whether to make it is the half of the roadmap's
-    # open question 4 still open - to weigh with a benchmark, not to decide by
-    # inspection. The other half, deriving on grouping_by/partitioning_by, is
-    # settled: define-unordered-as-equality took them out of this list, on the
-    # ground that Java documents nothing about them either. min_by/max_by are
-    # excluded from the marking pass for good: collector-min-max requires them
-    # not to declare UNORDERED.
+    # Declares UNORDERED (see _ORDER_BLIND): counting the same elements in any
+    # order gives the same int, so the declaration is true of the behaviour and
+    # not merely asserted. min_by/max_by are excluded for good - collector-min-max
+    # requires them not to declare it, because they return an *element* and so
+    # have a tie to break, which counting does not.
     def _accumulate(container: Box, element: Any) -> None:
         container.value += 1
 
     def _finish(container: Box) -> int:
         return container.value
 
-    return Collector(lambda: Box(0), _accumulate, finisher=_finish)
+    return Collector(lambda: Box(0), _accumulate, finisher=_finish, characteristics=_ORDER_BLIND)
 
 
 # summing_int/summing_long and averaging_int/averaging_long/averaging_double
@@ -106,11 +108,21 @@ class _SumBox:
     checked: bool = False
 
 
-def _summing(mapper: NumberMapper, seed: int | float, coerce: Callable[[Any], Any] | None) -> Collector[Any, _SumBox, Any]:
+def _summing(
+    mapper: NumberMapper,
+    seed: int | float,
+    coerce: Callable[[Any], Any] | None,
+    characteristics: tuple[Characteristics, ...] = (),
+) -> Collector[Any, _SumBox, Any]:
     # coerce is None means "add the mapped value as-is", not "coerce with an
     # identity function": the int/long path must preserve whatever numeric type
     # the mapper returns (a Decimal, a Fraction), and an identity call there
     # would sit on the per-element path.
+    #
+    # characteristics is a parameter rather than something derived from coerce
+    # because the two answer different questions that happen to agree today.
+    # Each caller states its own mark, so summing_double() cannot inherit
+    # summing_int()'s by sharing this body.
     def _supply() -> _SumBox:
         box = _SumBox(seed)
         box.is_async = is_async_callable(mapper)
@@ -130,7 +142,7 @@ def _summing(mapper: NumberMapper, seed: int | float, coerce: Callable[[Any], An
     def _finish(container: _SumBox) -> Any:
         return container.total
 
-    return Collector(_supply, _accumulate, finisher=_finish)
+    return Collector(_supply, _accumulate, finisher=_finish, characteristics=characteristics)
 
 
 @dataclass(slots=True)
@@ -165,14 +177,23 @@ def _averaging(mapper: NumberMapper) -> Collector[Any, _AvgBox, float]:
     return Collector(_supply, _accumulate, finisher=_finish)
 
 
+# summing_int/summing_long declare UNORDERED: integer addition is exact and
+# associative, so summing the same mapped values in any order gives the same int.
 def summing_int(mapper: NumberMapper) -> Collector[Any, Any, int]:
-    return _summing(mapper, 0, None)
+    return _summing(mapper, 0, None, _ORDER_BLIND)
 
 
 def summing_long(mapper: NumberMapper) -> Collector[Any, Any, int]:
-    return _summing(mapper, 0, None)
+    return _summing(mapper, 0, None, _ORDER_BLIND)
 
 
+# summing_double and the averaging_* family below are permanently unmarkable,
+# not merely undeclared: float addition is not associative, so two orderings of
+# the same elements can sum to values that differ in the last place and compare
+# unequal. They are order-*sensitive in fact*, which is a firmer exclusion than
+# Java's silence - a later pass revisiting the marking question should treat
+# them as closed rather than re-weigh them. averaging_int/averaging_long are
+# included despite their int inputs, because each divides a float accumulator.
 def summing_double(mapper: NumberMapper) -> Collector[Any, Any, float]:
     return _summing(mapper, 0.0, float)
 
@@ -208,8 +229,13 @@ class _SummaryBox:
 
 
 def _summarizing(
-    mapper: NumberMapper, seed: int | float, coerce: Callable[[Any], Any] | None
+    mapper: NumberMapper,
+    seed: int | float,
+    coerce: Callable[[Any], Any] | None,
+    characteristics: tuple[Characteristics, ...] = (),
 ) -> Collector[Any, _SummaryBox, SummaryStatistics]:
+    # characteristics is stated per caller, as in _summing(): sharing this body
+    # must not let summarizing_double() inherit summarizing_int()'s mark.
     def _supply() -> _SummaryBox:
         box = _SummaryBox(seed)
         box.is_async = is_async_callable(mapper)
@@ -236,17 +262,27 @@ def _summarizing(
         average = container.total / container.count if container.count else 0.0
         return SummaryStatistics(container.count, container.total, container.least, container.greatest, average)
 
-    return Collector(_supply, _accumulate, finisher=_finish)
+    return Collector(_supply, _accumulate, finisher=_finish, characteristics=characteristics)
 
 
+# summarizing_int/summarizing_long declare UNORDERED, and the claim is only as
+# strong as the weakest field: SummaryStatistics is a NamedTuple, so == compares
+# every one of count, sum, min, max and average. Over int inputs each is exact -
+# count and sum are associative, min and max select a *value* rather than an
+# element (so unlike min_by/max_by there is no tie identity to preserve), and
+# average is that exact sum over that exact count.
 def summarizing_int(mapper: NumberMapper) -> Collector[Any, Any, SummaryStatistics]:
-    return _summarizing(mapper, 0, None)
+    return _summarizing(mapper, 0, None, _ORDER_BLIND)
 
 
 def summarizing_long(mapper: NumberMapper) -> Collector[Any, Any, SummaryStatistics]:
-    return _summarizing(mapper, 0, None)
+    return _summarizing(mapper, 0, None, _ORDER_BLIND)
 
 
+# Permanently unmarkable for the same reason as summing_double, and the
+# NamedTuple makes it sharper: sum accumulates in float, so one order-sensitive
+# field is enough to make the whole result compare unequal, however exact the
+# count/min/max fields beside it are.
 def summarizing_double(mapper: NumberMapper) -> Collector[Any, Any, SummaryStatistics]:
     return _summarizing(mapper, 0.0, float)
 
