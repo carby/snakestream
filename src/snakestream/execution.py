@@ -21,11 +21,41 @@ from __future__ import annotations
 import asyncio
 from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
+from enum import Enum, auto
 from typing import Any, ClassVar
 from collections.abc import AsyncGenerator, AsyncIterator, Iterator
 
 from snakestream.sink import GeneratorBridgeSink, Op, Ordering, Sink, TerminalSink, is_ordered
 from snakestream.type import StateMap, T, _Aiter
+
+
+class OrderDemand(Enum):
+    """What a terminal asks of the pipeline's encounter-order characteristic,
+    where sink.Ordering says what an *op* does to it. The pair is the whole
+    input to _split_point(), and the two enums are deliberately the same shape
+    read from opposite ends.
+
+    Three values because a demand can be unconditional or conditional, and a
+    bool cannot say the first. The clauses line up one for one:
+
+        op in the chain          the terminal
+        Ordering.SET             ALWAYS       unconditional
+        order_sensitive          IF_ORDERED   only where the pipeline is ordered
+        (neither)                NONE         no demand, and pays nothing
+
+    Java has no name to borrow here. Its terminals answer this question by
+    choosing a task class - FindTask against ForEachTask - so there is no
+    counterpart to be at parity with, and the name is built to sit beside
+    Ordering instead.
+
+    ALWAYS has exactly one holder, find_first(), and the stream-execution-model
+    capability says so as a requirement: a demand that survives unordered() is
+    a claim no other terminal in Java or here makes."""
+
+    NONE = auto()
+    IF_ORDERED = auto()
+    ALWAYS = auto()
+
 
 # How many branches the racing executor fans a chain out across. Bound into
 # RACING below at import time, which is where it was always effectively bound:
@@ -186,7 +216,7 @@ async def _guarded(source: AsyncIterator, lock: asyncio.Lock, window: _Window | 
             await _maybe_aclose(source)
 
 
-def _split_point(chain: list[Op], observes_order: bool, ordered_in: bool) -> int | None:
+def _split_point(chain: list[Op], demand: OrderDemand, ordered_in: bool) -> int | None:
     """The index at which encounter order has to be restored, or None when it
     never does and the chain can race end-to-end.
 
@@ -211,16 +241,33 @@ def _split_point(chain: list[Op], observes_order: bool, ordered_in: bool) -> int
     race_through() runs the same head/reorder/tail branch either way, with an
     empty tail here.
 
+    That third clause is the two op clauses again, one level up, which is what
+    OrderDemand's three values are for:
+
+        op in the chain          the terminal
+        Ordering.SET             ALWAYS       splits whatever is upstream
+        order_sensitive          IF_ORDERED   splits only where ordered here
+
+    ALWAYS is find_first()'s, and nothing else's. It reads as a contradiction
+    on a pipeline the caller declared unordered() and is not one: the barrier
+    can always restore encounter order, because _guarded() assigns the source
+    index under the lock and unordered() clears the *requirement* to honour it,
+    never the ability. So a demand that survives the clearing is coherent, and
+    it is the one Java's FindOp makes when mustFindFirst is fixed at
+    construction and never consults the upstream ORDERED flag.
+
     The first hit wins: there is at most one barrier per composition, and
     everything downstream of it already arrives in order.
 
     `ordered_in` seeds the fold, because a resumed tail is a chain suffix whose
     ordering was decided by ops that are no longer in the list; see
-    is_ordered()."""
+    is_ordered(). An ALWAYS demand crossing that split keeps splitting: a
+    resumed suffix that clears the characteristic still owes find_first() its
+    delivery barrier, where an IF_ORDERED one is correctly released by it."""
     for i, op in enumerate(chain):
         if op.ordering is Ordering.SET or (op.order_sensitive and is_ordered(chain, i, ordered_in)):
             return i
-    if observes_order and is_ordered(chain, initial=ordered_in):
+    if demand is OrderDemand.ALWAYS or (demand is OrderDemand.IF_ORDERED and is_ordered(chain, initial=ordered_in)):
         return len(chain)
     return None
 
@@ -371,7 +418,7 @@ async def _run_ordered_tail(
     ordered: AsyncGenerator,
     state_map: StateMap,
     workers: int,
-    observes_order: bool,
+    demand: OrderDemand,
 ) -> AsyncGenerator:
     """Everything from the barrier onward, over the reordered stream.
 
@@ -399,7 +446,7 @@ async def _run_ordered_tail(
         rest,
         stream_through(barrier, ordered, state_map),
         workers,
-        observes_order,
+        demand,
         is_ordered(barrier),
     ):
         yield out
@@ -409,7 +456,7 @@ async def race_through(
     chain: list[Op],
     source: AsyncGenerator,
     workers: int,
-    observes_order: bool,
+    demand: OrderDemand,
     ordered_in: bool = True,
 ) -> AsyncGenerator:
     """The same chain, run by `workers` branches racing over one shared source.
@@ -421,8 +468,8 @@ async def race_through(
 
     Two things can need it, and the split expresses both. An *operation* that
     reads position splits at its own index. The *terminal* splits at len(chain)
-    when `observes_order` says it can tell — every op still races and only
-    delivery is reordered.
+    when its `demand` says it can tell — every op still races and only delivery
+    is reordered.
 
     `ordered_in` is the pipeline's ordering characteristic entering this chain,
     True for a whole pipeline and carried across the split for a resumed tail.
@@ -465,6 +512,38 @@ async def race_through(
       closed 2026-08-31) rather than leaving the mark to buy nothing.
       unordered() remains the lever, and remains measurably one.
 
+      Where the ordered path's cost actually sits, if anyone sets out to
+      cheapen it (2026-08-28, taken while pricing the rejected alternative in
+      order-min-max-tie-breaks; 20,000 elements, map(x + 1), 4 workers, Python
+      3.14.5, best of 5, all three draining into the same counting sink):
+
+        baseline (unordered)   7.32 us/element  stream_through + plain merge
+        tagged, unmerged       8.03 us/element  group_through  + plain merge      +9.7%
+        reorder barrier        8.71 us/element  group_through  + _release_in_order +19%
+
+      Two roughly equal halves, not one: tagging costs 0.71 us/element and
+      reordering 0.68. group_through() is the harder to remove -- the chain
+      drops and multiplies, so a per-element tag has no answer and the group is
+      the invariant. It is also a whole-path number, paying off for every
+      order-observing terminal at once, which is why order-min-max-tie-breaks
+      declined to spend it on two.
+
+      One shape is worth recording so it is not re-investigated: an *empty*
+      chain under .parallel(). Spinning four branches and a shared source up to
+      deliver a source nothing transforms costs far more than one ordered pass
+      (200 elements, best of 5, us per call):
+
+        find_first()             9.5 seq    132.7 par
+        collect(to_list())      78.2 seq   2045.4 par
+        count()                    -       1455.9 par
+
+      count() declares OrderDemand.NONE, takes no split and engages no barrier,
+      and still pays almost all of it -- so this is the branch-setup cost of
+      racing itself, not the reorder barrier, and it has been there since
+      delivery ordering landed. A fast path keyed on the barrier would fix
+      nothing. The shape is a caller asking to parallelise a pipeline with
+      nothing in it to parallelise.
+
       .parallel().limit(8).map(50ms), which the old resume rule ran in a single
       ordered pass because the suffix read no position:
 
@@ -482,7 +561,7 @@ async def race_through(
     # times over. One iterator, shared under the lock, is what racing means.
     shared = aiter(source)
 
-    split = _split_point(chain, observes_order, ordered_in)
+    split = _split_point(chain, demand, ordered_in)
     if split is not None:
         # race the head, restore encounter order at the merge, hand the rest
         # to the tail. One state map for the whole chain either way: head ops
@@ -490,7 +569,7 @@ async def race_through(
         # it with nobody, which comes to the same thing.
         window = _Window()
         head = [group_through(chain[:split], _guarded(shared, lock, window), state_map) for _ in range(workers)]
-        async for out in _run_ordered_tail(chain[split:], _release_in_order(head, window), state_map, workers, observes_order):
+        async for out in _run_ordered_tail(chain[split:], _release_in_order(head, window), state_map, workers, demand):
             yield out
         return
 
@@ -550,40 +629,43 @@ class Executor(ABC):
     operations: one producing the chain's elements as a generator, one driving
     the chain into a terminal sink.
 
-    Both take `observes_order`, the consumer's declaration of whether it can
-    tell what order elements reach it in. It is a second axis alongside which
-    executor a terminal names: the executor decides *how* the chain runs, this
-    decides whether the executor owes it encounter order. elements()' consumer
-    always does - it hands out raw elements - so its callers pass True; a
-    terminal answers for itself, and most of them do not care.
+    Both take `demand`, the consumer's declaration of what it asks of
+    encounter order. It is a second axis alongside which executor a terminal
+    names: the executor decides *how* the chain runs, this decides whether the
+    executor owes it encounter order. elements()' consumer can always tell - it
+    hands out raw elements - so its callers pass IF_ORDERED; a terminal answers
+    for itself, and most of them do not care.
 
-    It is a plain bool on the protocol rather than something read off the
-    terminal sink because elements() has no terminal sink to read."""
+    It sits on the protocol rather than being read off the terminal sink
+    because elements() has no terminal sink to read. It is an OrderDemand
+    rather than a bool because find_first() asks unconditionally, which a bool
+    cannot distinguish from asking where the pipeline happens to be ordered -
+    see OrderDemand."""
 
     is_parallel: ClassVar[bool]
 
     @abstractmethod
-    def elements(self, chain: list[Op], source: AsyncGenerator, observes_order: bool) -> AsyncGenerator: ...
+    def elements(self, chain: list[Op], source: AsyncGenerator, demand: OrderDemand) -> AsyncGenerator: ...
 
-    async def value(self, chain: list[Op], source: AsyncGenerator, terminal: TerminalSink[Any], observes_order: bool) -> Any:
+    async def value(self, chain: list[Op], source: AsyncGenerator, terminal: TerminalSink[Any], demand: OrderDemand) -> Any:
         """The general form: compose, then drain into the terminal. Correct for
         any executor; Racing uses it unchanged."""
-        return await drain(self.elements(chain, source, observes_order), terminal)
+        return await drain(self.elements(chain, source, demand), terminal)
 
 
 class Sequential(Executor):
     is_parallel = False
 
-    # observes_order is accepted and ignored throughout: a single ordered pass
+    # demand is accepted and ignored throughout: a single ordered pass
     # delivers in encounter order whether or not anyone is looking. The
     # parameter is on the protocol because the *racing* executor needs it, and
     # a caller must be able to state the demand without knowing which executor
     # will read it.
 
-    def elements(self, chain: list[Op], source: AsyncGenerator, observes_order: bool) -> AsyncGenerator:
+    def elements(self, chain: list[Op], source: AsyncGenerator, demand: OrderDemand) -> AsyncGenerator:
         return stream_through(chain, source)
 
-    async def value(self, chain: list[Op], source: AsyncGenerator, terminal: TerminalSink[Any], observes_order: bool) -> Any:
+    async def value(self, chain: list[Op], source: AsyncGenerator, terminal: TerminalSink[Any], demand: OrderDemand) -> Any:
         """Overrides the general form with the fused push, which is the one
         asymmetry in this protocol and is here on measurement, not taste:
         composing and then draining costs +125% per element on count() and
@@ -603,8 +685,8 @@ class Racing(Executor):
     def __init__(self, workers: int) -> None:
         self.workers = workers
 
-    def elements(self, chain: list[Op], source: AsyncGenerator, observes_order: bool) -> AsyncGenerator:
-        return race_through(chain, source, self.workers, observes_order)
+    def elements(self, chain: list[Op], source: AsyncGenerator, demand: OrderDemand) -> AsyncGenerator:
+        return race_through(chain, source, self.workers, demand)
 
     # value() is inherited: each racing branch owns its own sink chain, so
     # there is no single chain to fuse a terminal onto. The general form is

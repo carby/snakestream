@@ -20,7 +20,7 @@ def is_new_extremum(sign: int, asc: bool) -> bool:
 
     "Earlier" means earlier in *encounter order*, not earlier to arrive. This
     function only ever sees the order its caller was fed, so the guarantee is
-    the caller's to arrange: Stream.min()/max() declare observes_order=True and
+    the caller's to arrange: Stream.min()/max() declare OrderDemand.IF_ORDERED and
     min_by()/max_by() decline Characteristics.UNORDERED, so both take the
     racing executor's delivery barrier and both agree with the sequential
     answer. On a pipeline declared unordered() neither takes it and which of

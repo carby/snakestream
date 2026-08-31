@@ -267,8 +267,10 @@ async def test_unordered_parallel_find_first_still_returns_the_true_first() -> N
     # when
     it = await Stream.of(values).parallel().unordered().map(_delay_by_position).find_first()
 
-    # then: unordered() does not relax find_first()'s guarantee - it drives
-    # SEQUENTIAL either way. find_any() is the racing terminal.
+    # then: unordered() does not relax find_first()'s guarantee. It clears the
+    # requirement to honour encounter order, never the ability - the source
+    # index is assigned under the lock either way - so the demand still splits
+    # and the chain still races. find_any() is the terminal that opts out.
     assert it == values[0]
 
 

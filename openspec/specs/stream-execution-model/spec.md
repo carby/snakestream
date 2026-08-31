@@ -2,10 +2,11 @@
 
 Defines how a stream's execution mode is carried and applied: an executor value
 held by the stream, a two-method executor protocol, which executor a terminal
-uses, the rule that the one terminal requiring encounter order regardless of
-the stream's mode — `find_first()` — names its executor explicitly instead of
-depending on the stream's, and the second axis alongside it: whether a terminal observes encounter order at all, which is what decides
-whether the executor owes it.
+uses — always the stream's own, since no terminal names one for itself — and
+the second axis alongside it: what a terminal demands of encounter order, which
+is what decides whether the executor owes it. That demand is three-valued rather
+than a bool, because `find_first()` asks unconditionally where every other
+order-observing terminal asks only where the pipeline is ordered.
 
 ## Requirements
 
@@ -101,42 +102,40 @@ stream carries.
 - **THEN** `is_parallel()` still reports `True`, and there are still exactly two
   executor values in the package
 
-### Requirement: A terminal uses the stream's executor unless it names one, and only find_first() names one
+### Requirement: A terminal follows the stream's executor and declares what it observes
 
-A terminal operation SHALL execute under the executor its stream carries.
+A terminal operation SHALL execute under the executor its stream carries. No
+terminal SHALL name an executor for itself.
 
-A terminal operation SHALL additionally declare whether it observes the
-encounter order of the elements it receives. This is a second, independent axis
-alongside which executor it names: the executor decides *how* the chain runs,
-the declaration decides whether the executor must deliver in encounter order
-(see the `racing-encounter-order` capability). Under the sequential executor the
+A terminal operation SHALL declare whether it observes the encounter order of
+the elements it receives. This is a second, independent axis alongside the
+executor the stream carries: the executor decides *how* the chain runs, the
+declaration decides whether the executor must deliver in encounter order (see
+the `racing-encounter-order` capability). Under the sequential executor the
 declaration changes nothing.
 
-`count()`, `for_each()`, `find_any()`, `max()`, `min()`, `all_match()`,
-`any_match()` and `none_match()` SHALL declare that they do not observe it.
-`reduce()`, `to_array()`, `for_each_ordered()` and the three-argument
-`collect(supplier, accumulator, combiner)` SHALL declare that they do.
-`collect(collector)` SHALL derive its declaration from the collector: it
-observes encounter order unless the collector declares
-`Characteristics.UNORDERED`.
+The declaration SHALL be three-valued, because a terminal's demand for
+encounter order can be unconditional or conditional on the pipeline being
+ordered, and a two-valued declaration cannot express the first:
 
-A terminal operation whose contract requires encounter order regardless of the
-stream's mode SHALL name the sequential executor explicitly at its call site,
-rather than relying on a shared implementation that is promised never to be
-overridden.
+- Terminals that do not observe it: `count()`, `for_each()`, `find_any()`,
+  `max()`, `min()`, `all_match()`, `any_match()` and `none_match()`. They SHALL
+  pay nothing — neither reorder buffering nor head-of-line delay.
+- Terminals that observe it **when the pipeline is ordered**: `reduce()`,
+  `to_array()`, `for_each_ordered()`, `iterator()` and the three-argument
+  `collect(supplier, accumulator, combiner)`. `collect(collector)` SHALL derive
+  its declaration from the collector — it observes encounter order unless the
+  collector declares `Characteristics.UNORDERED`.
+- Terminals that observe it **unconditionally**, whatever the pipeline's
+  ordering characteristic: `find_first()`, and no other.
 
-`find_first()` SHALL do this **unconditionally**, without consulting the
-ordering characteristic. Java does not relax `findFirst()` on an unordered
-stream either: `FindOp.mustFindFirst` is fixed when the operation is
-constructed, and the leftmost scan runs whenever it is set. The javadoc permits
-returning any element there; the implementation declines to, and so does this
-one. `find_any()` is where a caller who wants the race goes.
-
-`for_each_ordered()` SHALL NOT do this. Its encounter-order guarantee is
-satisfied by the delivery barrier the racing executor already provides to every
-order-observing terminal, so it declares that it observes encounter order and
-otherwise follows the stream's own executor in both the ordered and the
-unordered case; see the `stream-foreach-ordered` capability.
+`find_first()`'s unconditional demand SHALL restore encounter order for
+delivery only, and SHALL NOT constrain how the chain runs. Java does not relax
+`findFirst()` on an unordered stream: `FindOp.mustFindFirst` is fixed when the
+operation is constructed, and the leftmost scan runs whenever it is set. The
+javadoc permits returning any element there; the implementation declines to, and
+so does this one — and, like `FindTask`, it declines without abandoning
+parallelism. `find_any()` is where a caller who wants the race goes.
 
 #### Scenario: An ordinary terminal follows the stream's executor
 - **WHEN** `count()` is called on a parallel stream
@@ -159,26 +158,20 @@ unordered case; see the `stream-foreach-ordered` capability.
 - **THEN** the `to_list()` collection engages the reorder barrier and the
   `to_set()` collection does not
 
-#### Scenario: for_each_ordered follows the stream's executor when ordered
-- **WHEN** `for_each_ordered(consumer)` is called on an ordered parallel stream
-- **THEN** the chain is driven under the racing executor, the reorder barrier is
-  engaged, and the consumer is invoked in encounter order
+#### Scenario: A conditional observer is released by unordered()
+- **WHEN** `reduce()` or `for_each_ordered()` is called on a parallel stream
+  marked `unordered()`
+- **THEN** no reorder barrier is engaged
 
-#### Scenario: for_each_ordered follows the stream's executor when unordered
-- **WHEN** `for_each_ordered(consumer)` is called on a parallel stream marked
-  `unordered()`
-- **THEN** the chain is driven under the racing executor with no reorder barrier
-  engaged, and the consumer is invoked once per element
+#### Scenario: find_first is not released by unordered()
+- **WHEN** `find_first()` is called on a parallel stream marked `unordered()`
+- **THEN** the reorder barrier is still engaged and the first element in the
+  source's encounter order is returned, rather than behaving as `find_any()`
 
-#### Scenario: find_first on an ordered parallel stream ignores the stream's executor
-- **WHEN** `find_first()` is called on an ordered parallel stream
-- **THEN** the chain is driven under the sequential executor and the true first
-  element in encounter order is returned
-
-#### Scenario: find_first on an unordered stream still forces sequential
-- **WHEN** `find_first()` is called on a stream marked `unordered()`
-- **THEN** it still runs under the sequential executor and returns the first
-  element in the source's encounter order, rather than behaving as `find_any()`
+#### Scenario: find_first follows the stream's executor
+- **WHEN** `find_first()` is called on a parallel stream
+- **THEN** the chain is driven under the racing executor, every operation runs
+  across all branches, and the true first element in encounter order is returned
 
 #### Scenario: find_any remains the unordered alternative
 - **WHEN** `find_any()` is called on a parallel stream

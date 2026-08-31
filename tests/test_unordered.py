@@ -6,7 +6,7 @@ from snakestream.collectors import to_list
 from snakestream.exception import IllegalStateException
 from conftest import TIE_SOURCE, TIED_EARLY, TIED_LATE, by_key, overtaken
 from snakestream.comparator import comparing
-from snakestream.execution import _split_point
+from snakestream.execution import OrderDemand, _split_point
 from snakestream.ops import _MapOp
 from snakestream.stream import Stream
 
@@ -315,8 +315,8 @@ async def test_unordered_max_engages_no_delivery_barrier() -> None:
     chain = [_MapOp(overtaken)]
 
     # then: max() observes order, but unordered() clears the characteristic
-    assert _split_point(chain, observes_order=True, ordered_in=True) == len(chain)
-    assert _split_point(chain, observes_order=True, ordered_in=False) is None
+    assert _split_point(chain, demand=OrderDemand.IF_ORDERED, ordered_in=True) == len(chain)
+    assert _split_point(chain, demand=OrderDemand.IF_ORDERED, ordered_in=False) is None
 
 
 @pytest.mark.asyncio

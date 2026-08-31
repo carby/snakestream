@@ -1,8 +1,10 @@
 # Roadmap
 
-Now/Next/Later view of open code-quality and test-rigor items, generated from
-the review-pass notes below. Completed items from that review remain in
-**Done** for history.
+Now/Next/Later view of open code-quality and test-rigor items. **Done** is the
+history, and is specifically the *rejection* log: several entries there record
+work that was measured and declined rather than shipped, which the openspec
+archive does not carry because a rejected change often has no archive at all.
+Read it before proposing a cleanup.
 
 **Guiding principle (stated 2026-08-21):** keep a 1:1 match on the *public API
 surface*, and exploit Python's capabilities *underneath* for simplicity and
@@ -63,165 +65,72 @@ whoever picks them up should make the batching call themselves.
 
 ## Next
 
-**Two items left of the four, both fallout from
+**One item left of the four, all fallout from
 `order-stateful-ops-under-racing`** (see **Done**), added 2026-08-26 and
-fleshed out 2026-08-27. None is a defect; each is a decision that change
+fleshed out 2026-08-27. None was a defect; each was a decision that change
 deliberately declined to take while it was fixing a wrong answer.
 
-**Items 1 and 4 are gone** — landed as `order-racing-delivery` (2026-08-28)
-and `add-collector-characteristics` (2026-08-27), both in **Done**. **The
-numbering is deliberately not compacted**: two archived proposals cite "the
-roadmap's **Next** item 2" and "item 3", and renumbering would silently break
-those references. Items 2 and 3 keep their numbers for as long as anything
-points at them.
+**Items 1, 2 and 4 are gone** — landed as `order-racing-delivery` (2026-08-28),
+`collapse-find-first-onto-barrier` plus
+`collapse-for-each-ordered-onto-barrier` (2026-08-31), and
+`add-collector-characteristics` (2026-08-27), all in **Done**. **The numbering
+is deliberately not compacted**: archived proposals cite "the roadmap's
+**Next** item 2" and "item 3", and renumbering would silently break those
+references. Item 3 keeps its number for as long as anything points at it.
 
 **The seam that connected all four is closed.** `_split_point()` used to
 inspect only *ops*, so a terminal had no way to declare that it needed
 encounter order, and the two that need it opted out of racing altogether by
 naming `SEQUENTIAL` at their own call site. `order-racing-delivery` added the
-missing concept — an ordering demand originating at the terminal — as
-`observes_order`, a bool each terminal passes to `_evaluate()` and on through
-`Executor.value()`/`elements()` into `_split_point()`'s third clause.
+missing concept — an ordering demand originating at the terminal — and item 2
+finished it by widening that demand to the three values it needed, so that the
+two sides of `_split_point()` now say the same thing in the same shape:
 
 | | where the ordering demand comes from | how it is handled |
 |---|---|---|
-| an op in the chain | `sorted`, `limit`, `skip`, `distinct` | `_split_point()` clauses 1 and 2 |
-| the terminal | `collect(to_list)`, `reduce`, `to_array`, `iterator()` | `_split_point()` clause 3, a split at `len(chain)` |
-| the terminal, unconditionally | `find_first`, `for_each_ordered` | still `SEQUENTIAL` at their own call site — item 2 |
+| an op in the chain, unconditionally | `sorted` (`Ordering.SET`) | `_split_point()` clause 1, a split at the op's index |
+| an op in the chain, where ordered | `limit`, `skip`, `distinct` (`order_sensitive`) | `_split_point()` clause 2 |
+| the terminal, where ordered | `collect(to_list)`, `reduce`, `to_array`, `iterator()`, `for_each_ordered` (`OrderDemand.IF_ORDERED`) | `_split_point()` clause 3, a split at `len(chain)` |
+| the terminal, unconditionally | `find_first` (`OrderDemand.ALWAYS`) | clause 3, and not released by `unordered()` |
 
-**Both remaining items are now unblocked**, which is what `order-racing-delivery`
-was standing in front of. Item 2 shrank to about half its size as predicted;
-item 3's answer flipped to "export it".
+**No terminal names an executor any more**, which is what item 2 was for. Item
+3 is what remains, and its answer flipped to "export it".
 
 ---
 
-**2. Collapse `find_first()` onto the barrier** — the `for_each_ordered()` half
-landed 2026-08-31, see
-`openspec/changes/archive/collapse-for-each-ordered-onto-barrier`. Both named
-`SEQUENTIAL` at their own call site to get encounter order, which the
-barrier now provides while still racing everything upstream. `for_each_ordered()`
-was the straight deletion of the two: its demand is conditional on the pipeline
-being ordered, which is `_split_point()`'s third clause exactly, so it now
-declares `observes_order` like every other order-observing terminal. What
-remains is `find_first()`'s unconditional demand, which clause 3 cannot express
-and which needs the three-valued widening. Scoped out of
-`order-stateful-ops-under-racing` deliberately: it was fixing a wrong answer,
-and this changes a right one. `find_first()`'s unconditional-`SEQUENTIAL` rule
-is now correctly spec'd (the `stream-execution-model` delta removed and
-replaced the requirement whose scenario the implementation had never followed),
-so this starts from a true statement of the current behaviour.
+**3. Export `_READ_AHEAD`, and rename it.** Previously "revisit only on a
+concrete report", which was right while the constant bound only the narrow set
+of pipelines that happen to contain a barrier. It now bounds three things, and
+the report arrives by construction rather than by someone hitting the trade-off
+in anger:
 
-**The two clauses of `_split_point()` are already exactly these two terminals'
-rules**, which is the reason the collapse is available at all:
-
-| `_split_point` clause | op that uses it | terminal wanting the same rule |
+| what it bounds | since | visible to a caller? |
 |---|---|---|
-| `Ordering.SET` — splits unconditionally, whatever the characteristic upstream | `sorted()` | `find_first()` — ordered regardless of `_is_ordered()` |
-| `order_sensitive` **and** ordered at that position | `limit`/`skip`/`distinct` | `for_each_ordered()` — `SEQUENTIAL if self._is_ordered()` |
+| memory held by the reorder buffer | `order-stateful-ops-under-racing` | no |
+| latency behind a straggler, for *every* ordered racing pipeline delivering to an order-observing terminal | `order-racing-delivery` (2026-08-28) | as wall clock |
+| **speculative work in a short-circuiting terminal** — a parallel `find_first()` may invoke a chain callable for up to this many elements where a sequential one invokes it once | `collapse-find-first-onto-barrier` (2026-08-31) | **yes, directly** — how many times a mapper runs |
 
-A terminal's demand can therefore be a trailing pseudo-op appended to the chain
-for the drive, and `_split_point()` is reused verbatim. There is precedent for
-a sink-less op: `_UnorderedOp` links to nothing and exists purely to declare a
-characteristic.
+The third is the one that changes the case. Memory and latency are not visible
+from user code; invocation count is, so the knob now has an observable effect a
+spec has to state. It also complicates the rename this item exists for: the
+constant is no longer read-ahead and is not merely a delivery buffer either, so
+a new name has to cover all three, and "the window" may be as close as it gets.
 
-**What disappears — corrected, and it is one entry rather than three.**
-`_evaluate()`'s `executor` parameter goes, once `find_first()` stops being its
-last caller. The other two entries were wrong, and the error was copied here
-from `CLAUDE.md` (now fixed at both sites): **`Stream._is_ordered()` stays**,
-because `for_each_ordered()` was never its sole caller — `Stream.concat()` uses
-it at `stream.py:402` to decide whether the concatenation inherits
-`unordered()` — and **the `SEQUENTIAL` name stays in `stream.py`** for the same
-reason, named on the line above it.
+Two things a spec must say beyond the name. That the bound is only *reached*
+where the first element is slower than those behind it — under uniform latency
+the effective bound is `PROCESSES`, and stating the worst case alone implies it
+is the usual one. And what the barrier costs, which is measured in
+`race_through()`'s docstring: the ordered-vs-`unordered()` delivery figures, and
+the 50/50 split between tagging and reordering that tells anyone optimising the
+path there are two equal targets rather than one.
 
-**Two corrections to how this item was first written.** First,
-**`order-racing-delivery` shrank it, as predicted, and it has now landed**
-(2026-08-28): an ordered racing pipeline reorders at delivery, so
-`for_each_ordered()` needs no special case at all — it is ordered because the
-pipeline is — and `find_first()` reduces to the single unconditional demand.
-That change deliberately left both terminals untouched (its proposal's first
-non-goal: it was altering a wrong answer, and this alters a right one), so this
-item starts from exactly the halved scope it described. Note that what
-disappears is now `_evaluate()`'s `executor` parameter specifically — its
-`observes_order` parameter stays, since every terminal uses it. Second, **the "`find_first()` keeps its
-concurrency" claim should not go into the proposal unmeasured.** Sequential
-`find_first()` pulls exactly one element and runs the chain on it, which is
-already wall-clock optimal; racing can only do *more* work, up to `_READ_AHEAD`
-maps to return element 0. The win exists only where the head can *drop*
-elements:
-
-**Measured 2026-08-31** (N=200, 4 workers, 10ms/element, best of 5), which
-corrects both halves of the guess above:
-
-```
-                       sequential (today)        barrier (after)     speedup
-  map(10ms)             10.5 ms   1 call       10.9 ms   4 calls      0.96x
-  filter(10ms, >=12)   133.4 ms  13 calls      42.9 ms  16 calls      3.11x
-  flat_map(10ms, >=12) 137.8 ms  13 calls      42.9 ms  16 calls      3.21x
-```
-
-`filter` and `flat_map` land at ~3.1x against a 4-worker ceiling, so "~4x" was
-the right order. But **`map` is not a regression** — 0.96x is noise. The
-speculative maps run concurrently with the one that matters, not in front of
-it, so racing a non-dropping head costs work without costing latency.
-
-**"wastes <=15 maps" is wrong in the common case**: the bound is `PROCESSES`,
-not `_READ_AHEAD`, because `find_first()` settles at the first *released group*
-and no branch can be more than one group ahead by then. The window only fills
-when element 0 is slower than what follows it — `map()` with element 0 at 50ms
-and the rest at 1ms gives 16 calls at 0.98x wall clock. Two regimes, and the
-proposal states both.
-
-`for_each_ordered()` carried no such caveat — it drains everything, so its
-head-racing win was unconditional, which is part of why it went first.
-
----
-
-**3. Export `_READ_AHEAD` — unblocked, and the answer is "export it".**
-Previously "revisit only on a concrete report", which was right while the
-constant bound only the narrow set of pipelines that happen to contain a
-barrier. `order-racing-delivery` landed on 2026-08-28, and the branch it named
-is the one that came true: `_READ_AHEAD` is now the throughput/memory knob for
-*every* ordered racing pipeline delivering to an order-observing terminal, so
-the concrete report arrives by construction rather than by someone hitting the
-trade-off in anger.
-
-So: export it, rename it for what it now means (it stops being read-ahead and
-becomes the ordered-delivery buffer bound), and give it a spec — the same
-reasoning that makes `PROCESSES` public. `order-racing-delivery` deliberately
-left it alone (its third non-goal) so that the export and the rename would be
-this item's work rather than a line slipped into a behaviour break.
-
-The measured read-ahead/latency curve is in the constant's comment and does not
-move. What is new alongside it is the delivery-barrier benchmark
-`order-racing-delivery` recorded in `race_through()`'s docstring, which is the
-other half of what a spec for this knob has to state: 10.01 vs 7.51 us/element
-ordered vs `unordered()` on a chain too cheap to race, and no measurable
-difference at all on IO-bound work.
-
-**Measurement worth keeping: the delivery barrier is 50/50** (taken 2026-08-28
-while pricing the rejected alternative in `order-min-max-tie-breaks`; 20,000
-elements, `map(x + 1)`, 4 workers, Python 3.14.5, best of 5, all three draining
-into the same counting sink):
-
-```
-  baseline (unordered)      7.32 us/element   stream_through + plain merge
-  tagged, unmerged          8.03 us/element   group_through  + plain merge       +9.7%
-  reorder barrier           8.71 us/element   group_through  + _release_in_order  +19%
-```
-
-The tagging half is 0.71 us/element and the reordering half 0.68 — so anyone
-cheapening the ordered racing path has two roughly equal targets, not one, and
-`group_through()` is the harder of them to remove (the chain drops and
-multiplies, so a per-element tag has no answer and the group is the invariant).
-This is a whole-path number: it would pay off for every order-observing terminal
-at once, which is why `order-min-max-tie-breaks` declined to spend it on two.
-Anyone picking this up starts here rather than from scratch.
+`order-racing-delivery` deliberately left the constant alone (its third
+non-goal) so that the export and the rename would be this item's work rather
+than a line slipped into a behaviour break. Same reasoning that makes
+`PROCESSES` public.
 
 Refill from **Now**'s **Queued changes**, which is where the loose ends now
-live. This line used to point at "the Java-8 parity gaps README tracks as
-unimplemented", which was never a set README could express;
-`enumerate-java-8-parity-gaps` fixed the tables and the five it found are now
-queued by name rather than alluded to.
+live.
 
 
 ## Later
@@ -245,11 +154,60 @@ core semantic.
 |---|---|
 | **Implement real (multiprocess) parallelism for `.parallel()` / `ParallelStream` / `PROCESSES`** — today it's just `asyncio` tasks racing over a shared generator (I/O-bound only, GIL-bound, no multiprocessing). Decided to keep the `.parallel()`/`PROCESSES` naming as-is (see README) rather than rename to the more accurate `.concurrent()`/`CONCURRENCY`, specifically so that *if* real parallelism is ever implemented under the same names, it's not a second breaking rename. | No concrete use case for true CPU parallelism has come up yet, and the path there is blocked on a real problem, not just unscoped effort: a `ProcessPoolExecutor`-backed implementation needs to serialize the mapper/predicate/comparator/accumulator/combiner across the process boundary, and stdlib `pickle` can't handle lambdas or local closures (the idiomatic way to call every op in this library), can't pickle generators/async generators at all (so the source itself can never be shipped whole), and even picklable *sync* callables don't solve it since async user callables would need each worker to bootstrap its own event loop rather than just running a function. Revisit only once there's both a concrete need and an answer for lambdas/closures across the process boundary (`cloudpickle`/`dill`, or a restricted sync-only picklable-callable mode) and for running async user callables inside a worker process. **The executor-value redesign is done** (see **Done**), which is the enabler this entry used to point forward to: real parallelism is now *a third executor* implementing `elements()`/`value()`, not a third subclass, and `execution.py` is the natural owner for whatever has to cross the process boundary. It does not solve the pickling blocker. The `ParallelStream` name in this item's title is retired; the mode is now `Racing`. |
 | **`BaseStream.spliterator()`** — Java's parallel-decomposition iterator, used by `parallelStream()` to split a source into chunks shared threads can each work over. | Depends on the item above: Java's `Spliterator` assumes shared-memory thread decomposition, which only becomes meaningful once real (multiprocess) partitioned execution is decided — until then there's nothing for it to expose, and it may end up intentionally-skipped rather than implemented. Moved down from **Now**, where it was flagged as decision-blocked rather than ready to build. |
-| **Wire up `collect(supplier, accumulator, combiner)`'s `combiner`** — it accepts a `combiner` for Java signature parity but never invokes it, since `stream.py` always folds over one composed stream, sequential or parallel, with no independent partitions to merge. **Corrected 2026-08-31 by `enumerate-java-8-parity-gaps`:** this entry used to name `reduce(identity, accumulator, combiner)` alongside `collect()` and say "both accept a `combiner` … but never invoke it". `Stream.reduce()` does not accept one — it has two overloads, and a third positional argument is a `TypeError` — so half of this entry was blocking on a decision that could not apply to it. Adding the parameter is possible today, exactly as `collect()` did; whether it is worth adding a parameter that must be documented as inert is a different question from this one, and is now gap 1 in **Now** → **Queued changes**. `collect()`'s half, below, is unaffected. | Same blocker as the item above: a real combine step only makes sense once real partitioned (multiprocess) execution exists, which is now explicitly parked until there's both concrete demand and a solution for the pickling/async-worker problem. That blocker is real for `collect()`, whose parameter already exists and would have to start doing something. See `openspec/changes/add-collect-supplier-accumulator-combiner`. |
-| **Java 9 `Stream` additions** — `takeWhile(predicate)`, `dropWhile(predicate)`, `Stream.ofNullable(t)`, and the 3-arg `iterate(seed, hasNext, next)` overload (distinct from the already-implemented 2-arg `iterate(seed, next)`). | README states the project's intent explicitly: "once we reach some sort of feature parity with Java 8 then maybe we move on to implement the improvements in Java 9." **That gate is met as of 2026-08-31** — see `enumerate-java-8-parity-gaps` in **Done**, whose audit enumerated what is left: five gaps, none structural, three of them overload widenings and two self-contained `comparator.py` additions. The only Java 8 items genuinely blocked are `spliterator()` and `collect()`'s inert `combiner`, both parked behind the real-parallelism decision two rows up, which this section says needs explicit buy-in — so they cannot be what Java 9 waits on without waiting forever. This entry is no longer sequencing-blocked; it is unstarted, and it competes with the five gaps on merit rather than sitting behind them. |
-| **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should instead be documented as intentional next to the `str`/`bytes` note. Surfaced 2026-08-20 in the same code-quality read that produced the first batch of **Now** items, all since closed. |
+| **Wire up `collect(supplier, accumulator, combiner)`'s `combiner`** — the parameter exists and is never invoked, which README's row already states. Only `collect()` is in scope here: this entry used to name `reduce(identity, accumulator, combiner)` alongside it, and `Stream.reduce()` does not accept a combiner at all; that half is now gap 1 in **Now** → **Queued changes** (corrected 2026-08-31 by `enumerate-java-8-parity-gaps`). | Same blocker as the row above — a real combine step only means something once real partitioned execution exists. The difference from gap 1 is that `collect()`'s parameter already ships, so it would have to *start* doing something rather than be added inert. See `openspec/changes/archive/2026-08-17-add-collect-supplier-accumulator-combiner`. |
+| **Java 9 `Stream` additions** — `takeWhile(predicate)`, `dropWhile(predicate)`, `Stream.ofNullable(t)`, and the 3-arg `iterate(seed, hasNext, next)` overload (distinct from the already-implemented 2-arg `iterate(seed, next)`). | **No longer sequencing-blocked, and arguably no longer a *Later* item.** README gates Java 9 on "some sort of feature parity with Java 8"; `enumerate-java-8-parity-gaps` (2026-08-31, **Done**) met that gate and enumerated the remainder as five non-structural gaps, now queued in **Now**. The only Java 8 work genuinely blocked is `spliterator()` and `collect()`'s combiner, both parked behind the real-parallelism decision above — so Java 9 cannot wait on them without waiting forever. What keeps it here is that it is unstarted and unscoped, not that anything blocks it; it competes with the five gaps on merit. |
+| **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should be declared permanent. **Narrowed 2026-08-31: the behaviour is now documented in README's `of()` row.** That was a defect independent of this decision — the row described Java's semantics, so the divergence used by every example in the file was invisible to a reader. Documenting it does not close this item; what remains is the call on whether to keep it. Surfaced 2026-08-20 in the same code-quality read that produced the first batch of **Now** items, all since closed. |
 
 ## Done
+
+- **`collapse-find-first-onto-barrier`** and
+  **`collapse-for-each-ordered-onto-barrier`** (2026-08-31) — item 2, landed as
+  two changes because the two terminals stopped sharing a fix once
+  `order-racing-delivery` shipped. Both had named `SEQUENTIAL` at their own call
+  site to buy encounter order; both now declare a demand and keep the caller's
+  executor. `for_each_ordered()` was a four-line deletion whose condition
+  `_split_point()` already computed. `find_first()` needed the terminal's
+  declaration widened from a bool to `OrderDemand` — `NONE`/`IF_ORDERED`/`ALWAYS`
+  — which makes clause 3 the two op clauses again one level up: `Ordering.SET`
+  is to `ALWAYS` what `order_sensitive` is to `IF_ORDERED`.
+
+  **The parity defect was that `find_first()` was a hidden mode switch**, the
+  only terminal that discarded `.parallel()` while `is_parallel()` still
+  reported `True`. Java's `FindTask` scans leftmost across fork-join branches;
+  it does not fall back to a sequential traversal. The guarantee never changed
+  and did not need to: the barrier restores encounter order on any chain,
+  because `_guarded()` assigns the source index under the lock and `unordered()`
+  clears the *requirement* to honour it, never the ability.
+
+  **Three corrections this item produced, each to something previously written
+  down as fact:**
+
+  - **`_is_ordered()` and the `SEQUENTIAL` name both survive.** The "what
+    disappears" list claimed three deletions; it was one, `_evaluate()`'s
+    `executor` parameter. `Stream.concat()` is `_is_ordered()`'s other caller
+    and names `SEQUENTIAL` on the line above. The error had been copied here
+    from `CLAUDE.md`, now fixed at both sites.
+  - **"racing wastes <=15 maps" had two regimes, and the common one is the
+    worker count.** `find_first()` settles at the first *released group*, and no
+    branch can be more than one group ahead by then, so a uniform-latency chain
+    wastes `PROCESSES`. `_READ_AHEAD` is the bound only where element 0 is
+    slower than what follows it. Measured: `filter`/`flat_map` 3.11x/3.21x, and
+    `map` at 0.96x — **not a regression**, because the speculative maps run
+    concurrently with the one that matters rather than in front of it.
+  - **The empty-chain `.parallel()` cost is not the barrier and is not new.**
+    `count()` declares `NONE`, takes no split, and still pays almost all of it
+    (1456us against `find_first()`'s 133us on 200 elements), so it is
+    `race_through()`'s branch-setup cost and has been there since delivery
+    ordering landed. Recorded in `race_through()`'s docstring; no fast path,
+    because a barrier-keyed one would fix nothing.
+
+  Two silent breaks, both in README's migration log: `find_first()` stops
+  overriding `unordered()` for an order-sensitive op upstream, and a chain
+  callable may run for more than one element. `.sequential()` restores both.
+  Also deleted a `terminal-sinks` scenario asserting an unordered parallel
+  `find_first()` "behaves as `find_any()`", which had contradicted
+  `stream-find-first` and the shipped code since
+  `order-stateful-ops-under-racing`.
 
 - **`mark-to-map-order-blind`** (2026-08-31) — closes the last of the seven
   questions the **Open questions needing a session** section was opened to
