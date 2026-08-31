@@ -109,6 +109,94 @@ class Stream(Generic[T]):
         self._consumed: bool = False
         self._executor: Executor = SEQUENTIAL
 
+    # --- Python's data model ------------------------------------------------
+    #
+    # Which protocols a Stream satisfies is decided almost entirely by being
+    # async-first: every terminal here is a coroutine, and most of Python's
+    # data model demands a value synchronously. What is implemented below is
+    # the part that does not - the async iteration hook, the two lifecycle
+    # protocols, and one operator. __len__, __iter__, __contains__,
+    # __getitem__, __reversed__ and __eq__ are deliberately absent; see the
+    # python-data-model capability, which records that as a decision.
+    #
+    # __getitem__ is the one that could have worked - s[10:20] is lazy and
+    # returns a Stream - and is excluded on a mechanical hazard rather than on
+    # taste: Python synthesizes an iterator from __getitem__ when __iter__ is
+    # absent, so defining it would make `for x in stream` appear to work,
+    # calling stream[0], receiving a Stream, and looping forever. Anyone adding
+    # it must add __iter__ raising in the same change, never after.
+
+    def __aiter__(self) -> AsyncGenerator[T, None]:
+        """`async for element in stream`, equivalent to iterating iterator().
+
+        Delegates rather than reimplements, so the stream-iterator capability
+        governs it whole: composition without pulling, the caller driving, the
+        non-destructive composition that leaves this instance usable, and the
+        declaration that arrival order is observable - so an ordered racing
+        stream yields in encounter order here exactly as it does there."""
+        return self.iterator()
+
+    def __enter__(self) -> Stream[T]:
+        """`with stream as s:`, so the AutoClose equivalent needs no wrapper.
+
+        Java's BaseStream extends AutoCloseable and its streams sit in
+        try-with-resources directly; ours has needed contextlib.closing(),
+        which is a wrapper standing in for two methods. closing() still works
+        and is still what CLAUDE.md's older examples use."""
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        """Closes, and suppresses nothing - returning None lets an exception
+        from the body propagate. Every stream-close-handling rule applies
+        unchanged, because this calls close() rather than restating it."""
+        self.close()
+
+    def __repr__(self) -> str:
+        """Type, queued chain and execution mode, pulling nothing.
+
+        The source is deliberately absent: it is an AsyncGenerator whose own
+        repr says nothing a reader wants and can be arbitrarily noisy. Must not
+        raise in any state - a debugger or an exception formatter may render a
+        stream that has been extended or consumed."""
+        mode = "parallel" if self._executor.is_parallel else "sequential"
+        return f"<{type(self).__name__} [{', '.join(map(repr, self._chain))}] {mode}>"
+
+    def __bool__(self) -> bool:
+        """Raises. There is no correct synchronous answer.
+
+        Whether a stream is empty can only be found by consuming it, and
+        consumption is asynchronous - so without this, object.__bool__ applies
+        and every Stream is truthy, an empty one included. `if stream:` then
+        answers a question the caller plainly meant to ask, and answers it
+        wrong, silently, every time.
+
+        This is the one place the library refuses something Python allows on
+        every other object. A loud refusal beats a silent wrong answer, and the
+        message has to name the async alternative or the caller is no better
+        off than the wrong True left them."""
+        raise TypeError(
+            "a Stream has no truth value: whether it is empty can only be "
+            "answered by consuming it, which is asynchronous. Await "
+            "count(), any_match(...) or find_any() instead."
+        )
+
+    def __add__(self, other: Any) -> Stream[Any]:
+        """`a + b` is Stream.concat(a, b).
+
+        The one member of this group with no Java counterpart, and a deliberate
+        expansion rather than a parity fix. concat() stays the contract: this
+        delegates and adds nothing, so everything the stream-concat capability
+        decides - elements and their order, laziness, close handlers, execution
+        mode, ordering, concrete type, and the invalidation of both operands -
+        is decided there and not here.
+
+        A non-Stream operand gets NotImplemented rather than being coerced, so
+        Python raises its own TypeError and `a + [1, 2]` never quietly becomes
+        a concatenation."""
+        if not isinstance(other, Stream):
+            return NotImplemented
+        return Stream.concat(self, other)
+
     def _check_not_consumed(self) -> None:
         if self._consumed:
             raise IllegalStateException("this stream has already been extended into a new instance")

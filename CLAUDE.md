@@ -153,9 +153,17 @@ rather than something to await. Passing anything else raises
 
 ### AutoClose
 
-`on_close()`/`close()` on `Stream` implement Java's AutoClose equivalent, meant to be paired with `contextlib.closing()`. Close handlers are plain no-arg callables, not stream-aware — useful when subclassing `Stream` to wrap an I/O-like resource.
+`on_close()`/`close()` on `Stream` implement Java's AutoClose equivalent. `Stream` is itself a context manager, so `with stream as s:` is the idiom; `contextlib.closing()` still works and is what older examples use. Close handlers are plain no-arg callables, not stream-aware — useful when subclassing `Stream` to wrap an I/O-like resource.
 
 Two guarantees that subclass relies on, both from `_derive()` copying the next stage rather than constructing it. A subclass's `__init__` runs **once per pipeline**, at the caller's own construction, not once per stage — so a resource acquired there is acquired once, and every stage shares it by identity, which is what makes the already-shared `_close_handlers` list coherent: registered once, released once by a single `close()`. And a subclass may define **any** `__init__` signature; nothing requires it to accept `(source, close_handlers)`, so `DsnStream(dsn)` acquiring a connection and calling `super().__init__(conn.rows())` is a supported shape. Both were false before `derive-without-reinit`, which is what made this use case close to unwritable.
+
+### Python's data model
+
+`Stream` satisfies the Python protocols whose Java counterparts it already claims — `__aiter__` for `BaseStream.iterator()`, `__enter__`/`__exit__` for `AutoCloseable`, `__repr__` for `toString()` — plus `__add__` as sugar over `Stream.concat`, the one member with no Java counterpart and a deliberate expansion of the 1:1 surface rather than a parity fix.
+
+Being async-first decides the rest: `__len__`, `__iter__`, `__contains__`, `__getitem__`, `__reversed__` and `__eq__` demand a value synchronously and every terminal here is a coroutine, so they are refused rather than implemented. `__bool__` is the exception that proves it — it **raises**, because `object.__bool__` otherwise makes every stream truthy including an empty one, so `if stream:` answers wrong silently. `__getitem__` carries a trap worth remembering: Python synthesizes an iterator from it when `__iter__` is absent, so adding slice support would make `for x in stream` loop forever over `stream[0]`, `stream[1]`, …; anyone adding it must add `__iter__` raising in the same change. See the `python-data-model` spec, which records the refusals as decisions.
+
+An op renders its own name for `__repr__` (`Op.__repr__` in `sink.py`, derived from the class name: `_FlatMapOp` -> `flat_map`), so `Stream.__repr__` only formats a list.
 
 ## Feature-parity tracking
 

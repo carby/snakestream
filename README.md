@@ -57,7 +57,8 @@ Once we reach some sort of feature parity with Java 8 then maybe we move on to i
 - Create a stream from a List, Generator, AsyncGenerator, Itertor, AsyncIterator or just an object
 - Process your stream with both synchronous or asynchronous functions.
 - Switch between parallel and sequential mode ([not true CPU parallelism yet](#about-parallel))
-- [Autoclose](#auto-close) streams with `contextlib`
+- [Autoclose](#auto-close) streams with `with` or `contextlib`
+- [Pythonic protocols](#pythons-data-model) on top of the Java surface: `async for`, `with`, `a + b`
 - Generate indefinite streams [simpler than in Java](#the-generate-function)
 
 ### About `.parallel()`
@@ -76,6 +77,13 @@ Contextlib already supports something that is very similar to the AutoClose from
 from contextlib import closing
 
 with closing(Stream.of([1, 2, 3, 4, 1, 2, 3, 4])) as stream:
+    it = await stream.map(lambda x: int_2_letter[x]).distinct().collect(to_list())
+```
+
+A `Stream` is itself a context manager, so `closing()` is optional — `with` on the stream directly does the same thing:
+
+```python
+with Stream.of([1, 2, 3, 4, 1, 2, 3, 4]) as stream:
     it = await stream.map(lambda x: int_2_letter[x]).distinct().collect(to_list())
 ```
 
@@ -98,6 +106,26 @@ with closing(DsnStream("db://x")) as stream:
 ### The generate() function
 
 In snakestream this has been omitted since python has generators and those can be sent in as a source with `Stream.of()`
+
+## Python's data model
+
+The parity tables below are total over Java 8's surface, and Python's dunder methods are not Java methods — so they live here rather than becoming rows nobody wrote.
+
+Three of these are parity rather than expansion: Java's stream satisfies its own language's iteration, resource and `toString` protocols, and these are Python's equivalents.
+
+| | Protocol | Notes |
+| ---- | ------------------------- | ---- |
+| x | `__aiter__` | `async for element in stream`, exactly equivalent to iterating `stream.iterator()` — same laziness, same encounter-order guarantee, same `IllegalStateException` on an extended reference. |
+| x | `__enter__` / `__exit__` | `with stream as s:` calls `close()` on exit and suppresses nothing. Java's `BaseStream` extends `AutoCloseable`; this is the same thing without the `contextlib.closing()` wrapper. |
+| x | `__repr__` | `<Stream [map, filter] parallel>` — type, queued chain and mode. Pulls nothing and never raises, whatever state the stream is in. The source is deliberately not shown. |
+| x | `__add__` | `a + b` is `Stream.concat(a, b)` and nothing more, so everything concat decides — mode, ordering, handlers, operand invalidation — is decided there. **The one addition with no Java counterpart.** A non-`Stream` operand raises `TypeError` rather than being coerced. |
+| x | `__bool__` | **Raises `TypeError`.** Whether a stream is empty can only be answered by consuming it, and consumption is async, so there is no correct synchronous answer — and without this, `object.__bool__` makes every stream truthy, an empty one included. Await `count()`, `any_match(...)` or `find_any()` instead. |
+|   | ~~`__len__`~~ | Refused. Needs a value synchronously; `count()` is a coroutine. |
+|   | ~~`__iter__`~~ | Refused. Synchronous iteration cannot drive an async pipeline; use `async for`. |
+|   | ~~`__contains__`~~ | Refused. `await stream.any_match(lambda x: x == target)` is the async form. |
+|   | ~~`__getitem__`~~ | Refused, and the one that could have worked — `s[10:20]` is lazy. Python synthesizes an iterator from `__getitem__` when `__iter__` is absent, so defining it would make `for x in stream` call `stream[0]`, get a `Stream` back, and loop forever. `.skip(10).limit(10)` is what Java offers and is clearer. |
+|   | ~~`__reversed__`~~ | Refused. A stream has no length and is single-pass. |
+|   | ~~`__eq__`~~ | Refused; identity comparison stands. Comparing contents would mean consuming both. |
 
 ## API
 
@@ -236,6 +264,7 @@ decision rather than an independent judgement.
 
 ## Migration
 These are a list of the known breaking changes. Until release 1.0.0 focus will be on implementing features and changing things that does not align with how streams work in java.
+- **0.3.5 -> next:** `bool(stream)` and every implicit truth test — `if stream:`, `not stream` — now raise `TypeError`. `Stream` previously defined no `__bool__`, so `object.__bool__` applied and **every** stream was truthy, an empty one included: `if stream:` answered a question the caller plainly meant to ask, answered it wrong, and said nothing. There is no correct synchronous answer to give instead, because whether a stream is empty can only be found by consuming it and consumption is asynchronous, so the refusal is the fix. **This break is loud** — a call site relying on the old always-`True` raises at the point of the mistake, and the message names the alternatives: `await stream.count()`, `await stream.any_match(...)`, `await stream.find_any()`. This is the only operation the library refuses that Python permits on other objects. Added alongside it, none of them breaking: `async for element in stream` (equivalent to iterating `stream.iterator()`), `with stream as s:` (equivalent to `contextlib.closing()`, which still works), `repr(stream)`, and `a + b` as sugar for `Stream.concat(a, b)`. See `openspec/changes/implement-python-data-model`.
 - **0.3.5 -> next:** A `Stream` subclass's `__init__` now runs **once per pipeline** instead of once per stage, and its attributes are shared across every stage by identity. Intermediate operations and mode switches derive the next stage by shallow-copying the receiver rather than calling `type(self)(source, close_handlers)`, which used to re-enter the constructor: `MyStream(src).map(f).filter(g).parallel().sorted()` ran it **five times**, and a resource acquired there was acquired five times while `close()` released the last. **This break is silent** and affects subclasses only — nothing raises, and code that counted acquisitions, or relied on each stage holding its own copy of a subclass attribute, now gets a different answer. It is in the safe direction: one resource per pipeline is what the documented use case always meant, and it is what makes the already-shared close-handler list coherent — registered once, released once. Two things become possible in exchange. A subclass may now define **any** `__init__` signature; nothing requires it to accept `(source, close_handlers)`, so `DsnStream(dsn)` acquiring a connection and calling `super().__init__(conn.rows())` works where it previously raised `TypeError` on the first intermediate operation — the shape README's own subclassing section describes. And a subclass's `__copy__`, previously inert, now governs derivation; `Stream` itself defines none, so the default shallow copy applies unless a subclass overrides it. See `openspec/changes/derive-without-reinit`.
 - **0.3.5 -> next:** `Stream.concat(a, b)` now **consumes both operands**, carries the execution mode of either, and is unordered if either is. Java's one sentence is the contract — the result "is ordered if both of the input streams are ordered, and parallel if either of the input streams is parallel" — and the concatenation previously honoured neither half: it returned a stream that was always sequential and always ordered, so `Stream.concat(a.parallel(), b.parallel()).is_parallel()` was `False`, and an `unordered()` declared on an operand was silently revoked past the concat, costing a caller the reorder barrier they had explicitly opted out of. Those two are **silent** widenings in the safe direction; operations queued onto the concatenation now race where Java would race them, and the mode stays overridable by a later `sequential()`/`parallel()`. The invalidation **breaks loudly**, with `IllegalStateException`: `c = Stream.concat(a, b)` followed by any operation on `a` or `b` now raises. It replaces a wrong answer rather than a lenient one — an operand and the concatenation draw on one source, so draining the operand afterwards returned its elements and left the concatenation yielding only the rest, with no exception anywhere (`[1, 2, 3]`, then `[4, 5]`). Java raises here too; `AbstractPipeline` marks the operands of `concat` linked. A caller who wants an operand's elements twice must build a second stream over the source. What the concatenation yields, when it pulls, and which close handlers it carries are all unchanged. See `openspec/changes/concat-carries-characteristics`.
 - **0.3.5 -> next:** `counting()`, `summing_int()`/`summing_long()` and `summarizing_int()`/`summarizing_long()` now declare `Characteristics.UNORDERED`, so on an ordered `parallel()` pipeline they skip the delivery barrier they previously took. **Nothing observable changes**: each returns a value that is identical under either delivery order — a count, an exact integer sum, or a `SummaryStatistics` whose every field is order-invariant over `int` inputs — which is why the mark is truthful. What changes is cost, and the reason it was worth making is that the barrier is not free on the work racing exists for: measured at 1.12-1.27x on IO whose latencies are skewed, where the uniform-latency benchmark that first deferred this had shown nothing at all. A caller wanting encounter-order delivery into these collectors for some other reason has `.sequential()`. The `summing_double()`/`averaging_*()`/`summarizing_double()` family is deliberately excluded and stays on the barrier. See `openspec/changes/mark-order-blind-collectors`.

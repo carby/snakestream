@@ -8,6 +8,8 @@ intermediate operation on top of them."""
 
 from __future__ import annotations
 
+import re
+
 from abc import ABC, abstractmethod
 from enum import Enum, auto
 from dataclasses import dataclass
@@ -105,6 +107,16 @@ class Op(ABC):
 
     def make_shared_state(self) -> Any:
         return None
+
+    def __repr__(self) -> str:
+        """The operation's name as a caller wrote it: `_FlatMapOp` -> flat_map.
+
+        Derived from the class name rather than declared per op, so an op added
+        later renders without anyone having to remember to name it. It lives
+        here because it is a property of an Op; Stream.__repr__ knows only how
+        to format a list of them."""
+        name = type(self).__name__.removeprefix("_").removesuffix("Op")
+        return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
 
 
 def is_ordered(chain: list[Op], upto: int | None = None, initial: bool = True) -> bool:
