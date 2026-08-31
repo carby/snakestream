@@ -40,17 +40,74 @@ async def test_a_user_subclass_survives_a_mode_switch() -> None:
     class MyStream(Stream):
         def __init__(self, source, close_handlers=None) -> None:
             super().__init__(source, close_handlers)
-            self.resource = "db-handle"
+            self.resource = object()
 
     # when
-    par = MyStream([1, 2, 3]).parallel()
+    original = MyStream([1, 2, 3])
+    acquired = original.resource
+    par = original.parallel()
     seq = par.sequential()
 
     # then: mode switches used to be the only ops in the library that dropped
     # subclass identity, because they constructed a fixed class
     assert isinstance(par, MyStream)
     assert isinstance(seq, MyStream)
-    assert seq.resource == "db-handle"
+    # and the resource is the *same object*, not merely an equal one. This
+    # assertion used to read `seq.resource == "db-handle"` against a string
+    # literal, which pinned that the attribute survived rather than that it was
+    # the one the constructor assigned - so it passed while every derivation
+    # re-entered __init__ and built a new one.
+    assert seq.resource is acquired
+
+
+@pytest.mark.asyncio
+async def test_a_subclass_constructor_runs_once_per_pipeline() -> None:
+    # given a subclass that counts its own construction
+    runs = []
+
+    class CountingStream(Stream):
+        def __init__(self, source, close_handlers=None) -> None:
+            super().__init__(source, close_handlers)
+            runs.append(1)
+
+    # when a pipeline is built out of it
+    CountingStream([1, 2, 3]).map(lambda x: x).filter(lambda x: True).parallel().sorted()
+
+    # then the constructor ran once, at the caller's `CountingStream(...)`, and
+    # not once per stage. Before derive-without-reinit this reported five: one
+    # explicit, plus one for each of the four derivations, because _derive()
+    # built the next stage with type(self)(source, close_handlers).
+    assert len(runs) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_resource_acquired_in_the_constructor_is_acquired_once() -> None:
+    # given the shape that actually leaks: a subclass releasing its resource in
+    # an overridden close() rather than through on_close(). The on_close()
+    # shape does not leak, because _close_handlers is shared by reference and
+    # every stage's handler lands in the same list - the shared list masks it.
+    opened, closed = [], []
+
+    class ConnStream(Stream):
+        def __init__(self, source, close_handlers=None) -> None:
+            super().__init__(source, close_handlers)
+            self.conn = object()
+            opened.append(self.conn)
+
+        def close(self) -> None:
+            super().close()
+            closed.append(self.conn)
+
+    # when
+    s = ConnStream([1, 2, 3]).map(lambda x: x).filter(lambda x: True)
+    s.close()
+
+    # then one resource was acquired and that one was released. Before the
+    # change this was three opened and one closed, leaving two orphans that
+    # nothing could reach.
+    assert len(opened) == 1
+    assert len(closed) == 1
+    assert closed[0] is opened[0]
 
 
 # --- a mode switch carries the chain, it does not compose it ---------------
@@ -305,3 +362,87 @@ async def test_sync_and_scalar_sources_race_identically(make_source) -> None:
     # then: same multiset; racing makes no promise about order
     assert len(racing) == len(sequential)
     assert all(element in sequential for element in racing)
+
+
+# --- a subclass may define any constructor signature -----------------------
+#
+# Derivation copies rather than constructs, so nothing forces a subclass to
+# accept the base class's (source, close_handlers) parameters. That freedom is
+# the point of the change as much as the resource churn is: it is what makes
+# the resource-wrapping subclass CLAUDE.md documents actually writable.
+
+
+@pytest.mark.asyncio
+async def test_a_subclass_taking_one_unrelated_argument_can_be_extended() -> None:
+    # given the natural way to write the documented use case, which used to
+    # raise TypeError on its first intermediate op
+    class DsnStream(Stream):
+        def __init__(self, dsn) -> None:
+            self.dsn = dsn
+            super().__init__([1, 2, 3])
+
+    # when
+    s = DsnStream("db://x").map(lambda x: x * 2).parallel()
+
+    # then
+    assert isinstance(s, DsnStream)
+    assert s.dsn == "db://x"
+    assert await s.collect(to_list()) == [2, 4, 6]
+
+
+@pytest.mark.asyncio
+async def test_a_subclass_taking_no_arguments_at_all_can_be_extended() -> None:
+    class NullaryStream(Stream):
+        def __init__(self) -> None:
+            super().__init__([1, 2, 3])
+
+    s = NullaryStream().filter(lambda x: x > 1).sequential()
+    assert isinstance(s, NullaryStream)
+    assert await s.collect(to_list()) == [2, 3]
+
+
+@pytest.mark.asyncio
+async def test_subclass_state_is_shared_across_a_pipelines_stages() -> None:
+    # given a subclass holding mutable state
+    class StatefulStream(Stream):
+        def __init__(self, source, close_handlers=None) -> None:
+            super().__init__(source, close_handlers)
+            self.seen = []
+
+    original = StatefulStream([1, 2, 3])
+    derived = original.map(lambda x: x)
+
+    # when the derived stage mutates it
+    derived.seen.append("touched")
+
+    # then the original sees it: one resource per pipeline, not one per stage.
+    # This is the reading that makes the already-shared _close_handlers list
+    # coherent - registered once, released once by a single close().
+    assert original.seen == ["touched"]
+    assert derived.seen is original.seen
+
+
+def test_stream_defines_no_copy_hook() -> None:
+    # the default shallow copy is correct here, every attribute a Stream holds
+    # being one a derived stage should share. Defining __copy__ would mean
+    # hand-maintaining that list and would put the wrong class in a subclass
+    # author's way.
+    assert "__copy__" not in vars(Stream)
+
+
+@pytest.mark.asyncio
+async def test_a_subclasss_copy_hook_governs_derivation() -> None:
+    # the consequence of the above, stated rather than left to be discovered:
+    # a __copy__ a subclass defines for unrelated reasons now runs on every op
+    copies = []
+
+    class HookedStream(Stream):
+        def __copy__(self):
+            copies.append(1)
+            clone = Stream.__new__(HookedStream)
+            clone.__dict__.update(self.__dict__)
+            return clone
+
+    s = HookedStream([1, 2, 3]).map(lambda x: x)
+    assert copies == [1]
+    assert isinstance(s, HookedStream)
