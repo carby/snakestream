@@ -26,13 +26,46 @@ value rather than a class hierarchy, `summing_int`/`summing_long` sharing a body
 
 ### Queued changes
 
-**The five Java 8 parity gaps below**, put here by
-`enumerate-java-8-parity-gaps` (2026-08-31). Of the seven
-questions in **Now**, six are resolved (1 through 6) and one is open — item 7.
-**Item 5 is the one that filled this queue**; **item 6 was the one-line fix**
-and was deleted on 2026-08-31; **item 7 is the only actual defect** left in
-the list and wants a session. The two items in **Next** are both
-unblocked as of `order-racing-delivery`.
+**All seven questions in Now are now resolved.** Items 1-5 landed as changes,
+item 6 was deleted on 2026-08-31, and **item 7 got its session on 2026-08-31**
+and came out as three queued changes rather than one. The two items in **Next**
+are both unblocked as of `order-racing-delivery`.
+
+**Three changes from question 7's session (2026-08-31), in landing order.**
+They must land in this order; each dependency is one line of the next one's
+behaviour:
+
+1. **`derive-without-reinit`** — question 7 as filed. `_derive()` derives via
+   `copy.copy` instead of `type(self)(...)`, so a subclass constructor runs once
+   per pipeline rather than once per stage, and a subclass may define any
+   `__init__` signature. **BREAKING for subclasses only.**
+2. **`concat-carries-characteristics`** — found in the same session and wrong
+   today with **zero subclasses in play**, which is why it is its own change.
+   `Stream.concat(a, b)` returns a base `Stream` with an empty chain and the
+   default executor, so it drops both characteristics Java's one documented
+   sentence requires it to carry — *"ordered if both of the input streams are
+   ordered, and parallel if either of the input streams is parallel"*. Measured:
+   `concat(a.parallel(), b.parallel()).is_parallel()` is `False`, and
+   `concat(a.unordered(), b.unordered())` is ordered. It also **does not consume
+   its operands**, so draining one afterwards silently shortens the
+   concatenation's output — `[1,2,3]` then `[4,5]`, no exception, where Java
+   raises. **BREAKING**, and the silent wrong answer is the reason.
+3. **`implement-python-data-model`** — `Stream` implements *no* dunder methods
+   at all. Adds `__aiter__`, `__enter__`/`__exit__` and `__repr__` as **parity**
+   (Java's stream satisfies its own language's iteration, resource and
+   `toString` protocols; ours satisfies none of Python's), `__add__` as a
+   **deliberate expansion** argued as an exception to the 1:1-surface principle,
+   and `__bool__` **raising** to close a silently wrong default —
+   `bool(Stream.empty())` is `True` today, so `if stream:` answers wrong every
+   time. `__getitem__` is excluded on a mechanical finding worth not
+   rediscovering: Python synthesizes iteration from it when `__iter__` is
+   absent, so `s[10:20]` would make `for x in stream` loop forever over an
+   infinite sequence of `Stream`s. Must land after (2), since `__add__`
+   delegates to `concat()`. `async with` was split off and parked in **Later**.
+
+**The five Java 8 parity gaps below** remain queued, put here by
+`enumerate-java-8-parity-gaps` (2026-08-31). **Item 5 is the one that filled
+this queue.**
 
 **The five real gaps.** Filed as five and not one batched entry: they share a
 shape only at the surface (see the change's design.md, decision 6), and
@@ -71,13 +104,13 @@ whoever picks them up should make the batching call themselves.
 
 ### Open questions needing a session
 
-Nothing here is queued; item 5's queue is the five parity gaps above, not the
-item itself. Items 1-6 are things the roadmap, the README or a just-landed
+Nothing here is queued; item 5's queue is the five parity gaps above and item
+7's is the three changes above it, not the items themselves. Items 1-6 are things the roadmap, the README or a just-landed
 change has been implying without ever stating, found while fleshing out
 **Next** on 2026-08-27, ordered by how ready they are. **Item 7 is the
 exception and the only actual defect in the list** — appended rather than
 sorted in, so the numbering above stays stable. The readiness ordering is now
-stale throughout, six of the seven being resolved, and is left as it is for
+stale throughout, all seven now being resolved, and is left as it is for
 that same reason: the numbers are referenced from archived proposals.
 
 **1. `Comparator.thenComparing()` — resolved, landed as `add-comparator-chaining`
@@ -199,32 +232,46 @@ place. Fixed by deletion, no change proposal: two lines, no spec text touched,
 41/41 specs still validating.
 
 **7. A subclass's `__init__` re-runs on every derivation — a real defect, found
-2026-08-27.** `_derive()` builds the next stage with
-`type(self)(self._source, self._close_handlers)`, which re-enters the user's
-constructor. Measured: a three-op pipeline plus one mode switch runs it **five
-times**. CLAUDE.md documents subclassing `Stream` to wrap an I/O-like resource
-and pairs it with `on_close()`/`contextlib.closing()`; such a subclass acquires
-its resource in `__init__`, so `MyStream(src).map(f).filter(g)` acquires three
-and keeps one, with `close()` releasing only the last. The two orphans are
-never closed.
+2026-08-27, explored 2026-08-31 and now queued as three changes.** `_derive()`
+built the next stage with `type(self)(self._source, self._close_handlers)`,
+re-entering the user's constructor. Measured: a three-op pipeline plus one mode
+switch runs it **five times**, and the final stage's attribute is not the object
+the first constructor assigned.
 
-`tests/test_execution_model.py`'s `test_a_user_subclass_survives_a_mode_switch`
-does not catch it: it asserts `seq.resource == "db-handle"` on a string
-literal, so it pins that the attribute *survives*, not that it is the *same
-object*. Changing that one assertion to `is` would turn the test into a
-reproduction.
+**The exploration found the item's leak claim to be conditional, and found two
+larger problems it had not named.** The claim was that
+`MyStream(src).map(f).filter(g)` acquires three resources, keeps one, and never
+closes the other two. With `on_close()` registered inside `__init__` — the idiom
+CLAUDE.md actually documents — nothing leaks: `_close_handlers` is passed by
+reference, so all five handlers land in the same list and one `close()` fires
+all five. The shared list accidentally masks it. The leak is real for the other
+natural shape, a subclass overriding `close()` (measured: 3 opened, 1 closed, 2
+orphans). Either way **the churn is the defect regardless of the leak** — a
+four-stage pipeline opens five connections and uses one, and perfect cleanup of
+four resources that should never have existed is still wrong.
 
-**Why it is a question and not a queued change:** the fix is a behavioural
-change needing its own scenarios, and the mechanism is a real choice. Deriving
-via `copy.copy(self)` (or `cls.__new__` plus a `__dict__` copy) never re-enters
-`__init__`, which both fixes this and *narrows* the subclass contract to
-nothing — but it makes the resource shared across all stages of a pipeline
-rather than per-stage, which is the semantics the feature wants and is still
-observably different from today. It also interacts with `stream-close-handling`:
-if every stage shares one resource, the shared `_close_handlers` list already
-means one `close()` releases it once, which is the coherent reading. Wants a
-session, not a drive-by. Noted as out of scope in `unify-derive-signature`'s
-proposal, which is where it was found; nothing else tracks it.
+The problem the item never named is **the signature contract**. Passing
+`(source, close_handlers)` positionally requires every subclass to accept
+exactly that shape, with an already-normalized `AsyncGenerator` first. The
+natural way to write the documented use case — `DsnStream(dsn)` acquiring a
+connection and calling `super().__init__(conn.rows())` — raises `TypeError` on
+its first intermediate operation. The documented feature is close to unwritable.
+
+The mechanism question the item posed resolved as it predicted, on a reason it
+did not give. Java never had this bug because its derived stages are an
+*internal* type (`ReferencePipeline.StatelessOp`) holding no resource, and
+`Stream` is an interface nobody subclasses. snakestream deliberately went the
+other way: `type(self)` exists to preserve subclass identity across derivation,
+and `test_a_user_subclass_survives_a_mode_switch` pins it. **Having committed to
+identity preservation, shallow-copying is the only way to have identity without
+construction** — that, and not the leak, is the argument. `copy.copy` was
+verified not to re-enter `__init__` and to share `_source`, `_chain`,
+`_close_handlers` and subclass attributes by reference with `_consumed` copied
+as `False`: exactly the four assignments `_derive()` already makes.
+
+Queued as **`derive-without-reinit`**. The same session found two further
+things and queued them as their own changes — see **Queued changes** above for
+all three and their sequencing.
 
 ## Next
 
@@ -364,6 +411,18 @@ alluded to.
 
 
 ## Later
+
+**Parked 2026-08-31, from the `implement-python-data-model` exploration:
+`async with` on `Stream`.** That change implements the *synchronous* context
+manager (`__enter__`/`__exit__`) and deliberately stops there. `CloseHandler`
+is a plain no-arg sync callable and `close()` invokes handlers without awaiting,
+so `with` is the honest protocol for the close-handler contract as it stands.
+Adding `__aenter__`/`__aexit__` would be a claim that a handler may be
+awaitable — a change to the `stream-close-handling` capability, not to the two
+methods. It belongs here rather than in **Now** because it needs the same kind
+of buy-in the rest of this section does: `close()` becoming awaitable, or
+growing an async twin, changes a contract every subclassed resource wrapper
+depends on. Nothing blocks it; nothing yet demands it either.
 
 Bigger, structural — needs explicit buy-in before starting since it changes a
 core semantic.
