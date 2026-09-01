@@ -15,10 +15,15 @@ one-extraction-per-element property that key-based ordering exists for.
 The value `comparing()` returns SHALL expose a `then_comparing(other)` operation
 that produces a comparator ordering by the original ordering first and by
 `other` only where the original treats two elements as equivalent. `other` MAY
-be a key extractor, in which case it contributes one ascending ordering, or
-another key-based comparator, in which case its whole ordering — every component
-and every direction — is appended. Composition SHALL be repeatable to any depth,
-and the resulting comparator SHALL itself be accepted anywhere a `Comparator` is
+be a key extractor, in which case it contributes one ascending ordering; another
+key-based comparator, in which case its whole ordering — every component and
+every direction — is appended; or a `Comparator`, in which case it contributes
+that ordering directly. `then_comparing()` SHALL additionally accept an optional
+second positional argument, a `key_comparator`, ordering the keys the first
+argument extracts. The requirements for a supplied `Comparator` in either
+position, and for telling one from a key extractor, are stated in
+`comparator-key-comparator`. Composition SHALL be repeatable to any depth, and
+the resulting comparator SHALL itself be accepted anywhere a `Comparator` is
 accepted.
 
 #### Scenario: the second ordering breaks ties in the first
@@ -40,6 +45,10 @@ accepted.
 #### Scenario: a chained comparator is usable by every comparator-consuming operation
 - **WHEN** a chained comparator is passed to `sorted()`, `min()`, `max()`, `min_by()` or `max_by()`
 - **THEN** each operates on the chained ordering with no signature change
+
+#### Scenario: a one-argument call keeps its existing meaning
+- **WHEN** `then_comparing()` is called with a single key extractor
+- **THEN** it contributes one ascending key-based ordering, exactly as before a `Comparator` was accepted
 
 ### Requirement: A key-based comparator can be reversed
 The value `comparing()` returns SHALL expose a `reversed()` operation producing
@@ -87,7 +96,10 @@ ordering it had.
 Each key extractor in a chained comparator SHALL be independently either sync or
 async, and a chain SHALL support any mixture of the two. An async extractor's
 key SHALL be awaited and its awaited value used. The resulting order SHALL be
-identical to the order produced by equivalent sync extractors.
+identical to the order produced by equivalent sync extractors. A `Comparator`
+supplied as an ordering is the one exception and MUST be sync, per
+`comparator-key-comparator`; this constrains the comparator only, never an
+extractor accompanying it.
 
 #### Scenario: a chain of async extractors orders correctly
 - **WHEN** a chain whose extractors are all `async def` is used to sort
@@ -100,6 +112,10 @@ identical to the order produced by equivalent sync extractors.
 #### Scenario: an async chain works with min() and max()
 - **WHEN** a chained comparator with async extractors is passed to `min()` or `max()`
 - **THEN** the extractors are awaited and the correct extreme element is returned
+
+#### Scenario: an async extractor may accompany a sync supplied comparator
+- **WHEN** a chain contains a segment built from an `async def` extractor and a sync key comparator
+- **THEN** the extractor is awaited and the keys are ordered by the supplied comparator
 
 ### Requirement: Sorting extracts each segment's key once per element
 When a chained comparator is used to sort, each segment's key extractor SHALL be
