@@ -18,6 +18,11 @@ value rather than a class hierarchy, `summing_int`/`summing_long` sharing a body
 
 ## Now
 
+**Entry criterion: scoped, unblocked, and available to start.** Nothing here is
+claimed — the bucket is a pool, not a commitment. What decides an item's bucket
+is what stands between it and someone starting: nothing (**Now**), a person
+(**Next**), or a decision nobody has made yet (**Later**).
+
 ### Queued changes
 
 **Five Java 8 parity gaps**, queued by `enumerate-java-8-parity-gaps`
@@ -65,75 +70,29 @@ whoever picks them up should make the batching call themselves.
 
 ## Next
 
-**One item left of the four, all fallout from
-`order-stateful-ops-under-racing`** (see **Done**), added 2026-08-26 and
-fleshed out 2026-08-27. None was a defect; each was a decision that change
-deliberately declined to take while it was fixing a wrong answer.
+**Entry criterion: claimed.** Someone has committed to doing it next. That is
+the only thing that moves an item here from **Now**.
 
-**Items 1, 2 and 4 are gone** — landed as `order-racing-delivery` (2026-08-28),
-`collapse-find-first-onto-barrier` plus
-`collapse-for-each-ordered-onto-barrier` (2026-08-31), and
-`add-collector-characteristics` (2026-08-27), all in **Done**. **The numbering
-is deliberately not compacted**: archived proposals cite "the roadmap's
-**Next** item 2" and "item 3", and renumbering would silently break those
-references. Item 3 keeps its number for as long as anything points at it.
+**Empty, deliberately.** Item 3, the last of the four, closed on 2026-09-01 as
+`bound-in-flight-work-per-worker` (see **Done**); items 1, 2 and 4 closed
+earlier. **The numbering stays retired rather than reused**: archived proposals
+cite "the roadmap's **Next** item 2" and "item 3" by number, and reusing 1-4 for
+different work would silently redirect those references.
 
-**The seam that connected all four is closed.** `_split_point()` used to
-inspect only *ops*, so a terminal had no way to declare that it needed
-encounter order, and the two that need it opted out of racing altogether by
-naming `SEQUENTIAL` at their own call site. `order-racing-delivery` added the
-missing concept — an ordering demand originating at the terminal — and item 2
-finished it by widening that demand to the three values it needed, so that the
-two sides of `_split_point()` now say the same thing in the same shape:
-
-| | where the ordering demand comes from | how it is handled |
-|---|---|---|
-| an op in the chain, unconditionally | `sorted` (`Ordering.SET`) | `_split_point()` clause 1, a split at the op's index |
-| an op in the chain, where ordered | `limit`, `skip`, `distinct` (`order_sensitive`) | `_split_point()` clause 2 |
-| the terminal, where ordered | `collect(to_list)`, `reduce`, `to_array`, `iterator()`, `for_each_ordered` (`OrderDemand.IF_ORDERED`) | `_split_point()` clause 3, a split at `len(chain)` |
-| the terminal, unconditionally | `find_first` (`OrderDemand.ALWAYS`) | clause 3, and not released by `unordered()` |
-
-**No terminal names an executor any more**, which is what item 2 was for. Item
-3 is what remains, and its answer flipped to "export it".
-
----
-
-**3. Export `_READ_AHEAD`, and rename it.** Previously "revisit only on a
-concrete report", which was right while the constant bound only the narrow set
-of pipelines that happen to contain a barrier. It now bounds three things, and
-the report arrives by construction rather than by someone hitting the trade-off
-in anger:
-
-| what it bounds | since | visible to a caller? |
-|---|---|---|
-| memory held by the reorder buffer | `order-stateful-ops-under-racing` | no |
-| latency behind a straggler, for *every* ordered racing pipeline delivering to an order-observing terminal | `order-racing-delivery` (2026-08-28) | as wall clock |
-| **speculative work in a short-circuiting terminal** — a parallel `find_first()` may invoke a chain callable for up to this many elements where a sequential one invokes it once | `collapse-find-first-onto-barrier` (2026-08-31) | **yes, directly** — how many times a mapper runs |
-
-The third is the one that changes the case. Memory and latency are not visible
-from user code; invocation count is, so the knob now has an observable effect a
-spec has to state. It also complicates the rename this item exists for: the
-constant is no longer read-ahead and is not merely a delivery buffer either, so
-a new name has to cover all three, and "the window" may be as close as it gets.
-
-Two things a spec must say beyond the name. That the bound is only *reached*
-where the first element is slower than those behind it — under uniform latency
-the effective bound is `PROCESSES`, and stating the worst case alone implies it
-is the usual one. And what the barrier costs, which is measured in
-`race_through()`'s docstring: the ordered-vs-`unordered()` delivery figures, and
-the 50/50 split between tagging and reordering that tells anyone optimising the
-path there are two equal targets rather than one.
-
-`order-racing-delivery` deliberately left the constant alone (its third
-non-goal) so that the export and the rename would be this item's work rather
-than a line slipped into a behaviour break. Same reasoning that makes
-`PROCESSES` public.
-
-Refill from **Now**'s **Queued changes**, which is where the loose ends now
-live.
-
+This section used to say "refill from **Now**'s **Queued changes**". It no
+longer does — that instruction treated an empty heading as a defect to fix.
+Promotion is a decision, not housekeeping, so the section stays empty until an
+item is *chosen*. The five parity gaps sit in **Queued changes** unranked and
+unbatched on purpose (`enumerate-java-8-parity-gaps` declined to batch them),
+so whoever picks one up makes that call themselves. **An empty Next means
+nothing is claimed, not that nothing is available.**
 
 ## Later
+
+**Entry criterion: blocked on a decision, not on effort.** Every item here
+needs an explicit call before it can start — on a core semantic, on a trade-off
+nobody has agreed to take, or on a divergence from Java. Being big or unscoped
+is not what puts something here; being *undecided* is.
 
 **Parked 2026-08-31, from the `implement-python-data-model` exploration:
 `async with` on `Stream`.** That change implements the *synchronous* context
@@ -156,9 +115,54 @@ core semantic.
 | **`BaseStream.spliterator()`** — Java's parallel-decomposition iterator, used by `parallelStream()` to split a source into chunks shared threads can each work over. | Depends on the item above: Java's `Spliterator` assumes shared-memory thread decomposition, which only becomes meaningful once real (multiprocess) partitioned execution is decided — until then there's nothing for it to expose, and it may end up intentionally-skipped rather than implemented. Moved down from **Now**, where it was flagged as decision-blocked rather than ready to build. |
 | **Wire up `collect(supplier, accumulator, combiner)`'s `combiner`** — the parameter exists and is never invoked, which README's row already states. Only `collect()` is in scope here: this entry used to name `reduce(identity, accumulator, combiner)` alongside it, and `Stream.reduce()` does not accept a combiner at all; that half is now gap 1 in **Now** → **Queued changes** (corrected 2026-08-31 by `enumerate-java-8-parity-gaps`). | Same blocker as the row above — a real combine step only means something once real partitioned execution exists. The difference from gap 1 is that `collect()`'s parameter already ships, so it would have to *start* doing something rather than be added inert. See `openspec/changes/archive/2026-08-17-add-collect-supplier-accumulator-combiner`. |
 | **Java 9 `Stream` additions** — `takeWhile(predicate)`, `dropWhile(predicate)`, `Stream.ofNullable(t)`, and the 3-arg `iterate(seed, hasNext, next)` overload (distinct from the already-implemented 2-arg `iterate(seed, next)`). | **No longer sequencing-blocked, and arguably no longer a *Later* item.** README gates Java 9 on "some sort of feature parity with Java 8"; `enumerate-java-8-parity-gaps` (2026-08-31, **Done**) met that gate and enumerated the remainder as five non-structural gaps, now queued in **Now**. The only Java 8 work genuinely blocked is `spliterator()` and `collect()`'s combiner, both parked behind the real-parallelism decision above — so Java 9 cannot wait on them without waiting forever. What keeps it here is that it is unstarted and unscoped, not that anything blocks it; it competes with the five gaps on merit. |
+| **Bound speculation separately from read-ahead** — one counter serves memory held by the reorder buffer, latency behind a straggler, and how many elements a chain callable runs on under a short-circuiting terminal, and under the third it bounds the wrong thing: `.peek(fn).find_first()` fills the whole window behind an outstanding index 0 and throws away everything but the winner. The shape would be to stop starting new groups past an outstanding candidate the terminal could settle on, bounding in-flight work near the worker count — already the usual regime under uniform latency, per `collapse-find-first-onto-barrier`'s correction. | **Moved here 2026-09-01, from Now → Queued changes where `bound-in-flight-work-per-worker` first filed it.** It is decision-blocked, which is what this bucket is for: the policy is a *trade* — branches that stop pulling idle instead — and nobody has decided that trade is wanted. It also needs a signal path that does not exist, since `race_through()` cannot see that its terminal short-circuits: that lives in the sink's `cancellation_requested()`, downstream of the window. Figures to beat, already recorded: `filter`/`flat_map` waste 3.11x/3.21x invocations, `map` 0.96x — so it helps the shapes where speculation runs *in front of* the element that matters and does nothing where it runs alongside. `bound-in-flight-work-per-worker` (2026-09-01, **Done**) is what made the case legible while deliberately not taking it; that change renamed a constant and altered no behaviour, this one is behaviour and nothing else. |
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should be declared permanent. **Narrowed 2026-08-31: the behaviour is now documented in README's `of()` row.** That was a defect independent of this decision — the row described Java's semantics, so the divergence used by every example in the file was invisible to a reader. Documenting it does not close this item; what remains is the call on whether to keep it. Surfaced 2026-08-20 in the same code-quality read that produced the first batch of **Now** items, all since closed. |
 
 ## Done
+
+- **`bound-in-flight-work-per-worker`** (2026-09-01) — item 3, the last of the
+  four, and **it closed the other way from how the item said it would**. The
+  item read "its answer flipped to 'export it'"; this change renames the
+  constant and declines the export.
+
+  **The correction is that the obligation the item cited was already
+  discharged.** Item 3 argued that `_READ_AHEAD` had become public because it
+  bounds something a caller can count — how many times a mapper runs under a
+  parallel `find_first()` — and so "an observable effect a spec has to state".
+  The spec already stated it. `collapse-find-first-onto-barrier` wrote
+  `stream-find-first`'s "find_first() may invoke a chain's callables more than
+  once" in the same change that created the behaviour, **including both
+  regimes** — the worker count under uniform latency, the window otherwise.
+  Item 3 was written as if that requirement did not exist. Observable is not
+  the same as public: `find_any()`'s choice of element is observable and
+  spec'd, and nothing about it is exported.
+
+  **What shipped instead of an export.** `_READ_AHEAD` became
+  `_IN_FLIGHT_PER_WORKER = 4` plus `_in_flight(workers)`, so the bound scales
+  with the branch count — the tuning curve knees at *one slot per worker*, a
+  fact the old comment recorded and then contradicted by hardcoding 16. The
+  effective bound at the default worker count is unchanged (4 × 4 = 16) and no
+  behaviour a caller can observe changed, so there is **no migration-log
+  entry**; that absence is a claim, not an oversight. `_Window` now takes its
+  size at construction rather than reading a module global on every pull, which
+  is what makes "fixed for the duration of a run" true in the code.
+
+  **The rename stopped at the code, and that is the second correction.** The
+  item wanted the name to cover all three things the constant bounds and
+  guessed "the window" might be as close as it gets. But the *requirement* is
+  about elements pulled but not released, which **is** read-ahead, accurately;
+  what bounds three things is the constant. So `racing-encounter-order` keeps
+  the word and gained two clauses instead — the window scales with the branch
+  count, and its size is fixed for a run — plus a new requirement that the
+  bound is **not** public, naming `unordered()`/`sequential()` as the levers a
+  caller gets. That requirement is the change's actual product: it makes
+  retuning the value a measurement rather than a compatibility question, which
+  is what "revisit on a concrete report" never managed to say bindingly.
+
+  Queued a follow-up rather than folding it in — filed in **Now** → **Queued
+  changes** and moved to **Later** the same day, once it was clear the blocker
+  is a decision and not effort: one counter serves memory, latency and
+  speculation, and under a short-circuiting terminal it bounds the wrong one.
 
 - **`collapse-find-first-onto-barrier`** and
   **`collapse-for-each-ordered-onto-barrier`** (2026-08-31) — item 2, landed as

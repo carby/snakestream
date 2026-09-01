@@ -62,33 +62,48 @@ class OrderDemand(Enum):
 # the old _parallel() took it as a default argument value.
 PROCESSES: int = 4
 
-# How far ahead of the last released group a branch may pull, in source
+# How far ahead of the last released group one branch may pull, in source
 # elements, when the racing executor is honouring encounter order. Ordering
 # means holding a finished element until every earlier one has been released,
 # and without a bound one slow first element draws the whole source into
 # memory; this is the analogue of the leaf partitioning that bounds Java's
 # fork-join, which the one-shared-source design here otherwise lacks.
 #
-# 16 = 4 * PROCESSES, picked off the read-ahead/latency curve (Python 3.14.5,
-# 4 workers, 400 elements, one 50ms element at the head among 1ms ones, best
-# of 5, drained through .distinct()):
+# Per worker, not a bare number, because the curve knees at the worker count
+# and so it is the ratio that governs (Python 3.14.5, 4 workers, 400 elements,
+# one 50ms element at the head among 1ms ones, best of 5, drained through
+# .distinct(); the axis is the window expressed in multiples of the worker
+# count, which is how it was measured):
 #
-#   W:     1      2      4      8     16     32     64    128
-#       630ms  330ms  193ms  193ms  178ms  188ms  165ms  152ms
+#   W/worker:  0.25   0.5     1      2      4      8     16     32
+#             630ms  330ms  193ms  193ms  178ms  188ms  165ms  152ms
 #
-# The knee is at the worker count: below it the branches starve waiting on the
-# merge and the pipeline serialises (W=1 is 4x the cost of W=4). Past it the
-# curve is a slow 20% tail down to an effectively unbounded window, which is
-# the wrong 20% to buy: the same number bounds the over-pull upstream of a
-# short-circuiting op, so W=128 would run .peek(fn).limit(3)'s fn up to 128
-# times to gain 15% on a pipeline that drains in full. 16 sits past the knee
-# with 16 groups resident at most.
+# The knee is at 1.0 -- one slot per worker. Below it the branches starve
+# waiting on the merge and the pipeline serialises (0.25/worker is 4x the cost
+# of 1/worker). Past it the curve is a slow 20% tail down to an effectively
+# unbounded window, which is the wrong 20% to buy: the same number bounds the
+# over-pull upstream of a short-circuiting op, so 32/worker would run
+# .peek(fn).limit(3)'s fn up to 128 times to gain 15% on a pipeline that drains
+# in full. 4 sits past the knee, holding at most four groups per branch.
 #
-# Deliberately not exported. PROCESSES names a real Java-side concept and is
-# spec'd; this names an implementation bound with no Java counterpart, and the
-# tuning lever the spec gives a caller is unordered(). Revisit on a concrete
-# report, not on taste.
-_READ_AHEAD: int = 16
+# Not exported, and spec'd that way rather than argued for here: the
+# racing-encounter-order capability requires that no public name read or set
+# this bound, and gives a caller unordered() and sequential() as the levers
+# instead. That requirement is what makes retuning this a measurement rather
+# than a compatibility question.
+_IN_FLIGHT_PER_WORKER: int = 4
+
+
+def _in_flight(workers: int) -> int:
+    """The in-flight bound for a race across `workers` branches: elements
+    pulled from the shared source but not yet released by the merge. 16 at the
+    default worker count, so that is how many groups a default racing pipeline
+    holds resident at most.
+
+    A function rather than a derived constant so the derivation has one site,
+    which is the seam the bound's tests read and the one a test shrinking the
+    window to a single slot replaces."""
+    return _IN_FLIGHT_PER_WORKER * workers
 
 
 async def _maybe_aclose(thing: AsyncIterator) -> None:
@@ -146,22 +161,28 @@ class _Window:
 
     `assigned` is the next source index to hand out, `released` the first index
     the merge has not yet released. A branch may pull only while the gap is
-    under _READ_AHEAD; the merge bumps `released` and sets `event` on every
-    release, waking whoever was held back.
+    under `size`; the merge bumps `released` and sets `event` on every release,
+    waking whoever was held back.
+
+    `size` is fixed at construction, from _in_flight() and the branch count, so
+    a pipeline runs to completion under the bound it started with -- reading it
+    per pull would let a rebind take effect part-way through a race, which is a
+    state no requirement describes and nothing needs.
 
     One object, not two counters and a condition variable, because the two
     numbers are only ever read together and the invariant between them is the
     whole point."""
 
-    __slots__ = ("assigned", "event", "released")
+    __slots__ = ("assigned", "event", "released", "size")
 
-    def __init__(self) -> None:
+    def __init__(self, size: int) -> None:
         self.assigned = 0
         self.released = 0
+        self.size = size
         self.event = asyncio.Event()
 
     def full(self) -> bool:
-        return self.assigned - self.released >= _READ_AHEAD
+        return self.assigned - self.released >= self.size
 
     def release_one(self) -> None:
         self.released += 1
@@ -176,10 +197,10 @@ async def _guarded(source: AsyncIterator, lock: asyncio.Lock, window: _Window | 
     does — not just the async generators _normalize() builds.
 
     With a window, each element is handed on as `(index, element)` and the
-    read-ahead bound is enforced here. Both belong here for the same reason:
-    this is the last point at which pull order still *is* encounter order, and
-    it is already the only place a pull happens, so bounding it costs no new
-    synchronisation point. Without a window — every pipeline that needs no
+    window's bound on in-flight elements is enforced here. Both belong here for
+    the same reason: this is the last point at which pull order still *is*
+    encounter order, and it is already the only place a pull happens, so
+    bounding it costs no new synchronisation point. Without a window — every pipeline that needs no
     ordering barrier — neither runs and the loop is what it always was."""
     try:
         while True:
@@ -499,7 +520,7 @@ async def race_through(
       reorder buffer never holds one back: the barrier is free by construction
       there, not by measurement, and a uniform-latency benchmark cannot detect
       what it costs. Under *tail* latency it does cost something, by filling the
-      _READ_AHEAD window behind a straggler while the branches idle (200
+      in-flight window behind a straggler while the branches idle (200
       elements, 90% at 2ms and 10% at 50ms, 4 workers, ideal ~424 ms):
 
         racing, ordered delivery      545.5 ms
@@ -567,7 +588,7 @@ async def race_through(
         # to the tail. One state map for the whole chain either way: head ops
         # share theirs across branches, tail ops are built once and so share
         # it with nobody, which comes to the same thing.
-        window = _Window()
+        window = _Window(_in_flight(workers))
         head = [group_through(chain[:split], _guarded(shared, lock, window), state_map) for _ in range(workers)]
         async for out in _run_ordered_tail(chain[split:], _release_in_order(head, window), state_map, workers, demand):
             yield out

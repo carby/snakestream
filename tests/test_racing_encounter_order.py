@@ -18,10 +18,11 @@ from snakestream import Stream
 from snakestream.collectors import to_list
 from snakestream import execution
 from snakestream.execution import (
-    _READ_AHEAD,
+    PROCESSES,
     OrderDemand,
     _Window,
     _guarded,
+    _in_flight,
     _release_in_order,
     _split_point,
     group_through,
@@ -389,7 +390,7 @@ async def test_a_slow_first_element_does_not_draw_the_whole_source_in() -> None:
     # then the read-ahead stayed inside the window rather than growing with
     # the source
     assert first == 0
-    assert pulled_before_first_release <= _READ_AHEAD
+    assert pulled_before_first_release <= _in_flight(PROCESSES)
 
 
 @pytest.mark.asyncio
@@ -420,6 +421,42 @@ async def test_closing_while_a_branch_is_blocked_on_the_window_does_not_hang() -
 
 
 @pytest.mark.asyncio
+async def test_a_wider_race_is_given_a_wider_window() -> None:
+    # given a race across more branches than the default worker count, over a
+    # source whose head element is far slower than the rest, so the branches
+    # fill the window behind it. No public path reaches a non-default worker
+    # count - PROCESSES is bound into RACING at import - so the executor is
+    # swapped directly, the way the primitives are driven elsewhere in this file
+    pulled: list[int] = []
+
+    async def counting():
+        for i in range(400):
+            pulled.append(i)
+            yield i
+
+    async def one_slow_element(n: int) -> int:
+        await asyncio.sleep(0.3 if n == 0 else 0.0)
+        return n
+
+    wide = 2 * PROCESSES
+
+    # when the first element is taken
+    stream = Stream.of(counting()).parallel().map(one_slow_element)
+    stream._executor = execution.Racing(wide)
+    agen = stream.iterator()
+    first = await anext(agen)
+    pulled_before_first_release = len(pulled)
+    await agen.aclose()
+
+    # then the wider race got the wider window rather than the same one divided
+    # further. Asserted against the derivation at both counts, never a measured
+    # figure: the point is which bound applies, not where the branches landed
+    assert first == 0
+    assert pulled_before_first_release <= _in_flight(wide)
+    assert pulled_before_first_release > _in_flight(PROCESSES)
+
+
+@pytest.mark.asyncio
 async def test_over_pull_upstream_of_an_ordered_limit_is_bounded() -> None:
     # given far more source than the limit needs
     seen: list[int] = []
@@ -429,7 +466,7 @@ async def test_over_pull_upstream_of_an_ordered_limit_is_bounded() -> None:
 
     # then the selection is exact and the over-pull is not unbounded
     assert res == [0, 1, 2]
-    assert 3 <= len(seen) <= _READ_AHEAD
+    assert 3 <= len(seen) <= _in_flight(PROCESSES)
 
 
 # --- cancellation across the barrier ----------------------------------------
@@ -624,7 +661,7 @@ async def test_a_head_op_that_emits_at_end_is_ordered_after_every_real_group() -
     # always a split point and so is never in the head - so this drives the two
     # primitives directly, the way tests/test_sink.py drives a sink
     lock = asyncio.Lock()
-    window = _Window()
+    window = _Window(_in_flight(PROCESSES))
     source = _guarded(aiter(_agen(6)), lock, window)
     branches = [group_through([_EmitOnEndOp()], source, {})]
 
@@ -652,8 +689,10 @@ async def test_branches_contending_for_the_last_window_slot_still_pull_in_order(
     # given a window of one, so the slot a branch waited for is routinely gone
     # again by the time it holds the lock - and a source that really suspends
     # mid-pull, which is what lets another branch get in between one branch's
-    # "not full" check and its assignment
-    monkeypatch.setattr(execution, "_READ_AHEAD", 1)
+    # "not full" check and its assignment. Patching the derivation rather than
+    # a constant: it is the single site the size comes from, and no worker
+    # count yields a window of one through it
+    monkeypatch.setattr(execution, "_in_flight", lambda workers: 1)
 
     async def slow_source():
         for i in range(60):
