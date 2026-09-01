@@ -1,10 +1,22 @@
 from enum import Enum, auto
+from inspect import Parameter, signature
 from typing import Any, TypeVar, cast, overload
+from collections.abc import Callable
 
 from snakestream.callable_dispatch import is_async_callable
-from snakestream.type import Comparator, KeyExtractor
+from snakestream.exception import StreamBuildException
+from snakestream.type import Comparator, KeyExtractor, KeyExtractorComparator
 
 T = TypeVar("T")
+
+# Named once so construction-time rejection (comparing()/then_comparing()) and
+# the comparator-segment wrapper's raising path (sort.py, Decision 3) name the
+# same two supported alternatives for the same reason.
+_ASYNC_COMPARATOR_MESSAGE = (
+    "comparator must be synchronous; use an async key extractor segment instead "
+    "(supported today), or pass an async comparator directly to sorted() "
+    "(reaches merge_sort())"
+)
 
 
 def check_comparator_result_type(value: int) -> None:
@@ -43,7 +55,50 @@ def is_new_extremum(sign: int, asc: bool) -> bool:
     return sign < 0 if asc else sign > 0
 
 
-Segment = tuple[KeyExtractor, bool]
+Segment = tuple[KeyExtractor, bool] | tuple[KeyExtractorComparator, bool]
+
+
+def _reject_async_comparator(comparator: Comparator) -> None:
+    """Construction-time half of Decision 2/3: an async supplied comparator
+    has no key a sort tuple can hold, so it is refused here rather than
+    falling back to a slower whole-chain path. The wrapper sort.py builds
+    around a comparator segment's column (`_checked_segment_comparator`)
+    catches the one shape this cannot - a plain `def __call__` that lies
+    about being sync and returns a coroutine - with the same message."""
+    if is_async_callable(comparator):
+        raise StreamBuildException(_ASYNC_COMPARATOR_MESSAGE)
+
+
+_COMPARATOR_ARITY = 2
+
+
+def _is_comparator_arity(fn: Callable) -> bool:
+    """Decision 4: tell a bare `Comparator` from a key extractor by counting
+    positional parameters. Only `*args` is genuinely ambiguous; it (and
+    anything `inspect.signature` cannot introspect) resolves to False - key
+    extractor, the meaning such a callable already carries today."""
+    try:
+        params = signature(fn).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    count = 0
+    for p in params:
+        if p.kind is Parameter.VAR_POSITIONAL:
+            return False
+        if p.kind in (Parameter.POSITIONAL_ONLY, Parameter.POSITIONAL_OR_KEYWORD):
+            count += 1
+    return count == _COMPARATOR_ARITY
+
+
+def _segment_is_async(payload: "KeyExtractor | KeyExtractorComparator") -> bool:
+    """Whether a segment's payload contributes an await - Decision 1/6. A
+    comparator segment's comparator is always sync (rejected otherwise at
+    construction); only its optional extractor can be async. A bare
+    comparator segment (no extractor) never awaits."""
+    if isinstance(payload, tuple):
+        extractor, _ = payload
+        return extractor is not None and is_async_callable(extractor)
+    return is_async_callable(payload)
 
 
 class NullPlacement(Enum):
@@ -70,6 +125,81 @@ def _null_sign(a_is_none: bool, placement: NullPlacement) -> int:
     segment instead of calling this)."""
     at_front = -1 if placement is NullPlacement.FIRST else 1
     return at_front if a_is_none else -at_front
+
+
+def _key_segment_sign_sync(extractor: KeyExtractor, a: Any, b: Any, nulls: NullPlacement) -> int:
+    """One key-extractor segment's sign, sync. A both-`None` tie folds into
+    the ordinary `sign == 0` no-op the caller's loop already treats as
+    "continue" - `_null_sign()` only ever returns nonzero, so this is the one
+    case that needs to be told apart."""
+    if nulls is NullPlacement.ABSENT:
+        ka = cast("Any", extractor(a))
+        kb = cast("Any", extractor(b))
+        return (ka > kb) - (ka < kb)
+    ka = None if a is None else cast("Any", extractor(a))
+    kb = None if b is None else cast("Any", extractor(b))
+    if ka is None or kb is None:
+        return 0 if ka is None and kb is None else _null_sign(ka is None, nulls)
+    return (ka > kb) - (ka < kb)
+
+
+async def _key_segment_sign_async(extractor: KeyExtractor, a: Any, b: Any, nulls: NullPlacement, is_async: bool) -> int:
+    """`_key_segment_sign_sync`'s async twin, awaiting the extractor only
+    when `is_async` says this segment's extractor needs it."""
+    if nulls is NullPlacement.ABSENT:
+        ka = await extractor(a) if is_async else cast("Any", extractor(a))
+        kb = await extractor(b) if is_async else cast("Any", extractor(b))
+        return (ka > kb) - (ka < kb)
+    ka = None if a is None else (await extractor(a) if is_async else cast("Any", extractor(a)))
+    kb = None if b is None else (await extractor(b) if is_async else cast("Any", extractor(b)))
+    if ka is None or kb is None:
+        return 0 if ka is None and kb is None else _null_sign(ka is None, nulls)
+    return (ka > kb) - (ka < kb)
+
+
+def _comparator_segment_sign_sync(payload: KeyExtractorComparator, a: Any, b: Any, nulls: NullPlacement) -> int:
+    """One comparator segment's sign, sync (Decision 1: the comparator is
+    invoked directly, its sign checked once). `payload`'s extractor is
+    `None` for a bare comparator segment, where the elements themselves are
+    what the comparator orders."""
+    extractor, comparator = payload
+    if extractor is None:
+        ea, eb = a, b
+    elif nulls is NullPlacement.ABSENT:
+        ea = cast("Any", extractor(a))
+        eb = cast("Any", extractor(b))
+    else:
+        ea = None if a is None else cast("Any", extractor(a))
+        eb = None if b is None else cast("Any", extractor(b))
+    if nulls is not NullPlacement.ABSENT and (ea is None or eb is None):
+        return 0 if ea is None and eb is None else _null_sign(ea is None, nulls)
+    sign = comparator(ea, eb)
+    if type(sign) is not int:
+        check_comparator_result_type(cast("int", sign))
+    return cast("int", sign)
+
+
+async def _comparator_segment_sign_async(
+    payload: KeyExtractorComparator, a: Any, b: Any, nulls: NullPlacement, is_async: bool
+) -> int:
+    """`_comparator_segment_sign_sync`'s async twin. Only the extractor may be
+    async - the comparator is always sync, per Decision 2/3 - so it is
+    invoked, never awaited."""
+    extractor, comparator = payload
+    if extractor is None:
+        ea, eb = a, b
+    elif nulls is NullPlacement.ABSENT:
+        ea = await extractor(a) if is_async else cast("Any", extractor(a))
+        eb = await extractor(b) if is_async else cast("Any", extractor(b))
+    else:
+        ea = None if a is None else (await extractor(a) if is_async else cast("Any", extractor(a)))
+        eb = None if b is None else (await extractor(b) if is_async else cast("Any", extractor(b)))
+    if nulls is not NullPlacement.ABSENT and (ea is None or eb is None):
+        return 0 if ea is None and eb is None else _null_sign(ea is None, nulls)
+    sign = comparator(ea, eb)
+    if type(sign) is not int:
+        check_comparator_result_type(cast("int", sign))
+    return cast("int", sign)
 
 
 def _constant_key(_: Any) -> int:
@@ -102,15 +232,21 @@ class KeyComparator:
     def __init__(self, segments: tuple[Segment, ...], nulls: NullPlacement = NullPlacement.ABSENT) -> None:
         self.segments = segments
         self.nulls = nulls
-        self._is_async = tuple(is_async_callable(extractor) for extractor, _ in segments)
+        self._is_async = tuple(_segment_is_async(payload) for payload, _ in segments)
         self._any_async = any(self._is_async)
 
-    def then_comparing(self, other: "KeyExtractor | KeyComparator") -> "KeyComparator":
+    def then_comparing(
+        self, other: "KeyExtractor | KeyComparator | Comparator", key_comparator: "Comparator | None" = None
+    ) -> "KeyComparator":
         """Append a tie-break ordering, matching Java's
         `Comparator.thenComparing`. `other` may be a bare key extractor,
-        contributing one ascending segment, or another `KeyComparator`, whose
-        whole segment list - directions intact - is spliced in. Returns a new
-        `KeyComparator`; the receiver is unchanged.
+        contributing one ascending segment; another `KeyComparator`, whose
+        whole segment list - directions intact - is spliced in; or a bare
+        `Comparator`, contributing a supplied ordering (add-comparator-segments,
+        Decision 4 disambiguates the last two cases by arity). `key_comparator`,
+        if given, orders the keys `other` extracts rather than their natural
+        ordering (Decision 6). Returns a new `KeyComparator`; the receiver is
+        unchanged.
 
         Carries the receiver's null tolerance onto the result. This is a
         deliberate divergence from Java, where
@@ -122,7 +258,14 @@ class KeyComparator:
         """
         if isinstance(other, KeyComparator):
             return KeyComparator(self.segments + other.segments, self.nulls)
-        return KeyComparator((*self.segments, (other, False)), self.nulls)
+        if key_comparator is not None:
+            _reject_async_comparator(key_comparator)
+            return KeyComparator((*self.segments, ((cast("KeyExtractor", other), key_comparator), False)), self.nulls)
+        if _is_comparator_arity(other):
+            comparator = cast("Comparator", other)
+            _reject_async_comparator(comparator)
+            return KeyComparator((*self.segments, ((None, comparator), False)), self.nulls)
+        return KeyComparator((*self.segments, (cast("KeyExtractor", other), False)), self.nulls)
 
     def reversed(self) -> "KeyComparator":
         """Negate the whole ordering, matching Java's `Comparator.reversed`.
@@ -142,7 +285,8 @@ class KeyComparator:
         the nulls to the other end - matching Java's
         `nullsFirst(c).reversed() == nullsLast(c)`.
         """
-        return KeyComparator(tuple((extractor, not descending) for extractor, descending in self.segments), self.nulls)
+        flipped = cast("tuple[Segment, ...]", tuple((payload, not descending) for payload, descending in self.segments))
+        return KeyComparator(flipped, self.nulls)
 
     def __call__(self, a: Any, b: Any) -> Any:
         if self._any_async:
@@ -150,24 +294,14 @@ class KeyComparator:
         return self._compare_sync(a, b)
 
     def _compare_sync(self, a: Any, b: Any) -> int:
+        # not self._any_async is what makes this branch reachable, so every
+        # segment's sync helper is the one that runs.
         nulls = self.nulls
-        for extractor, descending in self.segments:
-            # not self._any_async is what makes this branch reachable, so
-            # every segment's sync arm is the one that ran - Any, not
-            # Awaitable[Any].
-            if nulls is NullPlacement.ABSENT:
-                ka = cast("Any", extractor(a))
-                kb = cast("Any", extractor(b))
-                sign = (ka > kb) - (ka < kb)
+        for payload, descending in self.segments:
+            if isinstance(payload, tuple):
+                sign = _comparator_segment_sign_sync(payload, a, b, nulls)
             else:
-                ka = None if a is None else cast("Any", extractor(a))
-                kb = None if b is None else cast("Any", extractor(b))
-                if ka is None or kb is None:
-                    if ka is None and kb is None:
-                        continue
-                    sign = _null_sign(ka is None, nulls)
-                else:
-                    sign = (ka > kb) - (ka < kb)
+                sign = _key_segment_sign_sync(payload, a, b, nulls)
             if descending:
                 sign = -sign
             if sign != 0:
@@ -176,28 +310,11 @@ class KeyComparator:
 
     async def _compare_async(self, a: Any, b: Any) -> int:
         nulls = self.nulls
-        for (extractor, descending), is_async in zip(self.segments, self._is_async, strict=True):
-            if nulls is NullPlacement.ABSENT:
-                if is_async:
-                    ka = await extractor(a)
-                    kb = await extractor(b)
-                else:
-                    ka = cast("Any", extractor(a))
-                    kb = cast("Any", extractor(b))
-                sign = (ka > kb) - (ka < kb)
+        for (payload, descending), is_async in zip(self.segments, self._is_async, strict=True):
+            if isinstance(payload, tuple):
+                sign = await _comparator_segment_sign_async(payload, a, b, nulls, is_async)
             else:
-                if is_async:
-                    ka = None if a is None else await extractor(a)
-                    kb = None if b is None else await extractor(b)
-                else:
-                    ka = None if a is None else cast("Any", extractor(a))
-                    kb = None if b is None else cast("Any", extractor(b))
-                if ka is None or kb is None:
-                    if ka is None and kb is None:
-                        continue
-                    sign = _null_sign(ka is None, nulls)
-                else:
-                    sign = (ka > kb) - (ka < kb)
+                sign = await _key_segment_sign_async(payload, a, b, nulls, is_async)
             if descending:
                 sign = -sign
             if sign != 0:
@@ -205,9 +322,13 @@ class KeyComparator:
         return 0
 
 
-def comparing(key_extractor: KeyExtractor) -> KeyComparator:
+def comparing(key_extractor: KeyExtractor, key_comparator: "Comparator | None" = None) -> KeyComparator:
     """Build a Comparator that orders by an extracted key, matching Java's
-    `Comparator.comparing(keyExtractor)`.
+    `Comparator.comparing(keyExtractor)`. `key_comparator`, if given, orders
+    the extracted keys rather than their natural ordering, matching Java's
+    two-argument `Comparator.comparing(keyExtractor, keyComparator)`
+    (add-comparator-segments, Decision 6); it must be synchronous, though
+    `key_extractor` may still be async.
 
     Returns an object rather than a plain `lambda a, b: ...` closure, because a
     closure would call key_extractor twice per comparison - O(n log n) times,
@@ -234,6 +355,9 @@ def comparing(key_extractor: KeyExtractor) -> KeyComparator:
     resolves its keys in sequence rather than concurrently - or once directions
     mix.
     """
+    if key_comparator is not None:
+        _reject_async_comparator(key_comparator)
+        return KeyComparator((((key_extractor, key_comparator), False),))
     return KeyComparator(((key_extractor, False),))
 
 

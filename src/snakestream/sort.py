@@ -5,7 +5,14 @@ from typing import Any, cast
 from collections.abc import Callable
 
 from snakestream.callable_dispatch import is_async_callable
-from snakestream.comparator import KeyComparator, NullPlacement, Segment, check_comparator_result_type
+from snakestream.comparator import (
+    _ASYNC_COMPARATOR_MESSAGE,
+    KeyComparator,
+    NullPlacement,
+    Segment,
+    check_comparator_result_type,
+)
+from snakestream.exception import StreamBuildException
 from snakestream.type import AsyncComparator, Comparator
 
 
@@ -21,6 +28,28 @@ def _checked(comparator: Comparator) -> Callable[[Any, Any], int]:
 
     def compare(a: Any, b: Any) -> int:
         sign = comparator(a, b)
+        if type(sign) is not int:
+            check_comparator_result_type(cast("int", sign))
+        return cast("int", sign)
+
+    return compare
+
+
+def _checked_segment_comparator(comparator: Comparator) -> Callable[[Any, Any], int]:
+    """Like `_checked()`, for a comparator segment's column - built where
+    that segment's column is built, per Decision 1. `is_async_callable`
+    already rejected an async comparator segment at construction
+    (`comparator.py`'s `_reject_async_comparator`); this catches the one
+    shape that slips past that classifier - a plain `def __call__` that lies
+    and returns a coroutine - and names the async rejection instead of the
+    generic "must return an int", since that is the rule actually broken
+    (Decision 3).
+    """
+
+    def compare(a: Any, b: Any) -> int:
+        sign = comparator(a, b)
+        if isawaitable(sign):
+            raise StreamBuildException(_ASYNC_COMPARATOR_MESSAGE)
         if type(sign) is not int:
             check_comparator_result_type(cast("int", sign))
         return cast("int", sign)
@@ -111,6 +140,33 @@ async def _column(extractor: Callable[[Any], Any], arr: list[Any]) -> list[Any]:
 
     it = iter([trial, *(extractor(element) for i, element in enumerate(arr) if element is not None and i != trial_i)])
     return [None if element is None else next(it) for element in arr]
+
+
+async def _segment_column(payload: Any, arr: list[Any]) -> list[Any]:
+    """One segment's raw column, dispatching on payload shape (Decision 1/6):
+    a plain callable is a key extractor and goes through `_column()`
+    unchanged; a `(extractor, comparator)` pair - `extractor` possibly `None`
+    for a bare comparator segment - extracts a column exactly as any other
+    segment (or takes the elements themselves, unextracted, when there is no
+    extractor - `_column()` is what makes an extractor-based column skip a
+    `None` element, so a bare comparator segment's column takes the same
+    elements every other segment's column would see) and then wraps each
+    non-`None` entry through `cmp_to_key(_checked_segment_comparator(comparator))`,
+    so it rides the same tuple/lane machinery as a key extractor's column: a
+    `None` entry (null element, or for the two-argument form a null key)
+    stays `None` for `_tolerant_column()` to place - a comparator segment has
+    no key of its own to skip a `None` element for, so it presents as a null
+    key exactly as an extractor segment's does (Decision 5) - and the wrapped
+    entries compare - once, in C, via `_Descending`/`reverse=True`/plain
+    tuple order - exactly as a natural key would.
+    """
+    if not isinstance(payload, tuple):
+        return await _column(payload, arr)
+
+    extractor, comparator = payload
+    raw = await _column(extractor, arr) if extractor is not None else arr
+    to_key = cmp_to_key(_checked_segment_comparator(comparator))
+    return [None if v is None else to_key(v) for v in raw]
 
 
 class _Descending:  # noqa: PLW1641 - only ever compared inside a sort tuple, never hashed
@@ -208,14 +264,14 @@ async def _sort_by_key(
         return arr
 
     if len(segments) == 1:
-        extractor, descending = segments[0]
-        keys = await _column(extractor, arr)
+        payload, descending = segments[0]
+        keys = await _segment_column(payload, arr)
         if nulls is not NullPlacement.ABSENT:
             keys = _tolerant_column(keys, nulls)
         paired = sorted(zip(keys, arr, strict=True), key=lambda pair: pair[0], reverse=descending)
         return [element for _, element in paired]
 
-    columns = await asyncio.gather(*(_column(extractor, arr) for extractor, _ in segments))
+    columns = await asyncio.gather(*(_segment_column(payload, arr) for payload, _ in segments))
     if nulls is not NullPlacement.ABSENT:
         columns = [_tolerant_column(column, nulls) for column in columns]
     directions = [descending for _, descending in segments]

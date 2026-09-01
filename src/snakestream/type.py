@@ -30,6 +30,13 @@ AsyncComparator = Callable[[T, T], Awaitable[int]]
 # Produces an ordering key for one element, not a comparison sign - the
 # argument to comparing().
 KeyExtractor = Callable[[T], Any | Awaitable[Any]]
+# The extractor-plus-comparator pairing comparing()/then_comparing() build
+# when given a key_comparator (add-comparator-segments, Decision 6): the
+# extractor keeps its own per-element gather (sync or async), and the
+# comparator supplies the ordering applied to the resulting keys. The
+# extractor is None for a bare comparator segment, where the comparator
+# orders elements directly rather than an extracted key.
+KeyExtractorComparator = tuple[KeyExtractor | None, Comparator]
 Consumer = Callable[[T], Awaitable[None] | None]
 CloseHandler = Callable[[], None]
 
