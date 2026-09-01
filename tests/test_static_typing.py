@@ -27,6 +27,11 @@ def test_generic_stream_usage_type_checks_cleanly() -> None:
     assert result.returncode == 0, result.stdout
 
 
+def test_nulls_ordering_overloads_type_check_cleanly() -> None:
+    result = _check("good_nulls_ordering_types.py")
+    assert result.returncode == 0, result.stdout
+
+
 def test_to_map_with_a_container_and_no_merge_function_is_rejected() -> None:
     """The only thing enforcing "no to_map(k, v, map_supplier) form".
 
