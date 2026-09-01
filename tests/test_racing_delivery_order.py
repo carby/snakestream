@@ -30,7 +30,7 @@ from snakestream.collectors import (
     to_set,
 )
 from snakestream.exception import IllegalStateException
-from snakestream.execution import _READ_AHEAD
+from snakestream.execution import PROCESSES, _in_flight
 
 
 def _asc(a: int, b: int) -> int:
@@ -550,7 +550,7 @@ async def test_read_ahead_under_a_delivery_barrier_is_bounded() -> None:
 
     # then the delivery barrier is bounded exactly as an operation's is
     assert first == 0
-    assert pulled_before_first_release <= _READ_AHEAD
+    assert pulled_before_first_release <= _in_flight(PROCESSES)
 
 
 # --- the marked scalar collectors -------------------------------------------

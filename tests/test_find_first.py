@@ -5,7 +5,7 @@ import pytest
 from collections.abc import AsyncGenerator
 
 from snakestream import Stream
-from snakestream.execution import _READ_AHEAD
+from snakestream.execution import PROCESSES, _in_flight
 
 
 async def _slower_for_earlier(x: int) -> int:
@@ -229,11 +229,11 @@ async def test_a_parallel_find_first_may_process_more_than_one_element() -> None
     it = await Stream.of(_SOURCE).parallel().map(timed).find_first()
 
     # then the right answer, and more than one element processed to get it -
-    # bounded by the read-ahead window. Asserted as invariants, never as the
-    # measured figure: the count sits between PROCESSES and _READ_AHEAD
+    # bounded by the in-flight window. Asserted as invariants, never as the
+    # measured figure: the count sits between PROCESSES and _in_flight(PROCESSES)
     # depending on how the branches interleave, which a loaded machine moves
     assert it == 0
-    assert 1 < len(calls) <= _READ_AHEAD
+    assert 1 < len(calls) <= _in_flight(PROCESSES)
 
 
 @pytest.mark.asyncio

@@ -119,13 +119,20 @@ between those two. `find_first()` declares `ALWAYS`, alone: its demand survives
 encounter order — `_guarded()` assigns the source index under the lock, and
 `unordered()` clears the requirement to honour it, never the ability.
 
-Read-ahead is bounded by `_READ_AHEAD`, enforced in `_guarded()` where the index
-is assigned — the only place a pull happens, so the bound costs no new
-synchronisation point. A branch waits *outside* the lock and re-checks after
-acquiring it; waiting while holding it would stall the very branch the merge is
-waiting for. Head-of-line blocking remains, as it must; `unordered()` is the
-escape hatch, and is what makes it a real performance lever rather than a
-semantic footnote.
+Read-ahead is bounded by `_in_flight(workers)` — `_IN_FLIGHT_PER_WORKER` slots
+per branch, 16 at the default worker count — fixed on the `_Window` at
+construction and enforced in `_guarded()` where the index is assigned, the only
+place a pull happens, so the bound costs no new synchronisation point. It scales
+with the branch count rather than being a bare number because the tuning curve
+knees at one slot per worker, so the ratio is what governs. The value is
+deliberately private and spec'd that way: it bounds three things at once —
+buffer memory, latency behind a straggler, and how many elements a chain
+callable runs on under a short-circuiting terminal — and the lever a caller is
+given for all three is `unordered()`, not a number. A branch waits *outside* the
+lock and re-checks after acquiring it; waiting while holding it would stall the
+very branch the merge is waiting for. Head-of-line blocking remains, as it
+must; `unordered()` is the escape hatch, and is what makes it a real
+performance lever rather than a semantic footnote.
 
 The split is internal. It is not a third executor, is not selectable, and
 `is_parallel()` still reports the executor the stream carries.
