@@ -13,6 +13,7 @@ visibly. Without that shape a passing assertion would prove nothing.
 """
 
 import asyncio
+from collections import OrderedDict
 
 import pytest
 
@@ -217,6 +218,23 @@ async def test_grouping_by_into_an_unordered_downstream_skips_the_barrier() -> N
     # then the group holds every element and no barrier put them back in order
     assert sorted(res[0]) == SOURCE
     assert res[0] != SOURCE
+
+
+@pytest.mark.asyncio
+async def test_grouping_by_with_a_map_factory_takes_the_barrier() -> None:
+    """The mirror of the test above: a caller-supplied container clears the
+    mark, so the same pipeline that skipped the barrier there takes it here."""
+    # given a downstream that declares UNORDERED, and a map_factory that clears
+    # it anyway - the container's own equality is what the derivation rested on
+    recording = Collector(list, list.append, characteristics=(Characteristics.UNORDERED,))
+    assert Characteristics.UNORDERED not in grouping_by(lambda n: n, OrderedDict, recording).characteristics
+
+    # when one group per element, so key insertion order *is* delivery order
+    res = await Stream.of(SOURCE).parallel().map(_slow_head).collect(grouping_by(lambda n: n, OrderedDict, recording))
+
+    # then the barrier ran: keys went in in encounter order, not arrival order
+    assert isinstance(res, OrderedDict)
+    assert list(res) == SOURCE
 
 
 @pytest.mark.asyncio

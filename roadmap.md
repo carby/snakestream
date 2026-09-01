@@ -32,10 +32,12 @@ oversight rather than a decision. Filed as five and not one batched entry: they
 share a shape only at the surface (see that change's design.md, decision 6), and
 whoever picks them up should make the batching call themselves.
 
-**Four remain. Gap 1 moved to Later on 2026-09-01** — the numbering below is
-unchanged, because archived proposals and this file both cite these by number
-and reusing 1 for different work would silently redirect those references. The
-retired number is the same convention **Next** states for its own items.
+**Two remain. Gap 1 moved to Later on 2026-09-01; gaps 2 and 3 closed
+together on 2026-09-01 as `add-collector-container-overloads`** — the numbering
+below is unchanged, because archived proposals and this file both cite these by
+number and reusing a retired number for different work would silently redirect
+those references. Retiring rather than renumbering is the same convention
+**Next** states for its own items.
 
 1. **Retired — `Stream.reduce(identity, accumulator, combiner)` moved to
    **Later** on 2026-09-01**, into the combiner row it was split out of on
@@ -46,19 +48,30 @@ retired number is the same convention **Next** states for its own items.
    criterion. Sequencing it behind real multiprocess parallelism and
    `spliterator()` is a decision, and this bucket is for work with none
    outstanding. See **Later**.
-2. **`Collectors.toMap(k, v, merge, map_supplier)`** (`collectors.py`) — the
-   fourth argument, choosing the result container. Inherits a constraint from
-   `mark-to-map-order-blind` (see **Done**): the no-merge form's `UNORDERED`
-   declaration rests on `dict` equality ignoring key order, and a
-   caller-supplied mapping type need not, so this overload has to say what the
-   declaration means once the container is no longer a `dict`. That is the same
-   question gap 3 faces, which is the strongest argument for taking the two
-   together.
-3. **`Collectors.groupingBy(classifier, map_factory, downstream)`**
-   (`collectors.py`) — same container-choice argument, third of three
-   overloads. A caller-supplied mapping type has its own order semantics, so
-   this one has to say what it does to the `UNORDERED` derivation the shipped
-   two-argument form performs.
+2. **Retired — `Collectors.toMap(k, v, merge, map_supplier)` shipped
+   2026-09-01**, as `add-collector-container-overloads`. The constraint this
+   entry inherited from `mark-to-map-order-blind` turned out not to bind: Java
+   has exactly three `toMap` overloads and the four-argument one *requires*
+   `mergeFunction`, so the shipped form always carries a merge and declares
+   nothing on that account alone — the container never reaches the
+   characteristics decision. What the change had to decide instead was whether
+   to invent a `to_map(k, v, map_supplier)` form Java does not have. It did
+   not, and the exclusion is enforced by the `@overload` set rather than a
+   runtime raise.
+3. **Retired — `Collectors.groupingBy(classifier, map_factory, downstream)`
+   shipped 2026-09-01**, in the same change. This is where the container
+   question actually landed, and the answer is `to_collection()`'s: a
+   caller-supplied container declares no `UNORDERED`, keyed on the factory
+   being supplied rather than on the type it produces. The argument-order
+   problem the entry never mentioned — Java puts `map_factory` second, where
+   the shipped two-argument form already has `downstream` — is resolved by
+   arity dispatch, the `@overload`-plus-`_UNSET` pattern `reducing()` was
+   already using for a harder case.
+
+   Taking the two together was right, but not for the reason this entry gave.
+   They share the dispatch mechanism and one stated rule about caller-supplied
+   containers; they do **not** share the characteristics question, which gap 2
+   turned out not to face at all.
 4. **`Comparator.thenComparing(Comparator)`** (`comparator.py`) — the bare
    comparator overload. README already declines `thenComparing(f,
    key_comparator)` because accepting a comparator segment breaks the "every

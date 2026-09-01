@@ -86,6 +86,22 @@ iteration order (see the `collector-protocol` capability). Java specifies
 nothing about `Collectors.groupingBy()`'s characteristics, so the derivation
 diverges from no documented contract.
 
+**The derivation is bounded to the default `dict` container.** It rests on
+`dict` equality holding two mappings equal irrespective of key insertion order,
+and a caller-supplied mapping type need not: an `OrderedDict` compared against
+another `OrderedDict` is equal only if its keys were inserted in the same
+order, and key insertion order here follows the order groups were first seen.
+So the collector returned by the 3-arg `grouping_by(classifier, map_factory,
+downstream)` SHALL NOT declare `Characteristics.UNORDERED`, whatever
+`downstream` declares.
+
+The exclusion SHALL be unconditional on `map_factory` rather than decided by
+inspecting the mapping type it produces. Whether a type's equality ignores key
+order is not something the library can establish, and a caller who knows their
+chosen type's is has `unordered()`, which declares the same freedom at the
+pipeline rather than at the collector. This is the rule `to_collection()`
+already follows: a caller-supplied container declares nothing.
+
 #### Scenario: Grouping into an unordered downstream is unordered
 - **WHEN** the collector returned by `grouping_by(len, to_set())` is asked for
   its characteristics
@@ -117,3 +133,94 @@ diverges from no documented contract.
 - **WHEN** an ordered racing pipeline is collected with
   `grouping_by(f, to_set())`
 - **THEN** the collected mapping is correct and no reorder barrier is engaged
+
+#### Scenario: A caller-supplied container clears the mark
+- **WHEN** the collector returned by `grouping_by(len, OrderedDict, to_set())`
+  is asked for its characteristics
+- **THEN** `UNORDERED` is absent, though `to_set()` declares it
+
+#### Scenario: The exclusion holds even for a container equality would allow
+- **WHEN** the collector returned by `grouping_by(len, dict, to_set())` is
+  asked for its characteristics
+- **THEN** `UNORDERED` is absent, the exclusion following from `map_factory`
+  being supplied at all rather than from the type it produces
+
+#### Scenario: A cleared mark takes the delivery barrier
+- **WHEN** an ordered racing pipeline is collected with
+  `grouping_by(f, OrderedDict, to_set())`
+- **THEN** the reorder barrier is engaged, and the mapping's key insertion
+  order follows encounter order
+
+### Requirement: `grouping_by(classifier, map_factory, downstream)` chooses the result container
+
+`grouping_by` SHALL provide a 3-arg form whose second argument supplies the
+mapping the groups are collected into, matching Java's
+`Collectors.groupingBy(Function classifier, Supplier mapFactory, Collector
+downstream)`. `map_factory` SHALL sit in Java's argument position, between
+`classifier` and `downstream`.
+
+`map_factory` SHALL be called with no arguments exactly once per collection,
+before any element is accumulated, to produce a fresh empty mapping. It MAY be
+sync or async and SHALL be awaited via the same dispatch every other
+user-supplied callable in the library uses. That mapping SHALL be the object
+the collection returns: group keys are inserted into it as they are first seen,
+each group's downstream result is written back into it by the finisher, and it
+is returned as-is, so a caller-supplied type reaches the caller intact rather
+than being copied into a `dict`.
+
+Group creation, accumulation and downstream finishing SHALL otherwise behave
+exactly as in the 2-arg form, and a `downstream` that is not a `Collector`
+SHALL raise `StreamBuildException` in this form as in that one.
+
+#### Scenario: the result is the caller's mapping type
+- **WHEN** `Stream.of([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2, OrderedDict, counting()))` is called
+- **THEN** the result is an `OrderedDict` holding `{1: 3, 0: 2}`, not a plain `dict`
+
+#### Scenario: the downstream finisher writes into the caller's mapping
+- **WHEN** a 3-arg `grouping_by` is used with a `downstream` that has a finisher
+- **THEN** each key's finished value is present in the returned mapping and the mapping is still the caller's type
+
+#### Scenario: a fresh mapping per collection
+- **WHEN** the same 3-arg `grouping_by` collector instance is used across two separate `collect()` calls
+- **THEN** each call returns an independent mapping, unaffected by the other call's elements
+
+#### Scenario: empty stream yields the caller's empty mapping
+- **WHEN** `Stream.of([]).collect(grouping_by(f, OrderedDict, to_list()))` is called
+- **THEN** the result is an empty `OrderedDict`
+
+#### Scenario: an async map_factory is awaited
+- **WHEN** the 3-arg `grouping_by` is given an async `map_factory`
+- **THEN** the mapping it resolves to is used as the result container
+
+#### Scenario: a non-Collector downstream is still rejected
+- **WHEN** `grouping_by(classifier, map_factory, downstream)` is given a plain callable as `downstream`
+- **THEN** `StreamBuildException` is raised
+
+### Requirement: `grouping_by`'s form is selected by argument count
+
+`grouping_by` SHALL select between its three forms by how many arguments are
+passed, and SHALL NOT inspect an argument's type to decide what it means:
+
+- one argument — `classifier`, with the list-building downstream and the
+  default `dict` container;
+- two arguments — `classifier` and `downstream`, with the default `dict`
+  container;
+- three arguments — `classifier`, `map_factory` and `downstream`.
+
+The shipped two-argument call SHALL therefore be unaffected: a call passing a
+`Collector` as the second of two arguments binds it to `downstream`, not to
+`map_factory`, whatever its type. The declared type surface SHALL express the
+three forms so that a call is checked statically as well as dispatched at
+runtime.
+
+#### Scenario: a two-argument call still binds its second argument to downstream
+- **WHEN** `Stream.of([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2, counting()))` is called
+- **THEN** the result is `{1: 3, 0: 2}` in a plain `dict`, exactly as before this change
+
+#### Scenario: a one-argument call is unchanged
+- **WHEN** `Stream.of([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2))` is called
+- **THEN** the result is `{1: [1, 3, 5], 0: [2, 4]}` in a plain `dict`
+
+#### Scenario: the second of three arguments is the container factory
+- **WHEN** `grouping_by(classifier, map_factory, downstream)` is called
+- **THEN** `map_factory` supplies the result mapping and `downstream` collects each group
