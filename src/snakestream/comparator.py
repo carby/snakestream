@@ -1,7 +1,10 @@
-from typing import Any, cast
+from enum import Enum, auto
+from typing import Any, TypeVar, cast, overload
 
 from snakestream.callable_dispatch import is_async_callable
-from snakestream.type import KeyExtractor
+from snakestream.type import Comparator, KeyExtractor
+
+T = TypeVar("T")
 
 
 def check_comparator_result_type(value: int) -> None:
@@ -43,6 +46,40 @@ def is_new_extremum(sign: int, asc: bool) -> bool:
 Segment = tuple[KeyExtractor, bool]
 
 
+class NullPlacement(Enum):
+    """Where `None` sorts relative to non-`None` values, per `KeyComparator`.
+
+    `ABSENT` is what every `comparing()` call constructs before `nulls_first`/
+    `nulls_last` touch it - the ordinary, intolerant comparator that raises on
+    `None` exactly as it always has. It is a property of the whole comparator
+    rather than of one segment: Java's `nullsFirst`/`nullsLast` wrap a whole
+    `Comparator`, and `then_comparing()` carries the field onto its result, so
+    a tie-break appended to a tolerant chain is tolerant too (see this
+    change's design.md, Decision 1).
+    """
+
+    ABSENT = auto()
+    FIRST = auto()
+    LAST = auto()
+
+
+def _null_sign(a_is_none: bool, placement: NullPlacement) -> int:
+    """The sign a null-vs-non-null pair contributes, before any descending
+    negation. `a_is_none` picks which side is `None`; the other side, by the
+    caller's contract, is not (a "both None" pair falls through to the next
+    segment instead of calling this)."""
+    at_front = -1 if placement is NullPlacement.FIRST else 1
+    return at_front if a_is_none else -at_front
+
+
+def _constant_key(_: Any) -> int:
+    """The key extractor `nulls_first()`/`nulls_last()` build a `KeyComparator`
+    over when given nothing to wrap, matching Java's `nullsFirst(null)`: every
+    non-`None` element is equivalent to every other, so the constant never
+    distinguishes them."""
+    return 0
+
+
 class KeyComparator:
     """The `Comparator` a `comparing()` call returns.
 
@@ -56,10 +93,15 @@ class KeyComparator:
     Each segment's extractor is classified sync/async independently
     (`callable-dispatch`), once here at construction rather than per element
     or per comparison.
+
+    `nulls` defaults to `NullPlacement.ABSENT`, so every `comparing(f)` call
+    with no `nulls_first`/`nulls_last` in its history constructs exactly what
+    it constructed before that factory pair existed.
     """
 
-    def __init__(self, segments: tuple[Segment, ...]) -> None:
+    def __init__(self, segments: tuple[Segment, ...], nulls: NullPlacement = NullPlacement.ABSENT) -> None:
         self.segments = segments
+        self.nulls = nulls
         self._is_async = tuple(is_async_callable(extractor) for extractor, _ in segments)
         self._any_async = any(self._is_async)
 
@@ -69,10 +111,18 @@ class KeyComparator:
         contributing one ascending segment, or another `KeyComparator`, whose
         whole segment list - directions intact - is spliced in. Returns a new
         `KeyComparator`; the receiver is unchanged.
+
+        Carries the receiver's null tolerance onto the result. This is a
+        deliberate divergence from Java, where
+        `nullsFirst(comparing(a)).thenComparing(b)` calls `b` on the elements
+        `a` already ordered as null - two nulls compare equal under `a`, so
+        `b` sees them - and throws `NullPointerException`. Inheriting the
+        field is the only rule under which a null key falling through to a
+        tie-break segment terminates rather than raising.
         """
         if isinstance(other, KeyComparator):
-            return KeyComparator(self.segments + other.segments)
-        return KeyComparator((*self.segments, (other, False)))
+            return KeyComparator(self.segments + other.segments, self.nulls)
+        return KeyComparator((*self.segments, (other, False)), self.nulls)
 
     def reversed(self) -> "KeyComparator":
         """Negate the whole ordering, matching Java's `Comparator.reversed`.
@@ -83,8 +133,16 @@ class KeyComparator:
         or after `then_comparing()` reproduces Java's two distinct outcomes
         with one implementation. Returns a new `KeyComparator`; the receiver
         is unchanged.
+
+        No null-specific rule is needed here: null tolerance already flows
+        through the same per-segment direction each key participates in
+        (`_compare_sync`/`_compare_async` negate a null sign exactly as they
+        negate a real one, and `sort.py`'s tolerant column does the same via
+        tuple reversal), so flipping every segment's direction already moves
+        the nulls to the other end - matching Java's
+        `nullsFirst(c).reversed() == nullsLast(c)`.
         """
-        return KeyComparator(tuple((extractor, not descending) for extractor, descending in self.segments))
+        return KeyComparator(tuple((extractor, not descending) for extractor, descending in self.segments), self.nulls)
 
     def __call__(self, a: Any, b: Any) -> Any:
         if self._any_async:
@@ -92,13 +150,24 @@ class KeyComparator:
         return self._compare_sync(a, b)
 
     def _compare_sync(self, a: Any, b: Any) -> int:
+        nulls = self.nulls
         for extractor, descending in self.segments:
             # not self._any_async is what makes this branch reachable, so
             # every segment's sync arm is the one that ran - Any, not
             # Awaitable[Any].
-            ka = cast("Any", extractor(a))
-            kb = cast("Any", extractor(b))
-            sign = (ka > kb) - (ka < kb)
+            if nulls is NullPlacement.ABSENT:
+                ka = cast("Any", extractor(a))
+                kb = cast("Any", extractor(b))
+                sign = (ka > kb) - (ka < kb)
+            else:
+                ka = None if a is None else cast("Any", extractor(a))
+                kb = None if b is None else cast("Any", extractor(b))
+                if ka is None or kb is None:
+                    if ka is None and kb is None:
+                        continue
+                    sign = _null_sign(ka is None, nulls)
+                else:
+                    sign = (ka > kb) - (ka < kb)
             if descending:
                 sign = -sign
             if sign != 0:
@@ -106,14 +175,29 @@ class KeyComparator:
         return 0
 
     async def _compare_async(self, a: Any, b: Any) -> int:
+        nulls = self.nulls
         for (extractor, descending), is_async in zip(self.segments, self._is_async, strict=True):
-            if is_async:
-                ka = await extractor(a)
-                kb = await extractor(b)
+            if nulls is NullPlacement.ABSENT:
+                if is_async:
+                    ka = await extractor(a)
+                    kb = await extractor(b)
+                else:
+                    ka = cast("Any", extractor(a))
+                    kb = cast("Any", extractor(b))
+                sign = (ka > kb) - (ka < kb)
             else:
-                ka = cast("Any", extractor(a))
-                kb = cast("Any", extractor(b))
-            sign = (ka > kb) - (ka < kb)
+                if is_async:
+                    ka = None if a is None else await extractor(a)
+                    kb = None if b is None else await extractor(b)
+                else:
+                    ka = None if a is None else cast("Any", extractor(a))
+                    kb = None if b is None else cast("Any", extractor(b))
+                if ka is None or kb is None:
+                    if ka is None and kb is None:
+                        continue
+                    sign = _null_sign(ka is None, nulls)
+                else:
+                    sign = (ka > kb) - (ka < kb)
             if descending:
                 sign = -sign
             if sign != 0:
@@ -151,3 +235,109 @@ def comparing(key_extractor: KeyExtractor) -> KeyComparator:
     mix.
     """
     return KeyComparator(((key_extractor, False),))
+
+
+class _NullsComparator:
+    """The `Comparator` `nulls_first()`/`nulls_last()` return when wrapping
+    anything other than a `KeyComparator` - a hand-written comparator, with no
+    keys for a fast-path column to be built from. `None` is checked for and
+    delegates otherwise, matching Java's `nullsFirst`/`nullsLast` over a bare
+    `Comparator`.
+
+    `comparator` is classified sync/async once here at construction via
+    `is_async_callable`, per `callable-dispatch`, rather than per comparison.
+    """
+
+    def __init__(self, comparator: Comparator, placement: NullPlacement) -> None:
+        self._comparator = comparator
+        self._placement = placement
+        self._is_async = is_async_callable(comparator)
+
+    def __call__(self, a: Any, b: Any) -> Any:
+        # Dispatches on self._is_async unconditionally, exactly like
+        # KeyComparator.__call__ - never on whether this particular pair
+        # happens to involve None - so this callable is homogeneous per the
+        # callable-dispatch contract: sort()'s one-time isawaitable trial
+        # would otherwise see a plain int from a None-involving pair and
+        # misclassify an async-wrapped comparator as sync.
+        if self._is_async:
+            return self._compare_async(a, b)
+        return self._compare_sync(a, b)
+
+    def _compare_sync(self, a: Any, b: Any) -> int:
+        if a is None and b is None:
+            return 0
+        if a is None or b is None:
+            return _null_sign(a is None, self._placement)
+        return cast("int", self._comparator(a, b))
+
+    async def _compare_async(self, a: Any, b: Any) -> int:
+        if a is None and b is None:
+            return 0
+        if a is None or b is None:
+            return _null_sign(a is None, self._placement)
+        return await cast("Any", self._comparator)(a, b)
+
+
+def _nulls_tolerant(comparator: "KeyComparator | Comparator[Any] | None", placement: NullPlacement) -> Any:
+    if comparator is None:
+        return KeyComparator(((_constant_key, False),), placement)
+    if isinstance(comparator, KeyComparator):
+        return KeyComparator(comparator.segments, placement)
+    return _NullsComparator(comparator, placement)
+
+
+@overload
+def nulls_first(comparator: KeyComparator) -> KeyComparator: ...  # pragma: no cover
+
+
+@overload
+def nulls_first(comparator: None = None) -> KeyComparator: ...  # pragma: no cover
+
+
+@overload
+def nulls_first(comparator: "Comparator[T]") -> "Comparator[T]": ...  # pragma: no cover
+
+
+def nulls_first(comparator: "KeyComparator | Comparator[Any] | None" = None) -> Any:
+    """Build a Comparator that orders `None` before every non-`None` value,
+    matching Java's `Comparator.nullsFirst`. `comparator` orders two non-`None`
+    values; when omitted, every non-`None` value is equivalent to every other,
+    as in Java's `nullsFirst(null)`.
+
+    Also tolerates a null *key*, not only a null element: given a
+    `KeyComparator` (what `comparing()` returns), the result is a
+    `KeyComparator` whose segments are null-tolerant - so a `sorted()` built on
+    it keeps the decorate-sort-undecorate fast path, and an element whose
+    extracted key is `None` sorts as if the element itself were. Java reaches
+    the key case only through the declined `comparing(f, nullsFirst(...))`
+    overload; this closes it directly instead. Given any other `Comparator`,
+    or none, the result is a plain wrapping comparator that checks for `None`
+    and delegates otherwise.
+
+    Composes like any other `Comparator`: `.then_comparing()` and
+    `.reversed()` on a returned `KeyComparator` both keep the null tolerance
+    (see `KeyComparator.then_comparing`/`reversed`).
+    """
+    return _nulls_tolerant(comparator, NullPlacement.FIRST)
+
+
+@overload
+def nulls_last(comparator: KeyComparator) -> KeyComparator: ...  # pragma: no cover
+
+
+@overload
+def nulls_last(comparator: None = None) -> KeyComparator: ...  # pragma: no cover
+
+
+@overload
+def nulls_last(comparator: "Comparator[T]") -> "Comparator[T]": ...  # pragma: no cover
+
+
+def nulls_last(comparator: "KeyComparator | Comparator[Any] | None" = None) -> Any:
+    """Build a Comparator that orders `None` after every non-`None` value,
+    matching Java's `Comparator.nullsLast`. See `nulls_first`, whose rules -
+    including the null-key tolerance Java has no direct route to - all apply
+    here with `None` sorting to the opposite end.
+    """
+    return _nulls_tolerant(comparator, NullPlacement.LAST)

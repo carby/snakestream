@@ -5,7 +5,7 @@ from typing import Any, cast
 from collections.abc import Callable
 
 from snakestream.callable_dispatch import is_async_callable
-from snakestream.comparator import KeyComparator, Segment, check_comparator_result_type
+from snakestream.comparator import KeyComparator, NullPlacement, Segment, check_comparator_result_type
 from snakestream.type import AsyncComparator, Comparator
 
 
@@ -56,7 +56,7 @@ async def sort(arr: list[Any], comparator: Comparator) -> list[Any]:
     saving the rebind.
     """
     if isinstance(comparator, KeyComparator):
-        return await _sort_by_key(arr, comparator.segments)
+        return await _sort_by_key(arr, comparator.segments, comparator.nulls)
     if is_async_callable(comparator):
         return await merge_sort(arr, cast("AsyncComparator", comparator))
     if len(arr) > 1:
@@ -74,6 +74,13 @@ async def _column(extractor: Callable[[Any], Any], arr: list[Any]) -> list[Any]:
     elements. No cmp_to_key, no merge_sort, and no sign/bool validation -
     there is no comparator sign on this path, just a key.
 
+    A `None` element yields `None` directly - the extractor is never invoked
+    with it - so a null element presents as a null key in every segment (see
+    this change's design.md, Decision 2). This holds whether or not the
+    comparator tolerates nulls; a comparator that does not still ends up
+    comparing `None` against a real key, and still raises `TypeError`, just
+    from the sort rather than from the extractor.
+
     An async extractor's keys are gathered concurrently rather than awaited
     one at a time in a loop. Measured (design.md's open question, settled
     during implementation): an I/O-bound extractor (1ms sleep) sorting 1,000
@@ -81,16 +88,29 @@ async def _column(extractor: Callable[[Any], Any], arr: list[Any]) -> list[Any]:
     whole point of an async key extractor, and a sequential loop was throwing
     it away. The one-time isawaitable safety net (a "sync" extractor whose
     plain def __call__ actually returns a coroutine) is a trial call on the
-    first element - the same shape as sort()'s own trial comparison - but the
-    coroutine it produces joins the gather instead of being discarded, so it
-    costs no extra invocation.
+    first non-`None` element - the same shape as sort()'s own trial
+    comparison - but the coroutine it produces joins the gather instead of
+    being discarded, so it costs no extra invocation.
     """
     if is_async_callable(extractor):
-        return list(await asyncio.gather(*(extractor(element) for element in arr)))
-    trial = extractor(arr[0])
+        results = await asyncio.gather(*(extractor(element) for element in arr if element is not None))
+        it = iter(results)
+        return [None if element is None else next(it) for element in arr]
+
+    trial_i = next((i for i, element in enumerate(arr) if element is not None), None)
+    if trial_i is None:
+        return [None] * len(arr)
+
+    trial = extractor(arr[trial_i])
     if isawaitable(trial):
-        return list(await asyncio.gather(trial, *(extractor(element) for element in arr[1:])))
-    return [trial, *(extractor(element) for element in arr[1:])]
+        rest = await asyncio.gather(
+            trial, *(extractor(element) for i, element in enumerate(arr) if element is not None and i != trial_i)
+        )
+        it = iter(rest)
+        return [None if element is None else next(it) for element in arr]
+
+    it = iter([trial, *(extractor(element) for i, element in enumerate(arr) if element is not None and i != trial_i)])
+    return [None if element is None else next(it) for element in arr]
 
 
 class _Descending:  # noqa: PLW1641 - only ever compared inside a sort tuple, never hashed
@@ -113,7 +133,27 @@ class _Descending:  # noqa: PLW1641 - only ever compared inside a sort tuple, ne
         return isinstance(other, _Descending) and other.key == self.key
 
 
-async def _sort_by_key(arr: list[Any], segments: tuple[Segment, ...]) -> list[Any]:
+def _presence_markers(placement: NullPlacement) -> tuple[int, int]:
+    """The leading tuple component a tolerant column's null/present values get,
+    chosen so plain ascending tuple order already places nulls where
+    `placement` says: `0 < 1`, so nulls-first gives `None` the `0` and a real
+    key the `1`, and nulls-last swaps them."""
+    return (0, 1) if placement is NullPlacement.FIRST else (1, 0)
+
+
+def _tolerant_column(keys: list[Any], placement: NullPlacement) -> list[tuple[int, Any]]:
+    """Wrap one column's keys as `(present, key)` per design Decision 3.
+    Tuple comparison settles a null-vs-null pair on the leading component and
+    never evaluates `None < None`; a column's direction (plain, `reverse=True`,
+    or `_Descending`) then moves the nulls exactly as it moves any other key,
+    which is what makes `reversed()` need no null-specific rule."""
+    null_marker, present_marker = _presence_markers(placement)
+    return [(null_marker, None) if key is None else (present_marker, key) for key in keys]
+
+
+async def _sort_by_key(
+    arr: list[Any], segments: tuple[Segment, ...], nulls: NullPlacement = NullPlacement.ABSENT
+) -> list[Any]:
     """Decorate-sort-undecorate: extract every segment's key once per
     element, sort on the keys alone, undecorate.
 
@@ -154,6 +194,15 @@ async def _sort_by_key(arr: list[Any], segments: tuple[Segment, ...]) -> list[An
     replacing a plain tuple comparison in C on every element the earlier
     column ties on. Paid only in the mixed lane; both single-lane cases above
     stay in C throughout.
+
+    A `nulls_first`/`nulls_last` comparator (design.md's Open Question, settled
+    here) pays a fourth cost, orthogonal to the three lanes above: wrapping a
+    single ascending segment's column as `(present, key)` tuples measured
+    ~6.5ms against ~13.7ms plain-key on 20,000 floats with no `None` among them
+    - roughly 2.1x, a 2-tuple comparison in C replacing a bare-value one. Paid
+    only by a comparator built through `nulls_first`/`nulls_last`; every
+    intolerant `comparing()` chain still takes the plain-key lane above
+    unchanged.
     """
     if not arr:
         return arr
@@ -161,10 +210,14 @@ async def _sort_by_key(arr: list[Any], segments: tuple[Segment, ...]) -> list[An
     if len(segments) == 1:
         extractor, descending = segments[0]
         keys = await _column(extractor, arr)
+        if nulls is not NullPlacement.ABSENT:
+            keys = _tolerant_column(keys, nulls)
         paired = sorted(zip(keys, arr, strict=True), key=lambda pair: pair[0], reverse=descending)
         return [element for _, element in paired]
 
     columns = await asyncio.gather(*(_column(extractor, arr) for extractor, _ in segments))
+    if nulls is not NullPlacement.ABSENT:
+        columns = [_tolerant_column(column, nulls) for column in columns]
     directions = [descending for _, descending in segments]
     rows = zip(*columns, strict=True)
 
