@@ -1,5 +1,5 @@
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping
 
 if TYPE_CHECKING:
     from snakestream.stream import Stream  # pragma: no cover
@@ -50,3 +50,9 @@ class _SupportsAdd(Protocol):
 
 
 _C = TypeVar("_C", bound=_SupportsAdd)
+
+# The container typevar for the caller-supplied *mapping* forms - to_map()'s
+# map_supplier and grouping_by()'s map_factory. Separate from _C, which is
+# bound to _SupportsAdd: a mapping is written by key rather than by add(), so
+# neither bound serves the other.
+_M = TypeVar("_M", bound=MutableMapping[Any, Any])

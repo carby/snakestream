@@ -25,3 +25,16 @@ def test_element_type_mismatch_after_map_is_caught() -> None:
 def test_generic_stream_usage_type_checks_cleanly() -> None:
     result = _check("good_stream_types.py")
     assert result.returncode == 0, result.stdout
+
+
+def test_to_map_with_a_container_and_no_merge_function_is_rejected() -> None:
+    """The only thing enforcing "no to_map(k, v, map_supplier) form".
+
+    Java has no such overload, and the exclusion is deliberately left to the
+    declared surface rather than a runtime raise: telling a merge function from
+    a mapping type would mean inspecting a callable, and both are callables of
+    the right shape.
+    """
+    result = _check("bad_to_map_container_without_merge.py")
+    assert result.returncode != 0
+    assert "no-matching-overload" in result.stdout

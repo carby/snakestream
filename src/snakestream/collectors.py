@@ -5,7 +5,7 @@ edge runs one way, collectors -> collector, never back."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from inspect import isawaitable
 from typing import Any, NamedTuple, cast, overload
 from collections.abc import Awaitable, Callable
@@ -26,6 +26,7 @@ from snakestream.type import (
     Predicate,
     Supplier,
     _C,
+    _M,
 )
 
 
@@ -397,7 +398,7 @@ def reducing(identity: Any = _UNSET, mapper: Any = _UNSET, binary_operator: Any 
 
 @dataclass(slots=True)
 class _ToMapBox:
-    result: dict[Any, Any] = field(default_factory=dict)
+    result: Any
     key_is_async: bool = False
     key_checked: bool = False
     value_is_async: bool = False
@@ -406,13 +407,48 @@ class _ToMapBox:
     merge_checked: bool = False
 
 
+@overload
+def to_map(key_mapper: Mapper[T, R], value_mapper: Mapper[T, Any]) -> Collector[T, Any, dict[R, Any]]: ...  # pragma: no cover
+
+
+@overload
+def to_map(
+    key_mapper: Mapper[T, R], value_mapper: Mapper[T, Any], merge_function: BinaryOperator[Any]
+) -> Collector[T, Any, dict[R, Any]]: ...  # pragma: no cover
+
+
+@overload
+def to_map(
+    key_mapper: Mapper[T, R],
+    value_mapper: Mapper[T, Any],
+    merge_function: BinaryOperator[Any],
+    map_supplier: Supplier[_M],
+) -> Collector[T, Any, _M]: ...  # pragma: no cover
+
+
+# The overload block is exactly Java's three toMap overloads, and what it
+# *excludes* is the point: there is no to_map(k, v, map_supplier) form, because
+# Java has none. Adding one would expand the public surface rather than close a
+# parity gap, and it is what keeps the container out of the characteristics
+# decision below - the 4-arg form always carries a merge_function, so it
+# declares nothing on the merge's account alone.
+#
+# The exclusion is enforced by the declared surface and `ty`, not by a runtime
+# raise: telling "a merge function" from "a mapping type" would need to inspect
+# a callable, and both are callables of the right shape. There is no honest
+# predicate for it.
 def to_map(
     key_mapper: Mapper[T, R],
     value_mapper: Mapper[T, Any],
     merge_function: BinaryOperator[Any] | None = None,
-) -> Collector[T, Any, dict[R, Any]]:
-    def _supply() -> _ToMapBox:
-        return _ToMapBox()
+    map_supplier: Supplier[Any] = dict,
+) -> Collector[T, Any, Any]:
+    # async unconditionally rather than branching on whether map_supplier was
+    # given: a supplier runs once per *collection*, not per element, so the
+    # module's usual reason to keep a sync fast path does not apply here, and
+    # one code path is worth more than one coroutine per collect.
+    async def _supply() -> _ToMapBox:
+        return _ToMapBox(await _maybe_await(map_supplier))
 
     async def _accumulate(container: _ToMapBox, element: T) -> None:
         key, container.key_is_async, container.key_checked = _classify_step(
@@ -434,7 +470,9 @@ def to_map(
             value = await merged if container.merge_is_async else merged
         container.result[key] = value
 
-    def _finish(container: _ToMapBox) -> dict[R, Any]:
+    def _finish(container: _ToMapBox) -> Any:
+        # the caller's own mapping, returned as-is rather than copied into a
+        # dict, so a supplied type reaches the caller intact.
         return container.result
 
     # The one factory here whose characteristics come from its arguments rather
@@ -453,6 +491,13 @@ def to_map(
     # carries: the collector is order-sensitive in fact, and the mark is one
     # conditional away from being applied to both forms by mistake. A caller who
     # knows their own merge commutes has unordered(), one level up.
+    #
+    # A caller-supplied map_supplier therefore never reaches this decision. The
+    # 4-arg form always carries a merge_function (see the overload block), so it
+    # is already excluded by the paragraph above, and the container gets no turn
+    # to speak. That is why the rule grouping_by() states for its map_factory -
+    # a caller-supplied container clears the mark, as to_collection() has it -
+    # is absent here rather than merely unstated.
     #
     # The mark costs one thing, on the failure path. *Whether* a duplicate key
     # raises is a property of the multiset and does not change; which colliding
@@ -502,13 +547,23 @@ async def _group_into(
         await r
 
 
-async def _finish_groups(downstream: Collector[Any, Any, Any], groups: dict[Any, Any]) -> dict[Any, Any]:
+async def _finish_groups(downstream: Collector[Any, Any, Any], groups: _M) -> _M:
+    # Finishes in place and hands back the same mapping, rather than building a
+    # dict: grouping_by()'s map_factory form has to return the caller's own
+    # mapping type, and a rebuild into dict destroys it. The no-finisher path
+    # used to return dict(groups), a copy - nothing references the box's mapping
+    # once the collection ends, so dropping the copy isolates nothing less.
     finisher = downstream.finisher
     # the finisher is fixed for the whole collection, so the test belongs
     # outside the loop rather than once per group.
     if finisher is None:
-        return dict(groups)
-    return {key: await _maybe_await(finisher, sub) for key, sub in groups.items()}
+        return groups
+    # list(groups) rather than the mapping itself: rebinding an existing key
+    # cannot resize a dict, but an arbitrary MutableMapping owes no such
+    # guarantee, and the key list is one entry per group.
+    for key in list(groups):
+        groups[key] = await _maybe_await(finisher, groups[key])
+    return groups
 
 
 def _check_downstream(downstream: Collector[Any, Any, Any]) -> None:
@@ -516,10 +571,57 @@ def _check_downstream(downstream: Collector[Any, Any, Any]) -> None:
         raise StreamBuildException("downstream must be a Collector")
 
 
+@overload
+def grouping_by(classifier: Mapper[T, R]) -> Collector[T, Any, dict[R, Any]]: ...  # pragma: no cover
+
+
+@overload
+def grouping_by(
+    classifier: Mapper[T, R], downstream: Collector[T, Any, Any]
+) -> Collector[T, Any, dict[R, Any]]: ...  # pragma: no cover
+
+
+@overload
+def grouping_by(
+    classifier: Mapper[T, R], map_factory: Supplier[_M], downstream: Collector[T, Any, Any]
+) -> Collector[T, Any, _M]: ...  # pragma: no cover
+
+
 def grouping_by(
     classifier: Mapper[T, R],
-    downstream: Collector[T, Any, Any] = _TO_LIST,
-) -> Collector[T, Any, dict[R, Any]]:
+    map_factory: Any = _UNSET,
+    downstream: Any = _UNSET,
+) -> Collector[T, Any, Any]:
+    # The form is chosen by *arity*, never by inspecting an argument's type -
+    # the same dispatch reducing() uses above for the harder case where one
+    # position carries three different meanings. Java puts mapFactory second,
+    # and keeping it there costs nothing: a two-argument call can only be the
+    # two-argument form, so grouping_by(f, to_set()) still binds to downstream
+    # whatever to_set() happens to be. Sniffing isinstance(..., Collector)
+    # instead would misbind a hand-rolled Collector-lookalike, and arity needs
+    # no such judgement.
+    if downstream is _UNSET:
+        # Called as grouping_by(classifier) or grouping_by(classifier,
+        # downstream): the second positional arg, if any, is the downstream,
+        # and the container is the default dict.
+        map_factory, downstream = dict, _TO_LIST if map_factory is _UNSET else map_factory
+        supplied_factory = False
+    else:
+        supplied_factory = True
+    # after the arity branch, so the 3-arg form rejects a non-Collector too
+    _check_downstream(downstream)
+
+    # async unconditionally, for the reason to_map()'s supplier is: it runs once
+    # per collection rather than per element, so one path beats a sync fast one.
+    async def _supply() -> _GroupBox:
+        return _GroupBox(await _maybe_await(map_factory))
+
+    async def _accumulate(container: _GroupBox, element: T) -> None:
+        await _group_into(container, classifier, downstream, element)
+
+    def _finish(container: _GroupBox) -> Any:
+        return _finish_groups(downstream, container.groups)
+
     # Derives characteristics from the downstream, the same one keyword
     # mapping()/collecting_and_then() use. dict.__eq__ is key-order-insensitive
     # and compares values pairwise, and the classifier is a function of the
@@ -528,18 +630,29 @@ def grouping_by(
     # value is - which is the downstream's characteristic and nothing else. The
     # dict's own key iteration order does follow encounter order, and that is
     # no obstacle: UNORDERED promises equality, not iteration order.
-    _check_downstream(downstream)
-
-    def _supply() -> _GroupBox:
-        return _GroupBox({})
-
-    async def _accumulate(container: _GroupBox, element: T) -> None:
-        await _group_into(container, classifier, downstream, element)
-
-    def _finish(container: _GroupBox) -> Any:
-        return _finish_groups(downstream, container.groups)
-
-    return Collector(_supply, _accumulate, finisher=_finish, characteristics=downstream.characteristics)
+    #
+    # That derivation is bounded to the default dict container, and a supplied
+    # map_factory clears the mark: it rests on dict.__eq__ ignoring key
+    # insertion order, and a caller-supplied mapping type need not.
+    # OrderedDict compared against another OrderedDict is equal only if its
+    # keys went in in the same order, and key insertion order here follows the
+    # order groups were first seen - which racing reorders. This is the rule
+    # to_collection() already follows: a caller-supplied container declares
+    # nothing.
+    #
+    # It keys on the factory being *supplied at all*, not on the type it
+    # produces, so grouping_by(f, dict, ...) is cleared too. Deciding from the
+    # type would mean either calling the factory here to look at what it returns
+    # - it is a per-collection supplier and must not run early - or a
+    # `map_factory is dict` whitelist, which answers nothing for any other type.
+    # A caller who knows their chosen type's equality ignores key order has
+    # unordered(), one level up.
+    return Collector(
+        _supply,
+        _accumulate,
+        finisher=_finish,
+        characteristics=() if supplied_factory else downstream.characteristics,
+    )
 
 
 def partitioning_by(
