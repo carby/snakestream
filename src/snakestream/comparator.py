@@ -4,7 +4,7 @@ from typing import Any, TypeVar, cast, overload
 from collections.abc import Callable
 
 from snakestream.callable_dispatch import is_async_callable
-from snakestream.exception import StreamBuildException
+from snakestream.exception import COMPARATOR_RESULT_TYPE_MESSAGE, StreamBuildException
 from snakestream.type import Comparator, KeyExtractor, KeyExtractorComparator
 
 T = TypeVar("T")
@@ -17,11 +17,6 @@ _ASYNC_COMPARATOR_MESSAGE = (
     "(supported today), or pass an async comparator directly to sorted() "
     "(reaches merge_sort())"
 )
-
-
-def check_comparator_result_type(value: int) -> None:
-    if type(value) is not int:
-        raise TypeError(f"comparator must return an int (negative, zero, or positive), not {type(value).__name__}")
 
 
 def is_new_extremum(sign: int, asc: bool) -> bool:
@@ -43,15 +38,13 @@ def is_new_extremum(sign: int, asc: bool) -> bool:
     comparator-contract, which states the rule for sorted() too, as stability.
 
     Sync, and takes an already-awaited sign: it sits on the per-element path of
-    both callers, so it replaces their existing check_comparator_result_type()
-    call rather than adding a second one. The type test is inlined and only the
-    raising path calls out, which keeps the success path at exactly the one
-    call per element it cost before - delegating the check measured ~5%, and
-    routing these terminals through a Collector instead cost +26% (see this
-    change's design.md).
+    both callers, so it carries their comparator-result type check rather than
+    letting them add a second one. That check is written out, here as at every
+    other site - delegating it measured ~5% - and routing these terminals
+    through a Collector instead cost +26% (see this change's design.md).
     """
     if type(sign) is not int:
-        check_comparator_result_type(sign)
+        raise TypeError(COMPARATOR_RESULT_TYPE_MESSAGE.format(type(sign).__name__))
     return sign < 0 if asc else sign > 0
 
 
@@ -175,8 +168,8 @@ def _comparator_segment_sign_sync(payload: KeyExtractorComparator, a: Any, b: An
         return 0 if ea is None and eb is None else _null_sign(ea is None, nulls)
     sign = comparator(ea, eb)
     if type(sign) is not int:
-        check_comparator_result_type(cast("int", sign))
-    return cast("int", sign)
+        raise TypeError(COMPARATOR_RESULT_TYPE_MESSAGE.format(type(sign).__name__))
+    return sign
 
 
 async def _comparator_segment_sign_async(
@@ -198,8 +191,8 @@ async def _comparator_segment_sign_async(
         return 0 if ea is None and eb is None else _null_sign(ea is None, nulls)
     sign = comparator(ea, eb)
     if type(sign) is not int:
-        check_comparator_result_type(cast("int", sign))
-    return cast("int", sign)
+        raise TypeError(COMPARATOR_RESULT_TYPE_MESSAGE.format(type(sign).__name__))
+    return sign
 
 
 def _constant_key(_: Any) -> int:

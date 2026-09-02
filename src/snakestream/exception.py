@@ -14,3 +14,12 @@ class StreamBuildException(StreamException):
 
 class IllegalStateException(StreamException):
     pass
+
+
+# The message for the one TypeError this library raises rather than defining:
+# comparator-contract requires a plain TypeError for a comparator returning a
+# non-int, so there is no class to hang it on. Named here so all seven check
+# sites - three in sort.py, four in comparator.py - word it identically; the
+# check itself is inlined at each, being one `type(x) is not int` test that a
+# function call could only wrap.
+COMPARATOR_RESULT_TYPE_MESSAGE = "comparator must return an int (negative, zero, or positive), not {}"
