@@ -11,27 +11,26 @@ from snakestream.comparator import (
     KeyComparator,
     NullPlacement,
     Segment,
-    check_comparator_result_type,
 )
-from snakestream.exception import StreamBuildException
+from snakestream.exception import COMPARATOR_RESULT_TYPE_MESSAGE, StreamBuildException
 from snakestream.type import AsyncComparator, Comparator
 
 
 def _checked(comparator: Comparator) -> Callable[[Any, Any], int]:
     """A sync comparator wrapped so cmp_to_key cannot bypass the int contract.
 
-    The type test is inlined and only the raising path calls out - the same
-    trick is_new_extremum uses in comparator.py, and for the same reason:
-    cmp_to_key calls this O(n log n) times. Delegating unconditionally to
-    check_comparator_result_type measured slower there and would here; keeping
-    the check at all is what makes the sync fast path 2.3x rather than 3.6x.
+    The test is one `type(sign) is not int`, written out here rather than
+    called: cmp_to_key runs this O(n log n) times, and a function whose whole
+    body is that test plus a raise gives back less than the indirection costs
+    to read. Only the message is shared, from exception.py. Keeping the check
+    at all is what makes the sync fast path 2.3x rather than 3.6x.
     """
 
     def compare(a: Any, b: Any) -> int:
         sign = comparator(a, b)
         if type(sign) is not int:
-            check_comparator_result_type(cast("int", sign))
-        return cast("int", sign)
+            raise TypeError(COMPARATOR_RESULT_TYPE_MESSAGE.format(type(sign).__name__))
+        return sign
 
     return compare
 
@@ -52,7 +51,7 @@ def _checked_segment_comparator(comparator: Comparator) -> Callable[[Any, Any], 
         if isawaitable(sign):
             raise StreamBuildException(_ASYNC_COMPARATOR_MESSAGE)
         if type(sign) is not int:
-            check_comparator_result_type(cast("int", sign))
+            raise TypeError(COMPARATOR_RESULT_TYPE_MESSAGE.format(type(sign).__name__))
         return cast("int", sign)
 
     return compare
@@ -307,7 +306,8 @@ async def _merge(left: list[Any], right: list[Any], comparator: AsyncComparator)
     j = 0
     while i < len(left) and j < len(right):
         sign = await comparator(left[i], right[j])
-        check_comparator_result_type(sign)
+        if type(sign) is not int:
+            raise TypeError(COMPARATOR_RESULT_TYPE_MESSAGE.format(type(sign).__name__))
         if sign <= 0:
             result.append(left[i])
             i += 1
