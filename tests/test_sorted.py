@@ -8,6 +8,7 @@ from hypothesis import strategies as st
 from snakestream import Stream
 from snakestream.collectors import to_list
 from snakestream.comparator import comparing
+from snakestream.exception import StreamException
 
 
 @pytest.mark.asyncio
@@ -138,6 +139,21 @@ async def test_sorted_rejects_non_int_on_a_later_comparison() -> None:
     # when / then
     with pytest.raises(TypeError):
         await Stream.of(outset).sorted(comparator=lambda a, b: a - b).collect(to_list())
+
+
+@pytest.mark.asyncio
+async def test_bool_comparator_rejection_is_caught_as_a_library_exception() -> None:
+    outset = [3, 1, 2]
+    with pytest.raises(StreamException) as excinfo:
+        await Stream.of(outset).sorted(comparator=lambda a, b: a > b).collect(to_list())
+    assert isinstance(excinfo.value, TypeError)
+
+
+@pytest.mark.asyncio
+async def test_non_int_non_bool_comparator_return_is_rejected_naming_the_type() -> None:
+    outset = [3, 1, 2]
+    with pytest.raises(TypeError, match="str"):
+        await Stream.of(outset).sorted(comparator=lambda a, b: "gt" if a > b else "le").collect(to_list())
 
 
 # --- under the racing executor ----------------------------------------------

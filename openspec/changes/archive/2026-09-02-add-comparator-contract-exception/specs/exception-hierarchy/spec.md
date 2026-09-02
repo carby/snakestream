@@ -1,10 +1,4 @@
-## Purpose
-
-Defines the public exception types this library raises and the common base
-every one of them derives from, so a caller can catch anything snakestream
-raised without enumerating the leaves.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: `StreamException` is the base of every exception the library raises
 
@@ -55,6 +49,8 @@ what they caught before.
 #### Scenario: The comparator leaf reports both its ancestors
 - **WHEN** `issubclass` is asked whether `ComparatorContractException` derives from `StreamException` and from `TypeError`
 - **THEN** both answer `True`, and it derives from `StreamBuildException` as well
+
+## ADDED Requirements
 
 ### Requirement: `ComparatorContractException` reports a comparator that breaks its contract
 
