@@ -10,7 +10,6 @@ from snakestream.sink import TerminalSink, _UNSET
 from snakestream.type import (
     T,
     Accumulator,
-    BiConsumer,
     Comparator,
     Consumer,
     Predicate,
@@ -117,30 +116,6 @@ class _MinMaxSink(AsyncDispatch, TerminalSink[T]):
 
     def _finish(self, container: Any) -> Any:
         return None if container is _UNSET else container
-
-
-class _MutableReductionSink(AsyncDispatch, TerminalSink[T]):
-    """collect(supplier, accumulator, combiner)'s terminal. The supplier is
-    called once per composition by the caller, so this sink is handed the
-    already-built container rather than building it itself."""
-
-    def __init__(self, container: Any, accumulator: BiConsumer) -> None:
-        super().__init__()
-        self._supplied = container
-        self._init_dispatch(accumulator)
-
-    def _create_container(self) -> Any:
-        return self._supplied
-
-    async def accept(self, element: Any) -> None:
-        r = self._fn(self._container, element)
-        if self._is_async:
-            await cast("Awaitable[None]", r)
-        elif not self._checked:
-            self._checked = True
-            if isawaitable(r):
-                self._is_async = True
-                await r
 
 
 class _FindSink(TerminalSink[T]):

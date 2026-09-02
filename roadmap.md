@@ -37,19 +37,65 @@ whoever picks them up should make the batching call themselves.
 **Entry criterion: claimed.** Someone has committed to doing it next. That is
 the only thing that moves an item here from **Now**.
 
-**Empty, deliberately.** Item 3, the last of the four, closed on 2026-09-01 as
-`bound-in-flight-work-per-worker` (see **Done**); items 1, 2 and 4 closed
-earlier. **The numbering stays retired rather than reused**: archived proposals
-cite "the roadmap's **Next** item 2" and "item 3" by number, and reusing 1-4 for
-different work would silently redirect those references.
+### Claimed 2026-09-02
 
-This section used to say "refill from **Now**'s **Queued changes**". It no
-longer does — that instruction treated an empty heading as a defect to fix.
-Promotion is a decision, not housekeeping, so the section stays empty until an
-item is *chosen*. The five parity gaps sit in **Queued changes** unranked and
-unbatched on purpose (`enumerate-java-8-parity-gaps` declined to batch them),
-so whoever picks one up makes that call themselves. **An empty Next means
-nothing is claimed, not that nothing is available.**
+Three duplications surfaced by the same read that produced
+`collapse-mutable-reduction-onto-collector` (scaffolded the same day, and
+deliberately *not* listed here — it has its own change directory). All three
+were passed over for that one because it was the only candidate whose
+per-element path is provably unchanged; each of these needs a measurement the
+collapse did not. **Ranked as listed, most valuable first.** Read each item's
+gate before starting: two of the three sit on a per-element path, which is
+where every measured rejection in **Done** has happened.
+
+**1. `comparator.py`'s segment-sign 2x2.** `_key_segment_sign_sync`,
+`_key_segment_sign_async`, `_comparator_segment_sign_sync` and
+`_comparator_segment_sign_async` are one function written four times: the
+natural-ordering expression `(ka > kb) - (ka < kb)` appears in all four, and so
+does the null-tie clause `0 if <a> is None and <b> is None else _null_sign(...)`.
+The shape underneath is that **a key segment is a comparator segment whose
+comparator is natural ordering** — which is the unification, and also the
+reason it cannot be done by normalising the payload: `sort.py`'s
+`_segment_column()` dispatches on `isinstance(payload, tuple)` to choose between
+a plain key column (compared in C) and a `cmp_to_key`-wrapped one, and that
+distinction is the decorate-sort-undecorate fast path. So the payload shapes
+stay and only the sign functions merge.
+
+*The gate.* These four are reached only through `KeyComparator.__call__`, which
+`sort()` never uses — it unwraps `.segments` instead. The live consumers are
+`min()`/`max()` and `min_by()`/`max_by()`, at one comparison per element. That
+is a per-element path, so the `collapse-terminal-collector-duplication`
+threshold (+10% ns/element, sync variant) applies unchanged. `is_new_extremum`'s
+own docstring already records what this neighbourhood costs: delegating its type
+check measured ~5%.
+
+**2. `collectors.py`'s per-box dispatch state.** Nine `_*Box` dataclasses carry
+14 `(<name>_is_async, <name>_checked)` pairs — 28 field declarations — plus a
+`_supply()` that re-seeds them from `is_async_callable`. It is `AsyncDispatch`'s
+three pieces of state, written out longhand once per collector, because a
+`Collector` is reusable across concurrent collections and so cannot hold
+classification on itself the way a sink does.
+
+*The gate, and it is the hard one.* Every consolidation that suggests itself —
+a shared base box, a `Dispatch` slot object, routing the four hand-inlined
+accumulators through the existing `_classify_step` — adds either an attribute
+hop (`container.key.is_async` for `container.key_is_async`) or a tuple
+allocation on the per-element path. That is precisely the charge that killed
+`add-callsite-dispatch`, `collapse-terminal-collector-duplication` and the
+`merge()` generator in `extract-racing-task-lifecycle`. **This is the largest
+literal duplication in the repository and the one most likely to be rejected
+again.** Anyone starting it should write the benchmark before the refactor, and
+should expect the answer to be "extract the *declaration* (the box's fields and
+their seeding) while leaving the per-element dance inlined" rather than a clean
+collapse.
+
+**3. `sort.py`'s `_column()` re-interleave.** Three branches — async extractor,
+sync-that-lied, plain sync — each end in the same `it = iter(...)` followed by
+`[None if element is None else next(it) for element in arr]`, the step that
+re-aligns gathered keys against the `None` elements they skipped. The smallest
+of the three by far, and the only one that is free: `_column()` runs once per
+segment per sort, never per element, so no gate applies. Worth doing on its own
+or as warm-up for item 1, which is the same neighbourhood.
 
 ## Later
 
@@ -83,6 +129,69 @@ core semantic.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should be declared permanent. **Narrowed 2026-08-31: the behaviour is now documented in README's `of()` row.** That was a defect independent of this decision — the row described Java's semantics, so the divergence used by every example in the file was invisible to a reader. Documenting it does not close this item; what remains is the call on whether to keep it. Surfaced 2026-08-20 in the same code-quality read that produced the first batch of **Now** items, all since closed. |
 
 ## Done
+
+- **`collapse-mutable-reduction-onto-collector`** (2026-09-02) —
+  `_MutableReductionSink` (`terminals.py`) and `_CollectorSink`
+  (`collector.py`) were the same bases, the same `AsyncDispatch` triple and a
+  byte-identical `accept()`, differing only in where the container came from.
+  `collect()`'s three-argument branch now builds a
+  `Collector(supplier, accumulator, combiner)` and drives it through the
+  existing `_CollectorSink` path the single-argument branch already used;
+  `_MutableReductionSink` and `Stream._collect_mutable()` are deleted, along
+  with `terminals.py`'s now-unused `BiConsumer` import and `stream.py`'s
+  now-unused `_maybe_await` import (`TerminalSink.begin()` already routes
+  `_create_container()` through `_maybe_await`, so the supplier needs no
+  separate awaiting once it lives on a `Collector`). `ty check` stayed clean
+  without the `cast` design.md Decision 5 anticipated needing between
+  `collect()`'s `BiConsumer[R,R]` combiner and `Collector.__init__`'s
+  `Combiner[A] | None` — the mismatch `ty` was expected to reject did not
+  materialize, so none was added, per the task's own "do not add the cast
+  preemptively."
+
+  **What makes this different from `collapse-terminal-collector-duplication`
+  (2026-08-21, below), which rejected the same *shape* of collapse for
+  `count()`, `min()`/`max()` and `reduce()`:** that change's three sinks have
+  no `Collector` counterpart to fold onto — `counting()`/`min_by()`/
+  `reducing()` keep their own per-collection dispatch state on a
+  supplier-made box and wrap the user's callable in their own
+  `async def _accumulate`, so routing through them adds a coroutine frame and
+  an attribute hop per element that the dedicated sinks don't pay. The
+  three-argument `collect()` form has neither box nor wrapper: its
+  `accumulator` already *is* a `Collector`'s accumulator, `(container,
+  element)`, dispatched by the same `AsyncDispatch` attributes on the same
+  sink shape `_MutableReductionSink.accept()` ran. Counterpart versus no
+  counterpart, box versus no box — that is the distinction, not the
+  conclusion "collector-routing terminals is now safe to retry." Anyone
+  reading this as licence to re-open `_CountSink`, `_ReduceSink` or
+  `_MinMaxSink` is reading it backwards; those remain a measured, deliberately
+  rejected trade.
+
+  **Measured against the `collapse-terminal-collector-duplication` gate**
+  (+10% ns/element on the sync variant, Python 3.14.5, 20,000 elements,
+  interleaved round-robin, best of 3 across 10 rounds), pre-change baseline
+  (`_MutableReductionSink` via the public three-argument `collect()`, recorded
+  before any code changed) against the shipped code (the same three-argument
+  `collect()` call, now routed through `_CollectorSink`), ns/element:
+
+  | variant | baseline | shipped | delta |
+  |---|---|---|---|
+  | sync accumulator | 321.2 / 327.9 / 341.9 | 299.2 / 320.4 / 325.8 | −6.9% / −2.3% / −4.7% |
+  | async accumulator | 390.8 / 427.9 / 401.6 | 417.9 / 409.9 / 433.0 | +6.9% / −4.2% / +7.8% |
+
+  Every sync delta negative and every figure inside the ~10% run-to-run noise
+  this harness has shown before; the gate is judged on the sync median
+  (−2.3%), well under +10%, so the change **shipped rather than reverted** —
+  the branch design.md's Decision 4 risk did not take.
+
+  988 tests green, unchanged from before — `git diff --stat tests/` empty, no
+  test file, name or import touched (the only test naming the deleted path,
+  `test_callable_dispatch.py::test_collect_mutable_sync_call_returning_coroutine`,
+  exercises the public three-argument `collect()` and passed unedited).
+  Coverage 98.62%; `terminals.py` shrank from 129 to 113 statements, 0 missed
+  before and after, 100% both times — the sink it lost was fully covered, not
+  under-tested. No README migration entry, and that absence is a claim: no
+  signature, return type, parity checkmark or observable behaviour changed.
+  `skip_specs: true`.
 
 - **`extract-racing-task-lifecycle`** (2026-09-02) — the `FIRST_COMPLETED`
   merge over N branches' `anext()` existed twice, verbatim, in

@@ -6,7 +6,7 @@ from inspect import isawaitable, iscoroutinefunction
 from typing import TYPE_CHECKING, Any, Generic, cast, overload
 from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Coroutine, Iterable
 
-from snakestream.callable_dispatch import _maybe_await, is_async_callable
+from snakestream.callable_dispatch import is_async_callable
 from snakestream.collector import Characteristics, Collector, StreamingCollector, _CollectorSink
 from snakestream.collectors import to_list
 from snakestream.exception import IllegalStateException, StreamBuildException
@@ -29,7 +29,6 @@ from snakestream.terminals import (
     _ForEachSink,
     _MatchSink,
     _MinMaxSink,
-    _MutableReductionSink,
     _ReduceSink,
 )
 from snakestream.type import (
@@ -494,25 +493,20 @@ class Stream(Generic[T]):
                 "or to_generator for a lazy, streaming result"
             )
         # 3-arg mutable reduction: supplier/accumulator, sync or async, are
-        # dispatched via _maybe_await like every other user-supplied
-        # callable. combiner is accepted for signature parity with Java's
-        # Stream.collect(Supplier, BiConsumer, BiConsumer) but is never
-        # invoked: collect() always folds over a single composed
-        # AsyncGenerator, sequential or parallel, with no independently
-        # accumulated partitions to merge - the same posture reduce()
-        # already has under .parallel().
-        supplier, accumulator, _combiner = args
-        return self._collect_mutable(supplier, accumulator)
-
-    async def _collect_mutable(self, supplier: Supplier[R], accumulator: BiConsumer[R, T]) -> R:
-        # The supplier runs once per composition, so _maybe_await is the right
-        # dispatch here; the per-element accumulator is specialized in the sink.
-        container = await _maybe_await(supplier)
+        # exactly a Collector's supplier/accumulator. combiner is accepted for
+        # signature parity with Java's Stream.collect(Supplier, BiConsumer,
+        # BiConsumer) but is never invoked: collect() always folds over a
+        # single composed AsyncGenerator, sequential or parallel, with no
+        # independently accumulated partitions to merge - the same posture
+        # reduce() already has under .parallel().
+        supplier, accumulator, combiner = args
+        collector = Collector(supplier, accumulator, combiner)
         # an arbitrary user accumulator folding into an arbitrary container:
         # nothing here says the result is order-independent, so it is not
         # assumed to be. The Collector form has UNORDERED to say otherwise;
-        # this form has no way to.
-        return cast(R, await self._evaluate(_MutableReductionSink(container, accumulator), OrderDemand.IF_ORDERED))
+        # this form declares no characteristics, so it stays IF_ORDERED by
+        # the same derivation the single-argument branch above uses.
+        return self._evaluate(_CollectorSink(collector), OrderDemand.IF_ORDERED)
 
     @overload
     async def reduce(self, identity: T | R, accumulator: Accumulator[T, R]) -> T | R: ...
