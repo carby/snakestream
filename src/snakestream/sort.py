@@ -1,6 +1,7 @@
 import asyncio
 from functools import cmp_to_key
 from inspect import isawaitable
+from operator import itemgetter
 from typing import Any, cast
 from collections.abc import Callable
 
@@ -98,6 +99,14 @@ async def sort(arr: list[Any], comparator: Comparator) -> list[Any]:
     return arr
 
 
+def _interleave(arr: list[Any], values: list[Any]) -> list[Any]:
+    """Re-align extracted values against `arr`, reinserting `None` for every
+    element the extractor skipped - `values` holds one entry per non-`None`
+    element of `arr`, in the same order."""
+    it = iter(values)
+    return [None if element is None else next(it) for element in arr]
+
+
 async def _column(extractor: Callable[[Any], Any], arr: list[Any]) -> list[Any]:
     """Extract one segment's key for every element, concurrently across
     elements. No cmp_to_key, no merge_sort, and no sign/bool validation -
@@ -116,30 +125,20 @@ async def _column(extractor: Callable[[Any], Any], arr: list[Any]) -> list[Any]:
     elements costs 1325ms sequential against 9ms gathered - concurrency is the
     whole point of an async key extractor, and a sequential loop was throwing
     it away. The one-time isawaitable safety net (a "sync" extractor whose
-    plain def __call__ actually returns a coroutine) is a trial call on the
-    first non-`None` element - the same shape as sort()'s own trial
-    comparison - but the coroutine it produces joins the gather instead of
-    being discarded, so it costs no extra invocation.
+    plain def __call__ actually returns a coroutine) is caught on
+    `results[0]` - the same shape as sort()'s own trial comparison - but the
+    coroutine it produces joins the gather instead of being discarded, so it
+    costs no extra invocation.
     """
-    if is_async_callable(extractor):
-        results = await asyncio.gather(*(extractor(element) for element in arr if element is not None))
-        it = iter(results)
-        return [None if element is None else next(it) for element in arr]
-
-    trial_i = next((i for i, element in enumerate(arr) if element is not None), None)
-    if trial_i is None:
+    present = [element for element in arr if element is not None]
+    if not present:
         return [None] * len(arr)
-
-    trial = extractor(arr[trial_i])
-    if isawaitable(trial):
-        rest = await asyncio.gather(
-            trial, *(extractor(element) for i, element in enumerate(arr) if element is not None and i != trial_i)
-        )
-        it = iter(rest)
-        return [None if element is None else next(it) for element in arr]
-
-    it = iter([trial, *(extractor(element) for i, element in enumerate(arr) if element is not None and i != trial_i)])
-    return [None if element is None else next(it) for element in arr]
+    if is_async_callable(extractor):
+        return _interleave(arr, await asyncio.gather(*map(extractor, present)))
+    results = [extractor(element) for element in present]
+    if isawaitable(results[0]):
+        return _interleave(arr, await asyncio.gather(*results))
+    return _interleave(arr, results)
 
 
 async def _segment_column(payload: Any, arr: list[Any]) -> list[Any]:
@@ -220,11 +219,12 @@ async def _sort_by_key(
     that does not itself support < still sorts fine as long as its key does.
 
     A single ascending segment - what every pre-chaining `comparing()` call
-    produces - takes today's exact path: one column, no tuple build, no outer
-    gather, so add-comparator-comparing's measured figures stand unchanged.
-    A single descending segment (only reachable via `reversed()`) adds
-    `reverse=True`, which is comparator negation exactly (see below) rather
-    than a second code path.
+    produces - takes the `len(segments) == 1` fan-out branch and the
+    `len(columns) == 1` lane: one column, no tuple build, no outer gather, so
+    add-comparator-comparing's measured figures stand unchanged. A single
+    descending segment (only reachable via `reversed()`) adds `reverse=True`,
+    which is comparator negation exactly (see below) rather than a second code
+    path.
 
     Two or more segments extract their columns concurrently with each other
     via `asyncio.gather` - not just concurrently within a column - so a chain
@@ -264,27 +264,25 @@ async def _sort_by_key(
         return arr
 
     if len(segments) == 1:
-        payload, descending = segments[0]
-        keys = await _segment_column(payload, arr)
-        if nulls is not NullPlacement.ABSENT:
-            keys = _tolerant_column(keys, nulls)
-        paired = sorted(zip(keys, arr, strict=True), key=lambda pair: pair[0], reverse=descending)
-        return [element for _, element in paired]
-
-    columns = await asyncio.gather(*(_segment_column(payload, arr) for payload, _ in segments))
+        columns = [await _segment_column(segments[0][0], arr)]
+    else:
+        columns = await asyncio.gather(*(_segment_column(payload, arr) for payload, _ in segments))
     if nulls is not NullPlacement.ABSENT:
         columns = [_tolerant_column(column, nulls) for column in columns]
     directions = [descending for _, descending in segments]
-    rows = zip(*columns, strict=True)
 
-    if all(directions):
-        paired = sorted(zip(rows, arr, strict=True), key=lambda pair: pair[0], reverse=True)
-    elif not any(directions):
-        paired = sorted(zip(rows, arr, strict=True), key=lambda pair: pair[0])
+    if len(columns) == 1:
+        rows, reverse = columns[0], directions[0]
+    elif all(directions) or not any(directions):
+        rows, reverse = zip(*columns, strict=True), all(directions)
     else:
-        wrapped = (tuple(_Descending(v) if d else v for v, d in zip(row, directions, strict=True)) for row in rows)
-        paired = sorted(zip(wrapped, arr, strict=True), key=lambda pair: pair[0])
+        rows = (
+            tuple(_Descending(v) if d else v for v, d in zip(row, directions, strict=True))
+            for row in zip(*columns, strict=True)
+        )
+        reverse = False
 
+    paired = sorted(zip(rows, arr, strict=True), key=itemgetter(0), reverse=reverse)
     return [element for _, element in paired]
 
 
