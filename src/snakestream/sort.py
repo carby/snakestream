@@ -151,13 +151,13 @@ async def _segment_column(payload: Any, arr: list[Any]) -> list[Any]:
     `None` element, so a bare comparator segment's column takes the same
     elements every other segment's column would see) and then wraps each
     non-`None` entry through `cmp_to_key(_checked_segment_comparator(comparator))`,
-    so it rides the same tuple/lane machinery as a key extractor's column: a
+    so it rides the same successive-pass sort as a key extractor's column: a
     `None` entry (null element, or for the two-argument form a null key)
     stays `None` for `_tolerant_column()` to place - a comparator segment has
     no key of its own to skip a `None` element for, so it presents as a null
     key exactly as an extractor segment's does (Decision 5) - and the wrapped
-    entries compare - once, in C, via `_Descending`/`reverse=True`/plain
-    tuple order - exactly as a natural key would.
+    entries compare in C via `reverse=True`/plain tuple order, one pass per
+    segment, exactly as a natural key would.
     """
     if not isinstance(payload, tuple):
         return await _column(payload, arr)
@@ -166,26 +166,6 @@ async def _segment_column(payload: Any, arr: list[Any]) -> list[Any]:
     raw = await _column(extractor, arr) if extractor is not None else arr
     to_key = cmp_to_key(_checked_segment_comparator(comparator))
     return [None if v is None else to_key(v) for v in raw]
-
-
-class _Descending:  # noqa: PLW1641 - only ever compared inside a sort tuple, never hashed
-    """Wraps a key so tuple comparison treats it as negated - the mixed-
-    direction lane's only cost. `__lt__` and `__eq__` are the only dunders
-    tuple comparison uses, so nothing else is needed. Paid only on the
-    columns a chain marked descending, and only when the chain mixes
-    directions: an all-ascending or all-descending chain never builds one.
-    """
-
-    __slots__ = ("key",)
-
-    def __init__(self, key: Any) -> None:
-        self.key = key
-
-    def __lt__(self, other: "_Descending") -> bool:
-        return other.key < self.key
-
-    def __eq__(self, other: object) -> bool:
-        return isinstance(other, _Descending) and other.key == self.key
 
 
 def _presence_markers(placement: NullPlacement) -> tuple[int, int]:
@@ -199,9 +179,9 @@ def _presence_markers(placement: NullPlacement) -> tuple[int, int]:
 def _tolerant_column(keys: list[Any], placement: NullPlacement) -> list[tuple[int, Any]]:
     """Wrap one column's keys as `(present, key)` per design Decision 3.
     Tuple comparison settles a null-vs-null pair on the leading component and
-    never evaluates `None < None`; a column's direction (plain, `reverse=True`,
-    or `_Descending`) then moves the nulls exactly as it moves any other key,
-    which is what makes `reversed()` need no null-specific rule."""
+    never evaluates `None < None`; a column's own pass over `reverse=` then
+    moves the nulls exactly as it moves any other key, which is what makes
+    `reversed()` need no null-specific rule."""
     null_marker, present_marker = _presence_markers(placement)
     return [(null_marker, None) if key is None else (present_marker, key) for key in keys]
 
@@ -230,35 +210,41 @@ async def _sort_by_key(
     via `asyncio.gather` - not just concurrently within a column - so a chain
     of k async extractors over n elements has k*n extractions in flight
     rather than k sequential rounds of n; this is the capability's main
-    reason to exist. The columns zip into one tuple per element, and tuple
-    comparison is lexicographic and short-circuits on the first unequal
-    component in C, which is exactly tie-break semantics - so k segments still
-    cost one Timsort pass, in one of three lanes:
+    reason to exist. The columns then sort as `sort-mixed-lane-by-successive-
+    passes` (2026-09-02) settled it: one `sorted()` on the least significant
+    column, then one `.sort()` per remaining column in decreasing
+    significance, each pass carrying that column's own `reverse=`. CPython
+    guarantees `list.sort()` is stable and that `reverse=True` is stable in
+    the strong sense - it negates comparisons rather than reversing the
+    result - so a run of stable passes, least significant first, composes
+    into exactly the lexicographic multi-key ordering a single tuple sort
+    would, direction per column included. Every pass compares bare keys in C;
+    no wrapper object is ever built.
 
-    - all ascending: plain tuple sort.
-    - all descending: `sort(reverse=True)`. CPython's sort is stable in the
-      strong sense under `reverse=True` - equal elements keep their original
-      relative order, it is not a post-hoc list reversal - so this equals
-      comparator negation exactly, ties included.
-    - mixed: only the descending columns are wrapped in `_Descending`, and
-      the wrapped tuples sort ascending. This is the only lane that pays for
-      a wrapper, and only on the columns that asked for one.
+    This replaces the three lanes an earlier version of this function hand-
+    built (all-ascending tuple sort, all-descending `reverse=True`, and a
+    mixed lane wrapping descending columns in a `_Descending` shim so tuple
+    comparison would treat them as negated) with the one loop above, for
+    every chain of two or more segments regardless of direction - see that
+    change's design.md for the alternatives it priced and declined.
 
-    Measured: a 2-segment chain sorting 20,000 `(int, int)` tuples costs
-    ~12ms all-ascending against ~40ms with the second segment descending -
-    roughly 3.3x, from `_Descending.__lt__`'s Python-level indirection
-    replacing a plain tuple comparison in C on every element the earlier
-    column ties on. Paid only in the mixed lane; both single-lane cases above
-    stay in C throughout.
+    Measured, 20,000 rows: a 2-segment mixed-direction chain that cost ~35ms
+    under the old wrapper lane costs ~6ms here, and an 8-segment mixed chain
+    that cost ~56ms costs ~20ms - the wrapper's Python-level `__lt__` per
+    tied pair is gone. A uniform (single-direction) chain trades the old
+    lane's one short-circuiting tuple comparison for k full passes, so it
+    wins at two and three segments and loses from five on: the measured
+    crossover on this machine sits between four and five segments, where a
+    tuple comparison's ability to stop at the first unequal component starts
+    to beat k passes each visiting every row. A five-or-more-segment
+    `then_comparing()` chain is not a shape this library has seen in the
+    wild.
 
-    A `nulls_first`/`nulls_last` comparator (design.md's Open Question, settled
-    here) pays a fourth cost, orthogonal to the three lanes above: wrapping a
-    single ascending segment's column as `(present, key)` tuples measured
-    ~6.5ms against ~13.7ms plain-key on 20,000 floats with no `None` among them
-    - roughly 2.1x, a 2-tuple comparison in C replacing a bare-value one. Paid
-    only by a comparator built through `nulls_first`/`nulls_last`; every
-    intolerant `comparing()` chain still takes the plain-key lane above
-    unchanged.
+    A `nulls_first`/`nulls_last` comparator wraps each column's keys as
+    `(present, key)` tuples (see `_tolerant_column()`) before this function's
+    passes run, so a tolerant chain pays a per-column 2-tuple comparison
+    instead of a bare-value one - orthogonal to, and unaffected by, the
+    lane rewrite above.
     """
     if not arr:
         return arr
@@ -272,18 +258,14 @@ async def _sort_by_key(
     directions = [descending for _, descending in segments]
 
     if len(columns) == 1:
-        rows, reverse = columns[0], directions[0]
-    elif all(directions) or not any(directions):
-        rows, reverse = zip(*columns, strict=True), all(directions)
-    else:
-        rows = (
-            tuple(_Descending(v) if d else v for v, d in zip(row, directions, strict=True))
-            for row in zip(*columns, strict=True)
-        )
-        reverse = False
+        paired = sorted(zip(columns[0], arr, strict=True), key=itemgetter(0), reverse=directions[0])
+        return list(map(itemgetter(-1), paired))
 
-    paired = sorted(zip(rows, arr, strict=True), key=itemgetter(0), reverse=reverse)
-    return [element for _, element in paired]
+    last = len(columns) - 1
+    paired = sorted(zip(*columns, arr, strict=True), key=itemgetter(last), reverse=directions[last])
+    for i in reversed(range(last)):
+        paired.sort(key=itemgetter(i), reverse=directions[i])
+    return list(map(itemgetter(-1), paired))
 
 
 async def merge_sort(arr: list[Any], comparator: AsyncComparator) -> list[Any]:

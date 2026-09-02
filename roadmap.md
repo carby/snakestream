@@ -32,39 +32,53 @@ oversight rather than a decision. Filed as five and not one batched entry: they
 share a shape only at the surface (see that change's design.md, decision 6), and
 whoever picks them up should make the batching call themselves.
 
-**`take-window-slots-atomically`** (scaffolded 2026-09-02) — `_Window` and
-`_guarded()` hand-roll a counting semaphore out of a counter and an
-`asyncio.Event`, and an `Event` cannot *hold* a slot: it only broadcasts that
-one may exist. So a branch that waited for room has to ask again after taking
-the lock, and that re-check is what forces the doubly-nested `while True`, the
-`clear()`/`wait()` protocol and a barging window with a regression test of its
-own. A synchronous `take()` — atomic because it contains no `await`, so
-nothing runs between its check and its increment — closes the window instead of
-compensating for it, and collapses the arm to one loop level.
+### Surfaced 2026-09-02, by the `sort-mixed-lane-by-successive-passes` read
 
-*The gate is met, in advance.* This sits on the per-element path of the
-windowed (barrier) arm, so the `collapse-terminal-collector-duplication`
-`+10%` ns/element threshold applies; the measurement is already banked in the
-change's design.md rather than left for whoever starts it. Three interleaved
-runs, ordered delivery, min/median: `take()` at +1.2%/+0.3%, +0.4%/+0.9%,
-−0.0%/−1.2% — straddling zero.
+Two smaller findings from the same pass over `src/`, recorded rather than
+scaffolded because the sort item was the one worth taking first. Neither is
+claimed. **Ranked as listed.** Both were checked against **Done** before being
+filed here: neither is a re-proposal of anything in the rejection log.
 
-**`asyncio.Semaphore` itself is the measured rejection**, and it belongs in
-this log rather than only in the change: it is exactly the missing primitive by
-contract, and it cost **+5.7%/+7.3%, +3.9%/+6.0%, +6.4%/+5.6%** on the same
-three runs, positive in all six statistics and absent from the order-blind path
-it does not touch. `acquire()` is an `async def`, so it allocates a coroutine
-frame per pull even on CPython's non-suspending fast path. Same family as
-`add-callsite-dispatch`, `Sequential.value()`'s existence and the rejected
-`merge()` generator — **abstraction against free, not abstraction against
-cheaper abstraction** — and the first of them where the abstraction being
-priced is a standard-library one. Do not re-propose the semaphore without new
-evidence.
+**1. The unseeded-accumulation rule is written five times.** `None if container
+is _UNSET else container` is the whole body of `_ReduceSink._finish`,
+`_MinMaxSink._finish` and `_FindSink._finish` in `terminals.py`, and of
+`_extremum()`'s and `reducing()`'s `_finish` in `collectors.py`. One rule —
+"an accumulation that never saw an element finishes as `None`" — stated in five
+places, none of which references the others, beside the `_UNSET` sentinel that
+already lives in `sink.py` precisely because both modules need it and neither
+may import the other.
 
-*What this is not.* It is not **Later**'s "Bound speculation separately from
-read-ahead", which changes what the bound bounds. This changes no behaviour at
-all: same value, same scaling, same fixedness for a run, `skip_specs: true`.
-The two are independent and neither blocks the other.
+*The gate: there isn't one, and that is what makes this the cheap one.* A
+`_finish` runs **once per collection**, not once per element, so the `+10%`
+ns/element threshold that governs everything else in this neighbourhood does not
+apply — the same exemption `collapse-sort-decorate-lanes` claimed and used. The
+five call sites are already one-liners, so the win is that the rule acquires a
+name and a single home, not that any line count falls. Whoever takes it should
+check first whether `TerminalSink._finish`'s default can carry it rather than a
+free helper, since three of the five are sinks; that is the design question, and
+it is the only one.
+
+**2. `_guarded()` re-asks a question decided at composition, once per pull.**
+`if window is None` is checked on every element, guarding two nearly-disjoint
+loop bodies inside one `while True`, with only the `finally` genuinely shared.
+The answer never changes for the life of the generator: `race_through()` passes
+a window exactly on the split path and never on the other, so the branch is
+settled before the first pull. It is the flag-argument shape, and splitting it
+into two generators would let each show one concern — the windowed one carrying
+the slot protocol and the index assignment, the plain one being what it was
+before delivery ordering landed.
+
+*The gate, and the honest objection.* This is a per-element path, so the `+10%`
+threshold applies — but in the favourable direction for once, since the branch
+is removed rather than added, which puts it in the same family as
+`sort-mixed-lane-by-successive-passes` rather than in the family of the
+rejections. The objection is real and should be priced before starting: it
+*duplicates* the shared-lock pull and the `finally` close, and unifying exactly
+that kind of scaffolding is what `extract-racing-task-lifecycle` (**Done**,
+2026-09-02) set out to do. That change's own reasoning is the precedent to read
+first — it kept arming and teardown shared while leaving the two merge loops
+apart, on the grounds that only the identical parts belong together. The same
+test applied here is what decides this item, and it may well decide against it.
 
 ## Next
 
@@ -156,6 +170,77 @@ core semantic.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should be declared permanent. **Narrowed 2026-08-31: the behaviour is now documented in README's `of()` row.** That was a defect independent of this decision — the row described Java's semantics, so the divergence used by every example in the file was invisible to a reader. Documenting it does not close this item; what remains is the call on whether to keep it. Surfaced 2026-08-20 in the same code-quality read that produced the first batch of **Now** items, all since closed. |
 
 ## Done
+
+- **`sort-mixed-lane-by-successive-passes`** (2026-09-02) — `_sort_by_key()`'s
+  mixed-direction lane was the only place left in the sort where a comparison
+  ran in Python rather than in C: a chain whose segments disagreed on direction
+  wrapped its descending columns in `_Descending`, whose `__lt__` cost a Python
+  frame once per pair the earlier columns tied on. CPython's own guarantee
+  removes the wrapper — sorts are stable, `reverse=True` included, so a series
+  of stable passes least-significant-column-first *is* a lexicographic ordering
+  with a direction per column. Three lanes collapsed to one loop, `_Descending`
+  was deleted, and every comparison returned to C.
+
+  *The gate was met, in advance*, and this one was not the usual shape: the
+  measurement was banked in the change's design.md, and the per-element path
+  got *cheaper* rather than being asked to absorb an abstraction. 20,000 rows,
+  best of 11, output asserted element-identical including tie order — mixed
+  **6.8x / 4.9x / 4.5x** at k=2/4/8, uniform **1.39x / 1.22x** at k=2/3. Also
+  measured on distinct-key input, where the tuple lanes short-circuit at their
+  best: mixed still 3.45x / 2.66x. Reproduced on the shipping machine at a lower
+  magnitude but the same shape — mixed 6.0x/3.83x/2.81x, uniform crossover
+  still between k=4 and k=5 — machine-to-machine variance, not a regression
+  from the design's figures.
+
+  *What it costs, and where.* Uniform chains cross over between four and five
+  segments — **0.93x at k=5, 0.68x at k=8** — because k passes of C comparison
+  eventually lose to one short-circuiting tuple comparison. Taken deliberately
+  (design.md Decision 2): confining the rewrite to the mixed lane would have
+  been faster on long uniform chains but would have made an *observable*
+  behaviour lane-dependent, since sorting every column in full is what makes a
+  segment's incomparable keys raise unconditionally rather than only where an
+  earlier segment ties. One path, one rule. It carries the one behavioural
+  delta in the change — `comparator-chaining`'s "Keys within a segment must be
+  mutually comparable" strengthened to make the raise unconditional, synced to
+  the main spec at archive — so unlike its neighbours here it was not
+  `skip_specs`.
+
+- **`take-window-slots-atomically`** (2026-09-02, shipped in `79e258f`) —
+  moved here 2026-09-02 from **Now**, where the change's own commit had left it
+  described as "scaffolded" although that same commit implemented and archived
+  it. `_Window` and `_guarded()` hand-rolled a counting semaphore out of a
+  counter and an `asyncio.Event`, and an `Event` cannot *hold* a slot: it only
+  broadcasts that one may exist. So a branch that waited for room had to ask
+  again after taking the lock, and that re-check was what forced the
+  doubly-nested `while True`, the `clear()`/`wait()` protocol and a barging
+  window with a regression test of its own. A synchronous `take()` — atomic
+  because it contains no `await`, so nothing runs between its check and its
+  increment — closed the window instead of compensating for it, and collapsed
+  the arm to one loop level.
+
+  *The gate was met, in advance.* It sits on the per-element path of the
+  windowed (barrier) arm, so the `collapse-terminal-collector-duplication`
+  `+10%` ns/element threshold applied; the measurement was banked in the
+  change's design.md rather than left for whoever started it. Three interleaved
+  runs, ordered delivery, min/median: `take()` at +1.2%/+0.3%, +0.4%/+0.9%,
+  −0.0%/−1.2% — straddling zero.
+
+  **`asyncio.Semaphore` itself is the measured rejection**, and it belongs in
+  this log rather than only in the change: it is exactly the missing primitive by
+  contract, and it cost **+5.7%/+7.3%, +3.9%/+6.0%, +6.4%/+5.6%** on the same
+  three runs, positive in all six statistics and absent from the order-blind path
+  it does not touch. `acquire()` is an `async def`, so it allocates a coroutine
+  frame per pull even on CPython's non-suspending fast path. Same family as
+  `add-callsite-dispatch`, `Sequential.value()`'s existence and the rejected
+  `merge()` generator — **abstraction against free, not abstraction against
+  cheaper abstraction** — and the first of them where the abstraction being
+  priced is a standard-library one. Do not re-propose the semaphore without new
+  evidence.
+
+  *What this is not.* It is not **Later**'s "Bound speculation separately from
+  read-ahead", which changes what the bound bounds. This changes no behaviour at
+  all: same value, same scaling, same fixedness for a run, `skip_specs: true`.
+  The two are independent and neither blocks the other.
 
 - **`collapse-sort-decorate-lanes`** (2026-09-02) — closes **Next**'s former
   item 3. `sort.py`'s decorate-sort-undecorate was written once per lane

@@ -632,6 +632,14 @@ async def test_incomparable_keys_within_one_segment_raise_type_error() -> None:
 
 
 @pytest.mark.asyncio
+async def test_earlier_segment_distinguishing_every_pair_does_not_excuse_a_later_one() -> None:
+    outset = [(1, "x"), (2, 1), (3, "y")]
+
+    with pytest.raises(TypeError):
+        await Stream.of(outset).sorted(comparing(lambda x: x[0]).then_comparing(lambda x: x[1])).collect(to_list())
+
+
+@pytest.mark.asyncio
 async def test_segments_may_produce_unrelated_key_types() -> None:
     outset = [("b", 1), ("a", 2), ("a", 1)]
 
