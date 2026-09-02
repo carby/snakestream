@@ -10,6 +10,12 @@ index, and only that operation runs in the ordered pass; everything after it
 races again. A terminal that can tell what order elements reach it in splits at
 the end of the chain, so every operation still races and only delivery is
 reordered.
+Both of racing's merges - the plain one and the reorder barrier - drive their
+branches through _racing_branches(), which owns the in-flight anext() per
+branch and its teardown. It is scaffolding around the primitives rather than a
+fifth one: it decides nothing about what a pipeline produces, only that a merge
+arms and tears down its branch tasks the same way whichever loop is consuming
+them.
 Two Executor values sit on top: Sequential.elements() and Racing.elements()
 each pick a primitive; Sequential.value() is the one asymmetry in the
 protocol, overriding the generic drain(elements(...), terminal) with
@@ -130,6 +136,53 @@ async def _maybe_aclosing(thing: _Aiter) -> AsyncIterator[_Aiter]:
         yield thing
     finally:
         await _maybe_aclose(thing)
+
+
+@asynccontextmanager
+async def _racing_branches(branches: list[AsyncGenerator]) -> AsyncIterator[dict[asyncio.Task[Any], int]]:
+    """The branch-task lifecycle both racing merges share: one in-flight
+    anext() per branch, armed on the way in and torn down on the way out.
+
+    What it yields is the merge's whole working set - the in-flight anext()
+    per branch, keyed by task so a completed one maps back to its branch in
+    O(1). It doubles as the waitlist and as the "any branch still running"
+    test, so nothing in a caller's loop is scanned or rebuilt per element. A
+    branch that raised StopAsyncIteration is simply not re-armed, which is
+    what drains the dict to empty. Callers re-arm through it directly; only
+    the arming and the teardown live here, because only those are identical
+    between them - race_through() yields a completed result as it stands and
+    _release_in_order() buffers it by source index, and that difference is
+    the whole of what each loop is for.
+
+    The finally is load-bearing for the same reason _maybe_aclosing()'s is,
+    one function up: a merge is abandoned far more often than it is drained.
+    Every short-circuiting terminal leaves through it - find_any(), the
+    *_match family, a limit() that filled - and so does any branch that
+    raised. A task left uncancelled there leaks, and one cancelled but never
+    gathered leaves its exception unretrieved.
+
+    Closing the branches is part of the teardown on *both* paths, which is
+    the one behaviour this extraction settles rather than preserves. It was
+    the barrier's alone before, on a reason that names the window: a branch
+    parked on a full window has a finally of its own to run - the shared
+    source's close - and cancelling its in-flight anext() does not reach a
+    branch that has no anext() outstanding. That reason does not extend to
+    the unwindowed path, but nothing established the converse either, and
+    closing is the conservative direction: aclose() on an exhausted or
+    already-closing async generator is a no-op, so a branch cannot be closed
+    twice. racing-encounter-order requires the shared source be closed
+    exactly as it is without a barrier, and it is now one mechanism that
+    makes that true rather than two that happen to agree."""
+    in_flight: dict[asyncio.Task[Any], int] = {asyncio.create_task(anext(branch)): idx for idx, branch in enumerate(branches)}
+    try:
+        yield in_flight
+    finally:
+        leftover = list(in_flight)
+        for task in leftover:
+            task.cancel()
+        await asyncio.gather(*leftover, return_exceptions=True)
+        for branch in branches:
+            await branch.aclose()
 
 
 def _wrap_sink(intermediaries: list[Op], terminal: Sink[Any]) -> Sink[Any]:
@@ -396,12 +449,11 @@ async def _release_in_order(
 
     Releasing is also what unblocks the source: every index released widens the
     read-ahead window by one, which is the only thing that ever does."""
-    in_flight: dict[asyncio.Task[Any], int] = {asyncio.create_task(anext(branch)): idx for idx, branch in enumerate(branches)}
     pending: dict[int, list[Any]] = {}
     # what the branches emitted from end(), which sorts after every real group
     trailing: list[list[Any]] = []
 
-    try:
+    async with _racing_branches(branches) as in_flight:
         while in_flight:
             done, _ = await asyncio.wait(in_flight, return_when=asyncio.FIRST_COMPLETED)
 
@@ -421,17 +473,6 @@ async def _release_in_order(
         for outputs in trailing:
             for out in outputs:
                 yield out
-    finally:
-        # same clean-up as race_through()'s, plus closing the branches
-        # themselves: a branch parked on the window has a finally of its own to
-        # run - the shared source's close - and cancelling its in-flight
-        # anext() alone would leave that to the garbage collector
-        leftover = list(in_flight)
-        for t in leftover:
-            t.cancel()
-        await asyncio.gather(*leftover, return_exceptions=True)
-        for branch in branches:
-            await branch.aclose()
 
 
 async def _run_ordered_tail(
@@ -595,14 +636,8 @@ async def race_through(
         return
 
     branches = [stream_through(chain, _guarded(shared, lock), state_map) for _ in range(workers)]
-    # the in-flight anext() per branch, keyed by task so a completed one
-    # maps back to its branch in O(1); it doubles as the waitlist and as the
-    # "any branch still running" test, so nothing here is scanned or rebuilt
-    # per element. A branch that raised StopAsyncIteration is simply not
-    # re-armed, which is what drains this dict to empty.
-    in_flight: dict[asyncio.Task[Any], int] = {asyncio.create_task(anext(branch)): idx for idx, branch in enumerate(branches)}
 
-    try:
+    async with _racing_branches(branches) as in_flight:
         while in_flight:
             done, _ = await asyncio.wait(in_flight, return_when=asyncio.FIRST_COMPLETED)
 
@@ -614,13 +649,6 @@ async def race_through(
                     continue
                 in_flight[asyncio.create_task(anext(branches[branch]))] = branch
                 yield result
-    finally:
-        # if we're leaving early (e.g. a task raised), make sure no other
-        # in-flight task is left uncancelled or its exception unretrieved
-        pending = list(in_flight)
-        for t in pending:
-            t.cancel()
-        await asyncio.gather(*pending, return_exceptions=True)
 
 
 async def feed_through(chain: list[Op], source: AsyncGenerator, terminal: TerminalSink[Any]) -> Any:
