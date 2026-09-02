@@ -71,15 +71,30 @@ async def sort(arr: list[Any], comparator: Comparator) -> list[Any]:
     bool compares perfectly well under cmp_to_key, so an unchecked sort would
     silently produce a wrong order instead. Hence _checked().
 
-    The trial comparison settles callable-dispatch's one-time safety net before
-    the sort rather than during it. A comparator with a plain `def __call__`
-    returning a coroutine classifies as sync, and list.sort offers no
-    per-comparison await to catch it in - so the check has to happen while
-    there is still an await available. The trial is awaited before rerouting so
-    no coroutine is left un-awaited. It costs one extra comparator invocation
-    per comparator sort of two or more elements; nothing constrains the
-    invocation count, and nothing could, since the two algorithms make
-    different numbers of comparisons on the same input anyway.
+    The choice between the two is made by one trial comparison, positively:
+    an awaitable result takes merge_sort, anything else takes list.sort. There
+    is no `is_async_callable()` pre-test, because it could only ever
+    over-approximate what the trial answers exactly - a comparator with a
+    plain `def __call__` returning a coroutine classifies as sync
+    (`_NullSafeComparator` is one), and list.sort offers no per-comparison
+    await to catch that in, so the trial has to run anyway. Asking twice only
+    bought skipping the trial for the comparators the classifier did
+    recognize. The trial is awaited before rerouting so no coroutine is left
+    un-awaited.
+
+    So every comparator sort of two or more elements costs one extra
+    comparator invocation - one call out of the n log n the sort itself makes,
+    measured within noise on 20,000 floats for both paths. Nothing constrains
+    the invocation count, and nothing could, since the two algorithms make
+    different numbers of comparisons on the same input anyway. An async
+    comparator's body does run once more than its comparisons alone require;
+    for one doing I/O that is one extra round trip per sort.
+
+    The trial's own result is deliberately not type-checked. Timsort's first
+    comparison on a list of two or more is always element 1 against element 0,
+    so `_checked()` sees the trial pair again immediately and raises the same
+    TypeError; a check on the trial would only catch a comparator whose return
+    *type* is asymmetric between (a, b) and (b, a).
 
     Returns the sorted list either way, though only merge_sort builds a new
     one - list.sort is in place, and unifying the signature is worth more than
@@ -99,13 +114,10 @@ async def sort(arr: list[Any], comparator: Comparator) -> list[Any]:
         return arr
     if isinstance(comparator, KeyComparator):
         return await _sort_by_key(arr, comparator.segments, comparator.nulls)
-    if is_async_callable(comparator):
-        return await merge_sort(arr, cast("AsyncComparator", comparator))
     trial = comparator(arr[0], arr[1])
     if isawaitable(trial):
         await trial
         return await merge_sort(arr, cast("AsyncComparator", comparator))
-    check_comparator_result_type(cast("int", trial))
     arr.sort(key=cmp_to_key(_checked(comparator)))
     return arr
 
