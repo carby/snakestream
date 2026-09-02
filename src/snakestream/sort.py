@@ -84,17 +84,28 @@ async def sort(arr: list[Any], comparator: Comparator) -> list[Any]:
     Returns the sorted list either way, though only merge_sort builds a new
     one - list.sort is in place, and unifying the signature is worth more than
     saving the rebind.
+
+    A list of fewer than two elements returns before any dispatch. It is the
+    dispatcher's guard, not three defensive ones: no branch below is reachable
+    with a shorter list, so `_sort_by_key()` needs no empty check and the trial
+    comparison needs no `len(arr) > 1` of its own. merge_sort keeps its
+    `len(arr) <= 1` because that is its recursion base case, not an entry
+    guard. It also settles what a one-element sort observes: no comparator
+    invocation and no key extraction, matching Java, where TimSort returns
+    before calling `Comparator.compare` and `comparing()`'s extractor is
+    only reached from a comparison.
     """
+    if len(arr) <= 1:
+        return arr
     if isinstance(comparator, KeyComparator):
         return await _sort_by_key(arr, comparator.segments, comparator.nulls)
     if is_async_callable(comparator):
         return await merge_sort(arr, cast("AsyncComparator", comparator))
-    if len(arr) > 1:
-        trial = comparator(arr[0], arr[1])
-        if isawaitable(trial):
-            await trial
-            return await merge_sort(arr, cast("AsyncComparator", comparator))
-        check_comparator_result_type(cast("int", trial))
+    trial = comparator(arr[0], arr[1])
+    if isawaitable(trial):
+        await trial
+        return await merge_sort(arr, cast("AsyncComparator", comparator))
+    check_comparator_result_type(cast("int", trial))
     arr.sort(key=cmp_to_key(_checked(comparator)))
     return arr
 
@@ -246,9 +257,6 @@ async def _sort_by_key(
     instead of a bare-value one - orthogonal to, and unaffected by, the
     lane rewrite above.
     """
-    if not arr:
-        return arr
-
     if len(segments) == 1:
         columns = [await _segment_column(segments[0][0], arr)]
     else:
