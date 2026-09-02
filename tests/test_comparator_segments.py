@@ -7,7 +7,7 @@ import pytest
 from snakestream import Stream
 from snakestream.collectors import max_by, min_by, to_list
 from snakestream.comparator import _is_comparator_arity, comparing, nulls_first, nulls_last
-from snakestream.exception import StreamBuildException
+from snakestream.exception import ComparatorContractException, StreamBuildException
 
 # --- 2.1 Arity classification -----------------------------------------------
 
@@ -380,12 +380,16 @@ class _CoroutineReturningComparator:
 async def test_coroutine_lying_comparator_names_async_rejection() -> None:
     outset = [1, 2, 3]
 
-    with pytest.raises(StreamBuildException, match="synchronous"):
+    with pytest.raises(StreamBuildException, match="synchronous") as excinfo:
         # first segment ties every pair, forcing the comparator segment to be
         # the one actually consulted rather than short-circuited past
         await (
             Stream.of(outset).sorted(comparing(lambda x: 0).then_comparing(_CoroutineReturningComparator())).collect(to_list())
         )
+
+    # the two adjacent raises in _checked_segment_comparator stay
+    # distinguishable: an async segment is not a comparator-contract violation
+    assert not isinstance(excinfo.value, ComparatorContractException)
 
 
 # --- 4.1 Direct-comparison path agrees with sorted() ------------------------

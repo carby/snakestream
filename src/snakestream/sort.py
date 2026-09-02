@@ -12,7 +12,7 @@ from snakestream.comparator import (
     NullPlacement,
     Segment,
 )
-from snakestream.exception import COMPARATOR_RESULT_TYPE_MESSAGE, StreamBuildException
+from snakestream.exception import ComparatorContractException, StreamBuildException
 from snakestream.type import AsyncComparator, Comparator
 
 
@@ -29,7 +29,7 @@ def _checked(comparator: Comparator) -> Callable[[Any, Any], int]:
     def compare(a: Any, b: Any) -> int:
         sign = comparator(a, b)
         if type(sign) is not int:
-            raise TypeError(COMPARATOR_RESULT_TYPE_MESSAGE.format(type(sign).__name__))
+            raise ComparatorContractException(sign)
         return sign
 
     return compare
@@ -51,8 +51,8 @@ def _checked_segment_comparator(comparator: Comparator) -> Callable[[Any, Any], 
         if isawaitable(sign):
             raise StreamBuildException(_ASYNC_COMPARATOR_MESSAGE)
         if type(sign) is not int:
-            raise TypeError(COMPARATOR_RESULT_TYPE_MESSAGE.format(type(sign).__name__))
-        return cast("int", sign)
+            raise ComparatorContractException(sign)
+        return sign
 
     return compare
 
@@ -307,7 +307,7 @@ async def _merge(left: list[Any], right: list[Any], comparator: AsyncComparator)
     while i < len(left) and j < len(right):
         sign = await comparator(left[i], right[j])
         if type(sign) is not int:
-            raise TypeError(COMPARATOR_RESULT_TYPE_MESSAGE.format(type(sign).__name__))
+            raise ComparatorContractException(sign)
         if sign <= 0:
             result.append(left[i])
             i += 1

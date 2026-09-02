@@ -4,7 +4,7 @@ from typing import Any, TypeVar, cast, overload
 from collections.abc import Callable
 
 from snakestream.callable_dispatch import is_async_callable
-from snakestream.exception import COMPARATOR_RESULT_TYPE_MESSAGE, StreamBuildException
+from snakestream.exception import ComparatorContractException, StreamBuildException
 from snakestream.type import Comparator, KeyExtractor, KeyExtractorComparator
 
 T = TypeVar("T")
@@ -44,7 +44,7 @@ def is_new_extremum(sign: int, asc: bool) -> bool:
     through a Collector instead cost +26% (see this change's design.md).
     """
     if type(sign) is not int:
-        raise TypeError(COMPARATOR_RESULT_TYPE_MESSAGE.format(type(sign).__name__))
+        raise ComparatorContractException(sign)
     return sign < 0 if asc else sign > 0
 
 
@@ -168,7 +168,7 @@ def _comparator_segment_sign_sync(payload: KeyExtractorComparator, a: Any, b: An
         return 0 if ea is None and eb is None else _null_sign(ea is None, nulls)
     sign = comparator(ea, eb)
     if type(sign) is not int:
-        raise TypeError(COMPARATOR_RESULT_TYPE_MESSAGE.format(type(sign).__name__))
+        raise ComparatorContractException(sign)
     return sign
 
 
@@ -191,7 +191,7 @@ async def _comparator_segment_sign_async(
         return 0 if ea is None and eb is None else _null_sign(ea is None, nulls)
     sign = comparator(ea, eb)
     if type(sign) is not int:
-        raise TypeError(COMPARATOR_RESULT_TYPE_MESSAGE.format(type(sign).__name__))
+        raise ComparatorContractException(sign)
     return sign
 
 
