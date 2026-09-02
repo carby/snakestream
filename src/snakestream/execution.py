@@ -212,33 +212,47 @@ async def _copy_into(head: Sink[Any], src: AsyncGenerator, state_map: StateMap) 
 class _Window:
     """The bounded read-ahead shared between _guarded() and the reorder merge.
 
-    `assigned` is the next source index to hand out, `released` the first index
-    the merge has not yet released. A branch may pull only while the gap is
-    under `size`; the merge bumps `released` and sets `event` on every release,
-    waking whoever was held back.
+    Three counters, each with one job. `assigned` is the next source index to
+    hand out. `released` is the reorder cursor `_releasable()` walks: the first
+    index the merge has not yet released. `outstanding` is occupancy: the
+    number of slots claimed by `take()` and not yet returned by `release_one()`
+    or `give_back()`. Occupancy cannot be derived from the other two, because a
+    slot is claimed by `take()` before an index is assigned -- see design.md
+    Decision 2 in take-window-slots-atomically.
 
     `size` is fixed at construction, from _in_flight() and the branch count, so
     a pipeline runs to completion under the bound it started with -- reading it
     per pull would let a rebind take effect part-way through a race, which is a
-    state no requirement describes and nothing needs.
+    state no requirement describes and nothing needs."""
 
-    One object, not two counters and a condition variable, because the two
-    numbers are only ever read together and the invariant between them is the
-    whole point."""
-
-    __slots__ = ("assigned", "event", "released", "size")
+    __slots__ = ("assigned", "event", "outstanding", "released", "size")
 
     def __init__(self, size: int) -> None:
         self.assigned = 0
         self.released = 0
+        self.outstanding = 0
         self.size = size
         self.event = asyncio.Event()
 
-    def full(self) -> bool:
-        return self.assigned - self.released >= self.size
+    def take(self) -> bool:
+        """Atomically claim a slot if one is free. Atomic because the body
+        contains no `await`, so nothing can run between the check and the
+        increment -- the same reason `_LimitSink.accept()`'s reserve-before-push
+        is atomic."""
+        if self.outstanding >= self.size:
+            return False
+        self.outstanding += 1
+        return True
+
+    def give_back(self) -> None:
+        """Return a slot claimed by take() that will produce no group -- the
+        mirror of the claim, not of release_one(): it advances no cursor."""
+        self.outstanding -= 1
+        self.event.set()
 
     def release_one(self) -> None:
         self.released += 1
+        self.outstanding -= 1
         self.event.set()
 
 
@@ -253,8 +267,11 @@ async def _guarded(source: AsyncIterator, lock: asyncio.Lock, window: _Window | 
     window's bound on in-flight elements is enforced here. Both belong here for
     the same reason: this is the last point at which pull order still *is*
     encounter order, and it is already the only place a pull happens, so
-    bounding it costs no new synchronisation point. Without a window — every pipeline that needs no
-    ordering barrier — neither runs and the loop is what it always was."""
+    bounding it costs no new synchronisation point. The slot is claimed before
+    the pull, which makes the bound conservative rather than exact: it counts a
+    pull about to happen as well as every element pulled and not released.
+    Without a window — every pipeline that needs no ordering barrier — neither
+    runs and the loop is what it always was."""
     try:
         while True:
             if window is None:
@@ -265,25 +282,22 @@ async def _guarded(source: AsyncIterator, lock: asyncio.Lock, window: _Window | 
                         return
                 yield item
                 continue
-            while True:
-                # wait *outside* the lock: holding it here would stall every
-                # other branch's pull, including the one holding the group the
-                # merge is waiting for, which is the deadlock this avoids
-                while window.full():
-                    window.event.clear()
-                    await window.event.wait()
-                async with lock:
-                    # another branch may have taken the last slot while this
-                    # one was waiting for the lock, so ask again before pulling
-                    if window.full():
-                        continue
-                    try:
-                        item = await anext(source)
-                    except StopAsyncIteration:
-                        return
-                    index = window.assigned
-                    window.assigned += 1
-                break
+            # wait *outside* the lock: holding it here would stall every
+            # other branch's pull, including the one holding the group the
+            # merge is waiting for, which is the deadlock this avoids
+            while not window.take():
+                window.event.clear()
+                await window.event.wait()
+            async with lock:
+                try:
+                    item = await anext(source)
+                except StopAsyncIteration:
+                    # no group will ever release this slot, so return it now
+                    # rather than shrink the window for the rest of the run
+                    window.give_back()
+                    return
+                index = window.assigned
+                window.assigned += 1
             yield index, item
     finally:
         async with lock:
