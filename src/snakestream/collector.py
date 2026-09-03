@@ -13,6 +13,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
 
 from snakestream.execution import maybe_aclosing
 from snakestream.callable_dispatch import AsyncDispatch
+from snakestream.ordering import OrderDemand
 from snakestream.sink import TerminalSink
 from snakestream.type import (
     A,
@@ -117,6 +118,14 @@ class Collector(Generic[T, A, R]):
         # collections, so a mutable characteristics set would be its first
         # piece of mutable shared state.
         self.characteristics = frozenset(characteristics)
+
+    def demand(self) -> OrderDemand:
+        """What collect() owes this collector, per collector-protocol L105:
+        UNORDERED means any ordering of the same elements collects to an
+        equal result, so the executor owes no reorder barrier (NONE);
+        undeclared means encounter order is observable, so it does
+        (IF_ORDERED)."""
+        return OrderDemand.NONE if Characteristics.UNORDERED in self.characteristics else OrderDemand.IF_ORDERED
 
 
 class CollectorSink(AsyncDispatch, TerminalSink[T]):

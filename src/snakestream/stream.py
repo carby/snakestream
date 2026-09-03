@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Generic, cast, overload
 from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Coroutine, Iterable
 
 from snakestream.callable_dispatch import is_async_callable
-from snakestream.collector import Characteristics, Collector, CollectorSink, StreamingCollector
+from snakestream.collector import Collector, CollectorSink, StreamingCollector
 from snakestream.collectors import to_list
 from snakestream.exception import IllegalStateException, StreamBuildException
 from snakestream.execution import RACING, SEQUENTIAL, Executor
@@ -482,11 +482,7 @@ class Stream(Generic[T]):
         if len(args) == 1:
             (collector,) = args
             if isinstance(collector, Collector):
-                # the collector answers for itself: UNORDERED is the declaration
-                # that any ordering of the same elements collects to an equal
-                # result, which is exactly the question the barrier asks.
-                demand = OrderDemand.NONE if Characteristics.UNORDERED in collector.characteristics else OrderDemand.IF_ORDERED
-                return self._evaluate(CollectorSink(collector), demand)
+                return self._evaluate(CollectorSink(collector), collector.demand())
             if isinstance(collector, StreamingCollector):
                 return collector(self.iterator())
             raise StreamBuildException(
@@ -502,12 +498,7 @@ class Stream(Generic[T]):
         # reduce() already has under .parallel().
         supplier, accumulator, combiner = args
         collector = Collector(supplier, accumulator, combiner)
-        # an arbitrary user accumulator folding into an arbitrary container:
-        # nothing here says the result is order-independent, so it is not
-        # assumed to be. The Collector form has UNORDERED to say otherwise;
-        # this form declares no characteristics, so it stays IF_ORDERED by
-        # the same derivation the single-argument branch above uses.
-        return self._evaluate(CollectorSink(collector), OrderDemand.IF_ORDERED)
+        return self._evaluate(CollectorSink(collector), collector.demand())
 
     @overload
     async def reduce(self, identity: T | R, accumulator: Accumulator[T, R]) -> T | R: ...
@@ -549,8 +540,7 @@ class Stream(Generic[T]):
         return await self._evaluate(ForEachSink(consumer), OrderDemand.IF_ORDERED)
 
     async def to_array(self) -> list[T]:
-        # collect() runs _check_not_consumed() itself, and to_list() declares no
-        # characteristics, so this observes encounter order through it
+        # collect() runs _check_not_consumed() itself
         return await self.collect(to_list())
 
     async def find_first(self) -> T | None:
