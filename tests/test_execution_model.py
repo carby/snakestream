@@ -250,7 +250,7 @@ async def test_both_executors_produce_the_same_elements() -> None:
 
 @pytest.mark.asyncio
 async def test_the_fused_override_is_indistinguishable_from_the_generic_form() -> None:
-    from snakestream.terminals import _CountSink
+    from snakestream.terminals import CountSink
 
     async def source():
         for i in range(10):
@@ -261,8 +261,8 @@ async def test_the_fused_override_is_indistinguishable_from_the_generic_form() -
             yield i
 
     # when: the same chain and terminal, driven both ways
-    fused = await SEQUENTIAL.value([], source(), _CountSink(), False)
-    generic = await super(type(SEQUENTIAL), SEQUENTIAL).value([], other(), _CountSink(), False)
+    fused = await SEQUENTIAL.value([], source(), CountSink(), False)
+    generic = await super(type(SEQUENTIAL), SEQUENTIAL).value([], other(), CountSink(), False)
 
     # then
     assert fused == generic == 10
@@ -270,7 +270,7 @@ async def test_the_fused_override_is_indistinguishable_from_the_generic_form() -
 
 @pytest.mark.asyncio
 async def test_racing_uses_the_generic_value_unchanged() -> None:
-    # then: Racing does not override value() — each branch owns its own sink
+    # then: _Racing does not override value() — each branch owns its own sink
     # chain, so there is no single chain to fuse a terminal onto
     assert type(RACING).value is type(SEQUENTIAL).__mro__[1].value
     assert type(SEQUENTIAL).value is not type(SEQUENTIAL).__mro__[1].value

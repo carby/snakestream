@@ -12,10 +12,10 @@ T = TypeVar("T")
 # Named once so construction-time rejection (comparing()/then_comparing()) and
 # the comparator-segment wrapper's raising path (sort.py, Decision 3) name the
 # same two supported alternatives for the same reason.
-_ASYNC_COMPARATOR_MESSAGE = (
+ASYNC_COMPARATOR_MESSAGE = (
     "comparator must be synchronous; use an async key extractor segment instead "
     "(supported today), or pass an async comparator directly to sorted() "
-    "(reaches merge_sort())"
+    "(reaches _merge_sort())"
 )
 
 
@@ -59,7 +59,7 @@ def _reject_async_comparator(comparator: Comparator) -> None:
     catches the one shape this cannot - a plain `def __call__` that lies
     about being sync and returns a coroutine - with the same message."""
     if is_async_callable(comparator):
-        raise StreamBuildException(_ASYNC_COMPARATOR_MESSAGE)
+        raise StreamBuildException(ASYNC_COMPARATOR_MESSAGE)
 
 
 _COMPARATOR_ARITY = 2

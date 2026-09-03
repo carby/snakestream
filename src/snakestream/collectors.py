@@ -10,12 +10,14 @@ from inspect import isawaitable
 from typing import Any, NamedTuple, cast, overload
 from collections.abc import Awaitable, Callable
 
-from snakestream.callable_dispatch import _classify_step, _maybe_await, is_async_callable
+from snakestream.callable_dispatch import classify_step, is_async_callable, maybe_await
 from snakestream.collector import Characteristics, Collector
 from snakestream.comparator import is_new_extremum
 from snakestream.exception import IllegalStateException, StreamBuildException
-from snakestream.sink import Box, _unseeded, _UNSET
+from snakestream.sink import UNSET, Box, unseeded
 from snakestream.type import (
+    C,
+    M,
     R,
     T,
     BinaryOperator,
@@ -25,8 +27,6 @@ from snakestream.type import (
     NumberMapper,
     Predicate,
     Supplier,
-    _C,
-    _M,
 )
 
 
@@ -290,7 +290,7 @@ def summarizing_double(mapper: NumberMapper) -> Collector[Any, Any, SummaryStati
 
 @dataclass(slots=True)
 class _ExtremumBox:
-    found: Any = _UNSET
+    found: Any = UNSET
     is_async: bool = False
     checked: bool = False
 
@@ -302,7 +302,7 @@ def _extremum(comparator: Comparator[T], asc: bool) -> Collector[T, _ExtremumBox
         return box
 
     async def _accumulate(container: _ExtremumBox, element: T) -> None:
-        if container.found is _UNSET:
+        if container.found is UNSET:
             container.found = element
             return
 
@@ -318,7 +318,7 @@ def _extremum(comparator: Comparator[T], asc: bool) -> Collector[T, _ExtremumBox
             container.found = element
 
     def _finish(container: _ExtremumBox) -> T | None:
-        return _unseeded(container.found)
+        return unseeded(container.found)
 
     return Collector(_supply, _accumulate, finisher=_finish)
 
@@ -354,15 +354,15 @@ def reducing(
 ) -> Collector[T, Any, R]: ...  # pragma: no cover
 
 
-def reducing(identity: Any = _UNSET, mapper: Any = _UNSET, binary_operator: Any = _UNSET) -> Any:
-    """Implements the same _UNSET-seed fold as terminals.py's _ReduceSink. The
+def reducing(identity: Any = UNSET, mapper: Any = UNSET, binary_operator: Any = UNSET) -> Any:
+    """Implements the same UNSET-seed fold as terminals.py's ReduceSink. The
     duplication is deliberate and measured - see that sink's docstring - so a
     change to that seed rule belongs in both places."""
-    if mapper is _UNSET:
+    if mapper is UNSET:
         # Called as reducing(binary_operator): the single positional arg is
         # the fold operator, with no identity and no element mapper.
-        identity, mapper, binary_operator = _UNSET, None, identity
-    elif binary_operator is _UNSET:
+        identity, mapper, binary_operator = UNSET, None, identity
+    elif binary_operator is UNSET:
         # Called as reducing(identity, binary_operator): the second
         # positional arg is the fold operator, with no element mapper.
         mapper, binary_operator = None, mapper
@@ -372,17 +372,17 @@ def reducing(identity: Any = _UNSET, mapper: Any = _UNSET, binary_operator: Any 
 
     async def _accumulate(container: _ReduceBox, element: Any) -> None:
         if mapper is not None:
-            value, container.mapper_is_async, container.mapper_checked = _classify_step(
+            value, container.mapper_is_async, container.mapper_checked = classify_step(
                 mapper, container.mapper_is_async, container.mapper_checked, element
             )
             if container.mapper_is_async:
                 value = await value
         else:
             value = element
-        if container.acc is _UNSET:
+        if container.acc is UNSET:
             container.acc = value
             return
-        r, container.op_is_async, container.op_checked = _classify_step(
+        r, container.op_is_async, container.op_checked = classify_step(
             binary_operator, container.op_is_async, container.op_checked, container.acc, value
         )
         if container.op_is_async:
@@ -390,7 +390,7 @@ def reducing(identity: Any = _UNSET, mapper: Any = _UNSET, binary_operator: Any 
         container.acc = r
 
     def _finish(container: _ReduceBox) -> Any:
-        return _unseeded(container.acc)
+        return unseeded(container.acc)
 
     return Collector(_supply, _accumulate, finisher=_finish)
 
@@ -421,8 +421,8 @@ def to_map(
     key_mapper: Mapper[T, R],
     value_mapper: Mapper[T, Any],
     merge_function: BinaryOperator[Any],
-    map_supplier: Supplier[_M],
-) -> Collector[T, Any, _M]: ...  # pragma: no cover
+    map_supplier: Supplier[M],
+) -> Collector[T, Any, M]: ...  # pragma: no cover
 
 
 # The overload block is exactly Java's three toMap overloads, and what it
@@ -447,15 +447,15 @@ def to_map(
     # module's usual reason to keep a sync fast path does not apply here, and
     # one code path is worth more than one coroutine per collect.
     async def _supply() -> _ToMapBox:
-        return _ToMapBox(await _maybe_await(map_supplier))
+        return _ToMapBox(await maybe_await(map_supplier))
 
     async def _accumulate(container: _ToMapBox, element: T) -> None:
-        key, container.key_is_async, container.key_checked = _classify_step(
+        key, container.key_is_async, container.key_checked = classify_step(
             key_mapper, container.key_is_async, container.key_checked, element
         )
         if container.key_is_async:
             key = await key
-        value, container.value_is_async, container.value_checked = _classify_step(
+        value, container.value_is_async, container.value_checked = classify_step(
             value_mapper, container.value_is_async, container.value_checked, element
         )
         if container.value_is_async:
@@ -463,7 +463,7 @@ def to_map(
         if key in container.result:
             if merge_function is None:
                 raise IllegalStateException(f"Duplicate key: {key!r}")
-            merged, container.merge_is_async, container.merge_checked = _classify_step(
+            merged, container.merge_is_async, container.merge_checked = classify_step(
                 merge_function, container.merge_is_async, container.merge_checked, container.result[key], value
             )
             value = await merged if container.merge_is_async else merged
@@ -530,7 +530,7 @@ async def _group_into(
     # bool() cannot simply wrap its predicate: dispatch classifies and awaits
     # key_fn's result, so a sync bool()-wrapper would see an unawaited
     # coroutine for an async predicate and call every element True.
-    key, container.key_is_async, container.key_checked = _classify_step(
+    key, container.key_is_async, container.key_checked = classify_step(
         key_fn, container.key_is_async, container.key_checked, element
     )
     if container.key_is_async:
@@ -538,15 +538,15 @@ async def _group_into(
     if coerce_key is not None:
         key = coerce_key(key)
     if key not in container.groups:
-        container.groups[key] = await _maybe_await(downstream.supplier)
-    r, container.acc_is_async, container.acc_checked = _classify_step(
+        container.groups[key] = await maybe_await(downstream.supplier)
+    r, container.acc_is_async, container.acc_checked = classify_step(
         downstream.accumulator, container.acc_is_async, container.acc_checked, container.groups[key], element
     )
     if container.acc_is_async:
         await r
 
 
-async def _finish_groups(downstream: Collector[Any, Any, Any], groups: _M) -> _M:
+async def _finish_groups(downstream: Collector[Any, Any, Any], groups: M) -> M:
     # Finishes in place and hands back the same mapping, rather than building a
     # dict: grouping_by()'s map_factory form has to return the caller's own
     # mapping type, and a rebuild into dict destroys it. The no-finisher path
@@ -561,7 +561,7 @@ async def _finish_groups(downstream: Collector[Any, Any, Any], groups: _M) -> _M
     # cannot resize a dict, but an arbitrary MutableMapping owes no such
     # guarantee, and the key list is one entry per group.
     for key in list(groups):
-        groups[key] = await _maybe_await(finisher, groups[key])
+        groups[key] = await maybe_await(finisher, groups[key])
     return groups
 
 
@@ -582,14 +582,14 @@ def grouping_by(
 
 @overload
 def grouping_by(
-    classifier: Mapper[T, R], map_factory: Supplier[_M], downstream: Collector[T, Any, Any]
-) -> Collector[T, Any, _M]: ...  # pragma: no cover
+    classifier: Mapper[T, R], map_factory: Supplier[M], downstream: Collector[T, Any, Any]
+) -> Collector[T, Any, M]: ...  # pragma: no cover
 
 
 def grouping_by(
     classifier: Mapper[T, R],
-    map_factory: Any = _UNSET,
-    downstream: Any = _UNSET,
+    map_factory: Any = UNSET,
+    downstream: Any = UNSET,
 ) -> Collector[T, Any, Any]:
     # The form is chosen by *arity*, never by inspecting an argument's type -
     # the same dispatch reducing() uses above for the harder case where one
@@ -599,11 +599,11 @@ def grouping_by(
     # whatever to_set() happens to be. Sniffing isinstance(..., Collector)
     # instead would misbind a hand-rolled Collector-lookalike, and arity needs
     # no such judgement.
-    if downstream is _UNSET:
+    if downstream is UNSET:
         # Called as grouping_by(classifier) or grouping_by(classifier,
         # downstream): the second positional arg, if any, is the downstream,
         # and the container is the default dict.
-        map_factory, downstream = dict, _TO_LIST if map_factory is _UNSET else map_factory
+        map_factory, downstream = dict, _TO_LIST if map_factory is UNSET else map_factory
         supplied_factory = False
     else:
         supplied_factory = True
@@ -613,7 +613,7 @@ def grouping_by(
     # async unconditionally, for the reason to_map()'s supplier is: it runs once
     # per collection rather than per element, so one path beats a sync fast one.
     async def _supply() -> _GroupBox:
-        return _GroupBox(await _maybe_await(map_factory))
+        return _GroupBox(await maybe_await(map_factory))
 
     async def _accumulate(container: _GroupBox, element: T) -> None:
         await _group_into(container, classifier, downstream, element)
@@ -669,7 +669,7 @@ def partitioning_by(
     async def _supply() -> _GroupBox:
         # both buckets exist before any element arrives, so partitioning_by
         # always yields a two-key dict even over an empty stream.
-        return _GroupBox({True: await _maybe_await(downstream.supplier), False: await _maybe_await(downstream.supplier)})
+        return _GroupBox({True: await maybe_await(downstream.supplier), False: await maybe_await(downstream.supplier)})
 
     async def _accumulate(container: _GroupBox, element: T) -> None:
         # bool() as coerce_key, not as a wrapper round the predicate: a truthy
@@ -695,15 +695,15 @@ def mapping(mapper: Mapper[T, R], downstream: Collector[R, Any, Any]) -> Collect
     _check_downstream(downstream)
 
     async def _supply() -> _MappingBox:
-        return _MappingBox(await _maybe_await(downstream.supplier))
+        return _MappingBox(await maybe_await(downstream.supplier))
 
     async def _accumulate(container: _MappingBox, element: T) -> None:
-        value, container.mapper_is_async, container.mapper_checked = _classify_step(
+        value, container.mapper_is_async, container.mapper_checked = classify_step(
             mapper, container.mapper_is_async, container.mapper_checked, element
         )
         if container.mapper_is_async:
             value = await value
-        r, container.acc_is_async, container.acc_checked = _classify_step(
+        r, container.acc_is_async, container.acc_checked = classify_step(
             downstream.accumulator, container.acc_is_async, container.acc_checked, container.container, value
         )
         if container.acc_is_async:
@@ -729,18 +729,18 @@ async def _finish_collecting_and_then(
     downstream: Collector[Any, Any, Any], finisher: Finisher[Any, Any], container: Any
 ) -> Any:
     downstream_finisher = downstream.finisher
-    result = await _maybe_await(downstream_finisher, container) if downstream_finisher is not None else container
-    return await _maybe_await(finisher, result)
+    result = await maybe_await(downstream_finisher, container) if downstream_finisher is not None else container
+    return await maybe_await(finisher, result)
 
 
 def collecting_and_then(downstream: Collector[T, Any, R], finisher: Finisher[R, Any]) -> Collector[T, Any, Any]:
     _check_downstream(downstream)
 
     async def _supply() -> _CollectAndThenBox:
-        return _CollectAndThenBox(await _maybe_await(downstream.supplier))
+        return _CollectAndThenBox(await maybe_await(downstream.supplier))
 
     async def _accumulate(container: _CollectAndThenBox, element: T) -> None:
-        r, container.acc_is_async, container.acc_checked = _classify_step(
+        r, container.acc_is_async, container.acc_checked = classify_step(
             downstream.accumulator, container.acc_is_async, container.acc_checked, container.container, element
         )
         if container.acc_is_async:
@@ -758,11 +758,11 @@ def collecting_and_then(downstream: Collector[T, Any, R], finisher: Finisher[R, 
     return Collector(_supply, _accumulate, finisher=_finish, characteristics=downstream.characteristics)
 
 
-def to_collection(collection_supplier: Supplier[_C]) -> Collector[Any, _C, _C]:
-    async def _supply() -> _C:
-        return await _maybe_await(collection_supplier)
+def to_collection(collection_supplier: Supplier[C]) -> Collector[Any, C, C]:
+    async def _supply() -> C:
+        return await maybe_await(collection_supplier)
 
-    def _accumulate(container: _C, element: Any) -> None:
+    def _accumulate(container: C, element: Any) -> None:
         container.add(element)
 
     return Collector(_supply, _accumulate)

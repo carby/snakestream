@@ -4,31 +4,31 @@ from snakestream.collectors import to_list
 from snakestream.ordering import Ordering, is_ordered
 from snakestream.sink import GeneratorBridgeSink, Op, Sink
 from snakestream.ops import (
-    _DistinctOp,
-    _FilterOp,
-    _FlatMapOp,
-    _LimitOp,
-    _MapOp,
-    _PeekOp,
-    _SkipOp,
-    _SortedOp,
-    _UnorderedOp,
+    DistinctOp,
+    FilterOp,
+    FlatMapOp,
+    LimitOp,
+    MapOp,
+    PeekOp,
+    SkipOp,
+    SortedOp,
+    UnorderedOp,
 )
 from snakestream.stream import Stream
 
 
 _SHIPPED_OPS = [
-    _FilterOp,
-    _MapOp,
-    _PeekOp,
-    _SortedOp,
-    _FlatMapOp,
-    _DistinctOp,
-    _LimitOp,
-    _SkipOp,
+    FilterOp,
+    MapOp,
+    PeekOp,
+    SortedOp,
+    FlatMapOp,
+    DistinctOp,
+    LimitOp,
+    SkipOp,
 ]
 
-_STATEFUL_OPS = [_DistinctOp(), _LimitOp(2), _SkipOp(2)]
+_STATEFUL_OPS = [DistinctOp(), LimitOp(2), SkipOp(2)]
 
 
 @pytest.mark.parametrize("op_cls", _SHIPPED_OPS)
@@ -83,7 +83,7 @@ async def test_state_map_holds_entries_only_for_stateful_ops() -> None:
         if state is not None:
             state_map[op] = state
     # then
-    stateful = [op for op in chain if isinstance(op, (_DistinctOp, _LimitOp, _SkipOp))]
+    stateful = [op for op in chain if isinstance(op, (DistinctOp, LimitOp, SkipOp))]
     assert len(stateful) == 2
     assert list(state_map.keys()) == stateful
 
@@ -92,7 +92,7 @@ async def test_state_map_holds_entries_only_for_stateful_ops() -> None:
 async def test_a_stateless_ops_sink_begins_on_an_empty_state_map() -> None:
     # given a sink built from a stateless op onto a terminal
     bridge = GeneratorBridgeSink()
-    sink = _MapOp(lambda x: x).link(bridge)
+    sink = MapOp(lambda x: x).link(bridge)
     # when
     await sink.begin({})
     # then begin propagated downstream, creating the bridge's container
@@ -107,7 +107,7 @@ async def test_shared_state_still_reaches_the_sinks_of_a_parallel_chain() -> Non
     assert sorted(it) == [1, 2, 3]
 
 
-_ORDER_SENSITIVE_OPS = [_LimitOp, _SkipOp, _DistinctOp]
+_ORDER_SENSITIVE_OPS = [LimitOp, SkipOp, DistinctOp]
 
 
 def test_a_minimal_op_is_not_order_sensitive() -> None:
@@ -126,7 +126,7 @@ def test_the_three_position_dependent_ops_declare_order_sensitivity(op_cls) -> N
     assert op_cls.order_sensitive is True
 
 
-@pytest.mark.parametrize("op_cls", [c for c in [*_SHIPPED_OPS, _UnorderedOp] if c not in _ORDER_SENSITIVE_OPS])
+@pytest.mark.parametrize("op_cls", [c for c in [*_SHIPPED_OPS, UnorderedOp] if c not in _ORDER_SENSITIVE_OPS])
 def test_no_other_shipped_op_declares_order_sensitivity(op_cls) -> None:
     # then - sorted() included: it declares Ordering.SET instead, which is the
     # first clause of the split rule and needs no second flag
@@ -136,13 +136,13 @@ def test_no_other_shipped_op_declares_order_sensitivity(op_cls) -> None:
 def test_sorted_declares_ordering_set_rather_than_order_sensitivity() -> None:
     # then the two declarations say different things and sorted() uses the
     # other one: what it does *to* the characteristic, not what it reads from it
-    assert _SortedOp.ordering is Ordering.SET
-    assert _SortedOp.order_sensitive is False
+    assert SortedOp.ordering is Ordering.SET
+    assert SortedOp.order_sensitive is False
 
 
 def test_the_fold_over_a_preserving_chain_returns_its_seed() -> None:
     # given a chain that says nothing about ordering either way
-    chain = [_MapOp(lambda x: x), _FilterOp(lambda x: True), _PeekOp(lambda x: None)]
+    chain = [MapOp(lambda x: x), FilterOp(lambda x: True), PeekOp(lambda x: None)]
 
     # then the answer is whatever came in - which is what a chain *suffix*
     # needs, since the ops that decided it sit before the split
@@ -152,7 +152,7 @@ def test_the_fold_over_a_preserving_chain_returns_its_seed() -> None:
 
 def test_a_sort_in_the_chain_overrides_an_unordered_seed() -> None:
     # given a suffix that sorts
-    chain = [_MapOp(lambda x: x), _SortedOp(lambda a, b: a - b), _LimitOp(2)]
+    chain = [MapOp(lambda x: x), SortedOp(lambda a, b: a - b), LimitOp(2)]
 
     # then SET wins over the seed, because a sort claims its output is ordered
     assert is_ordered(chain, initial=False) is True
@@ -163,7 +163,7 @@ def test_a_sort_in_the_chain_overrides_an_unordered_seed() -> None:
 
 def test_unordered_in_the_chain_overrides_an_ordered_seed() -> None:
     # given a suffix that clears
-    chain = [_UnorderedOp(), _MapOp(lambda x: x)]
+    chain = [UnorderedOp(), MapOp(lambda x: x)]
 
     # then CLEAR wins over the seed too - the seed only survives PRESERVE
     assert is_ordered(chain, initial=True) is False

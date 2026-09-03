@@ -6,8 +6,8 @@ from snakestream.collectors import to_list
 from snakestream.exception import IllegalStateException
 from conftest import TIE_SOURCE, TIED_EARLY, TIED_LATE, by_key, overtaken
 from snakestream.comparator import comparing
-from snakestream.ordering import OrderDemand, _split_point
-from snakestream.ops import _MapOp
+from snakestream.ordering import OrderDemand, split_point
+from snakestream.ops import MapOp
 from snakestream.stream import Stream
 
 
@@ -312,11 +312,11 @@ async def test_unordered_max_returns_one_of_the_tied_records() -> None:
 async def test_unordered_max_engages_no_delivery_barrier() -> None:
     # given: a chain with no order-sensitive op, so the terminal's own
     # declaration is the only thing that could split it
-    chain = [_MapOp(overtaken)]
+    chain = [MapOp(overtaken)]
 
     # then: max() observes order, but unordered() clears the characteristic
-    assert _split_point(chain, demand=OrderDemand.IF_ORDERED, ordered_in=True) == len(chain)
-    assert _split_point(chain, demand=OrderDemand.IF_ORDERED, ordered_in=False) is None
+    assert split_point(chain, demand=OrderDemand.IF_ORDERED, ordered_in=True) == len(chain)
+    assert split_point(chain, demand=OrderDemand.IF_ORDERED, ordered_in=False) is None
 
 
 @pytest.mark.asyncio

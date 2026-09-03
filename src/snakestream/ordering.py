@@ -2,12 +2,12 @@
 and nothing else. Ordering states what an op does to the pipeline's
 encounter-order characteristic; OrderDemand states what a terminal asks of
 it — the two enums are deliberately the same shape read from opposite ends,
-and OrderDemand's and _split_point()'s docstrings both print the table that
+and OrderDemand's and split_point()'s docstrings both print the table that
 pairs them. is_ordered() is the fold that answers the characteristic for a
-chain; _split_point() is the search that answers where a racing executor's
+chain; split_point() is the search that answers where a racing executor's
 delivery barrier goes.
 
-Reads ops structurally: is_ordered() and _split_point() consult only
+Reads ops structurally: is_ordered() and split_point() consult only
 op.ordering and op.order_sensitive, and neither constructs, links, drives, nor
 awaits one. Op is imported for typing only, under TYPE_CHECKING, so the
 sink -> ordering edge stays one-directional — sink.py imports Ordering here at
@@ -42,7 +42,7 @@ class Ordering(Enum):
 class OrderDemand(Enum):
     """What a terminal asks of the pipeline's encounter-order characteristic,
     where sink.Ordering says what an *op* does to it. The pair is the whole
-    input to _split_point(), and the two enums are deliberately the same shape
+    input to split_point(), and the two enums are deliberately the same shape
     read from opposite ends.
 
     Three values because a demand can be unconditional or conditional, and a
@@ -93,7 +93,7 @@ def is_ordered(chain: list[Op], upto: int | None = None, initial: bool = True) -
 
     A free function over a chain rather than a Stream method: the fold is a
     property of a list of Ops, not of the stream that built them, and both
-    _split_point() and Stream._is_ordered() read it as that."""
+    split_point() and Stream._is_ordered() read it as that."""
     ordered = initial
     for op in chain[:upto] if upto is not None else chain:
         if op.ordering is not Ordering.PRESERVE:
@@ -101,7 +101,7 @@ def is_ordered(chain: list[Op], upto: int | None = None, initial: bool = True) -
     return ordered
 
 
-def _split_point(chain: list[Op], demand: OrderDemand, ordered_in: bool) -> int | None:
+def split_point(chain: list[Op], demand: OrderDemand, ordered_in: bool) -> int | None:
     """The index at which encounter order has to be restored, or None when it
     never does and the chain can race end-to-end.
 
@@ -123,7 +123,7 @@ def _split_point(chain: list[Op], demand: OrderDemand, ordered_in: bool) -> int 
     clause and is why this returns `len(chain)` rather than an op's index: a
     split at the end means every op still races and only the handing over is
     ordered. Expressing it as a split is what lets one mechanism serve both —
-    race_through() runs the same head/reorder/tail branch either way, with an
+    _race_through() runs the same head/reorder/tail branch either way, with an
     empty tail here.
 
     That third clause is the two op clauses again, one level up, which is what

@@ -51,7 +51,7 @@ class _FilterSink(AsyncDispatch, IntermediateSink[T]):
             await self.downstream.accept(element)
 
 
-class _FilterOp(StatelessOp):
+class FilterOp(StatelessOp):
     _sink_cls = _FilterSink
 
 
@@ -72,7 +72,7 @@ class _MapSink(AsyncDispatch, IntermediateSink[T]):
         await self.downstream.accept(r)
 
 
-class _MapOp(StatelessOp):
+class MapOp(StatelessOp):
     _sink_cls = _MapSink
 
 
@@ -93,7 +93,7 @@ class _PeekSink(AsyncDispatch, IntermediateSink[T]):
         await self.downstream.accept(element)
 
 
-class _PeekOp(StatelessOp):
+class PeekOp(StatelessOp):
     _sink_cls = _PeekSink
 
 
@@ -110,7 +110,7 @@ class _SortedSink(IntermediateSink[T]):
     async def end(self) -> None:
         cache = self._buffer
         if self._comparator is not None:
-            # sort() owns the choice between Timsort and merge_sort; which one
+            # sort() owns the choice between Timsort and _merge_sort; which one
             # a comparator allows is sort.py's question, not this sink's.
             cache = await sort(cache, self._comparator)
         else:
@@ -126,7 +126,7 @@ class _SortedSink(IntermediateSink[T]):
         await super().end()
 
 
-class _SortedOp(StatelessOp):
+class SortedOp(StatelessOp):
     _sink_cls = _SortedSink
     # a sort imposes an encounter order on its output whether or not its input
     # had one, so ordering is restored downstream of it - Java's SortedOps
@@ -134,9 +134,9 @@ class _SortedOp(StatelessOp):
     ordering = Ordering.SET
 
 
-class _UnorderedOp(Op):
+class UnorderedOp(Op):
     """The one op with no sink: link() hands back the downstream untouched, so
-    an _UnorderedOp in a chain costs nothing per element and cannot observe,
+    an UnorderedOp in a chain costs nothing per element and cannot observe,
     transform, reorder, drop or duplicate anything. Java's unordered() is the
     same shape - a StatelessOp whose opWrapSink(flags, sink) returns sink.
 
@@ -163,7 +163,7 @@ class _FlatMapSink(IntermediateSink[T]):
                     break
 
 
-class _FlatMapOp(StatelessOp):
+class FlatMapOp(StatelessOp):
     _sink_cls = _FlatMapSink
 
 
@@ -175,7 +175,7 @@ class _DistinctSink(StatefulSink[T]):
         await self.downstream.accept(element)
 
 
-class _DistinctOp(StatefulOp):
+class DistinctOp(StatefulOp):
     _sink_cls = _DistinctSink
     order_sensitive = True
 
@@ -214,7 +214,7 @@ class _LimitSink(StatefulSink[T]):
         return self._cancelled or super().cancellation_requested()
 
 
-class _LimitOp(StatefulOp):
+class LimitOp(StatefulOp):
     _sink_cls = _LimitSink
     order_sensitive = True
 
@@ -234,7 +234,7 @@ class _SkipSink(StatefulSink[T]):
         await self.downstream.accept(element)
 
 
-class _SkipOp(StatefulOp):
+class SkipOp(StatefulOp):
     _sink_cls = _SkipSink
     order_sensitive = True
 

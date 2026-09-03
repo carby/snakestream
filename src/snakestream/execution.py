@@ -1,10 +1,10 @@
 """How a composed chain actually runs. Four primitives do the work:
-stream_through() (push in, pull out, lazily), race_through() (N branches
-racing one shared source), feed_through() (fused push straight to a
-terminal, nothing buffered) and drain() (any generator into a terminal).
-race_through() has a second gear: where encounter order has to be restored, it
+_stream_through() (push in, pull out, lazily), _race_through() (N branches
+racing one shared source), _feed_through() (fused push straight to a
+terminal, nothing buffered) and _drain() (any generator into a terminal).
+_race_through() has a second gear: where encounter order has to be restored, it
 splits the chain, races everything upstream of the split and reorders at the
-merge — see ordering.py's _split_point() and this module's _release_in_order().
+merge — see ordering.py's split_point() and this module's _release_in_order().
 Two things ask for it. An operation whose answer depends on an element's
 position splits at its own index, and only that operation runs in the ordered
 pass; everything after it races again. A terminal that can tell what order
@@ -16,10 +16,10 @@ branch and its teardown. It is scaffolding around the primitives rather than a
 fifth one: it decides nothing about what a pipeline produces, only that a merge
 arms and tears down its branch tasks the same way whichever loop is consuming
 them.
-Two Executor values sit on top: Sequential.elements() and Racing.elements()
-each pick a primitive; Sequential.value() is the one asymmetry in the
-protocol, overriding the generic drain(elements(...), terminal) with
-feed_through() because composing-then-draining measured far more
+Two Executor values sit on top: _Sequential.elements() and _Racing.elements()
+each pick a primitive; _Sequential.value() is the one asymmetry in the
+protocol, overriding the generic _drain(elements(...), terminal) with
+_feed_through() because composing-then-draining measured far more
 expensive per element (see its own docstring for the figures)."""
 
 from __future__ import annotations
@@ -30,9 +30,9 @@ from contextlib import asynccontextmanager
 from typing import Any, ClassVar
 from collections.abc import AsyncGenerator, AsyncIterator, Iterator
 
-from snakestream.ordering import OrderDemand, is_ordered, _split_point
+from snakestream.ordering import OrderDemand, is_ordered, split_point
 from snakestream.sink import GeneratorBridgeSink, Op, Sink, TerminalSink
-from snakestream.type import StateMap, T, _Aiter
+from snakestream.type import Aiter, StateMap, T
 
 
 # How many branches the racing executor fans a chain out across. Bound into
@@ -87,7 +87,7 @@ def _in_flight(workers: int) -> int:
 async def _maybe_aclose(thing: AsyncIterator) -> None:
     """Close an async source, if it is one of the closeable ones — some
     accepted sources (e.g. a bare async iterator implementing only __anext__)
-    have no aclose(). Split out of _maybe_aclosing() below so that _guarded(),
+    have no aclose(). Split out of maybe_aclosing() below so that _guarded(),
     which has to close under a lock it cannot hold across a context manager's
     exit, still asks the same question in the same words."""
     # getattr rather than hasattr so the widened annotation still type-checks;
@@ -99,7 +99,7 @@ async def _maybe_aclose(thing: AsyncIterator) -> None:
 
 
 @asynccontextmanager
-async def _maybe_aclosing(thing: _Aiter) -> AsyncIterator[_Aiter]:
+async def maybe_aclosing(thing: Aiter) -> AsyncIterator[Aiter]:
     """Like contextlib.aclosing(), but a no-op on exit if the wrapped object
     has no aclose(). The finally is load-bearing: the source must be closed on
     the way out of a body that raised or broke early (limit, find_any,
@@ -122,11 +122,11 @@ async def _racing_branches(branches: list[AsyncGenerator]) -> AsyncIterator[dict
     branch that raised StopAsyncIteration is simply not re-armed, which is
     what drains the dict to empty. Callers re-arm through it directly; only
     the arming and the teardown live here, because only those are identical
-    between them - race_through() yields a completed result as it stands and
+    between them - _race_through() yields a completed result as it stands and
     _release_in_order() buffers it by source index, and that difference is
     the whole of what each loop is for.
 
-    The finally is load-bearing for the same reason _maybe_aclosing()'s is,
+    The finally is load-bearing for the same reason maybe_aclosing()'s is,
     one function up: a merge is abandoned far more often than it is drained.
     Every short-circuiting terminal leaves through it - find_any(), the
     *_match family, a limit() that filled - and so does any branch that
@@ -231,7 +231,7 @@ class _Window:
 async def _guarded(source: AsyncIterator, lock: asyncio.Lock, window: _Window | None = None) -> AsyncGenerator:
     """One branch's view of a source shared with other branches: every pull and
     the final close happen under the shared lock. The source is already an
-    iterator (race_through() calls aiter() once for all branches) and is only
+    iterator (_race_through() calls aiter() once for all branches) and is only
     closed if it is closeable, so this accepts every source the sequential path
     does — not just the async generators _normalize() builds.
 
@@ -279,13 +279,13 @@ async def _guarded(source: AsyncIterator, lock: asyncio.Lock, window: _Window | 
 # --- the execution primitives -------------------------------------------
 #
 # Two things a pipeline can produce, and two ways to run it, but not a
-# symmetric 2x2: feed_through() is a fused fast path that exists only because
+# symmetric 2x2: _feed_through() is a fused fast path that exists only because
 # it measured more than twice as fast as composing and then draining (see
-# Sequential.value). Each function has exactly one meaning, and none of them
+# _Sequential.value). Each function has exactly one meaning, and none of them
 # needs a stream instance.
 
 
-async def stream_through(
+async def _stream_through(
     chain: list[Op],
     source: AsyncGenerator,
     state_map: StateMap | None = None,
@@ -297,7 +297,7 @@ async def stream_through(
         state_map = {}
     bridge: GeneratorBridgeSink = GeneratorBridgeSink()
     head = _wrap_sink(chain, bridge)
-    async with _maybe_aclosing(source) as src:
+    async with maybe_aclosing(source) as src:
         await head.begin(state_map)
         # same pre-first-pull guard as _copy_into(), which carries the
         # reasoning; this loop cannot share it because it has to yield
@@ -317,12 +317,12 @@ async def stream_through(
             bridge.buffer.clear()
 
 
-async def group_through(
+async def _group_through(
     chain: list[Op],
     source: AsyncGenerator,
     state_map: StateMap,
 ) -> AsyncGenerator[tuple[int | None, list[Any]], None]:
-    """stream_through()'s group-yielding twin, for a branch upstream of an
+    """_stream_through()'s group-yielding twin, for a branch upstream of an
     ordering barrier: instead of yielding elements one at a time it yields
     `(index, outputs)` — everything the chain emitted in response to the source
     element carrying that index.
@@ -341,7 +341,7 @@ async def group_through(
     the end of the stream is where its output belongs."""
     bridge: GeneratorBridgeSink = GeneratorBridgeSink()
     head = _wrap_sink(chain, bridge)
-    async with _maybe_aclosing(source) as src:
+    async with maybe_aclosing(source) as src:
         await head.begin(state_map)
         # same pre-first-pull guard as _copy_into(), which carries the reasoning
         if not head.cancellation_requested():
@@ -372,7 +372,7 @@ async def _release_in_order(
     branches: list[AsyncGenerator],
     window: _Window,
 ) -> AsyncGenerator:
-    """The reorder barrier: the same FIRST_COMPLETED merge race_through() runs,
+    """The reorder barrier: the same FIRST_COMPLETED merge _race_through() runs,
     with a buffer in front of the yield. Groups land in whatever order the
     branches finish them; this holds each one until every earlier index has
     gone out, so what leaves is the head chain's output in encounter order.
@@ -431,12 +431,12 @@ async def _run_ordered_tail(
     delivery-barrier case, where the reordered stream *is* the answer."""
     barrier, rest = tail[:1], tail[1:]
     if not rest:
-        async for out in stream_through(barrier, ordered, state_map):
+        async for out in _stream_through(barrier, ordered, state_map):
             yield out
         return
-    async for out in race_through(
+    async for out in _race_through(
         rest,
-        stream_through(barrier, ordered, state_map),
+        _stream_through(barrier, ordered, state_map),
         workers,
         demand,
         is_ordered(barrier),
@@ -444,7 +444,7 @@ async def _run_ordered_tail(
         yield out
 
 
-async def race_through(
+async def _race_through(
     chain: list[Op],
     source: AsyncGenerator,
     workers: int,
@@ -453,7 +453,7 @@ async def race_through(
 ) -> AsyncGenerator:
     """The same chain, run by `workers` branches racing over one shared source.
     Elements are yielded as branches finish them, so encounter order is not
-    preserved — unless something needs it (see _split_point()), in which case
+    preserved — unless something needs it (see split_point()), in which case
     the chain is split there: the head races as ever, _release_in_order()
     restores encounter order at the merge, and _run_ordered_tail() takes the
     rest.
@@ -509,12 +509,12 @@ async def race_through(
       order-min-max-tie-breaks; 20,000 elements, map(x + 1), 4 workers, Python
       3.14.5, best of 5, all three draining into the same counting sink):
 
-        baseline (unordered)   7.32 us/element  stream_through + plain merge
-        tagged, unmerged       8.03 us/element  group_through  + plain merge      +9.7%
-        reorder barrier        8.71 us/element  group_through  + _release_in_order +19%
+        baseline (unordered)   7.32 us/element  _stream_through + plain merge
+        tagged, unmerged       8.03 us/element  _group_through  + plain merge      +9.7%
+        reorder barrier        8.71 us/element  _group_through  + _release_in_order +19%
 
       Two roughly equal halves, not one: tagging costs 0.71 us/element and
-      reordering 0.68. group_through() is the harder to remove -- the chain
+      reordering 0.68. _group_through() is the harder to remove -- the chain
       drops and multiplies, so a per-element tag has no answer and the group is
       the invariant. It is also a whole-path number, paying off for every
       order-observing terminal at once, which is why order-min-max-tie-breaks
@@ -553,19 +553,19 @@ async def race_through(
     # times over. One iterator, shared under the lock, is what racing means.
     shared = aiter(source)
 
-    split = _split_point(chain, demand, ordered_in)
+    split = split_point(chain, demand, ordered_in)
     if split is not None:
         # race the head, restore encounter order at the merge, hand the rest
         # to the tail. One state map for the whole chain either way: head ops
         # share theirs across branches, tail ops are built once and so share
         # it with nobody, which comes to the same thing.
         window = _Window(_in_flight(workers))
-        head = [group_through(chain[:split], _guarded(shared, lock, window), state_map) for _ in range(workers)]
+        head = [_group_through(chain[:split], _guarded(shared, lock, window), state_map) for _ in range(workers)]
         async for out in _run_ordered_tail(chain[split:], _release_in_order(head, window), state_map, workers, demand):
             yield out
         return
 
-    branches = [stream_through(chain, _guarded(shared, lock), state_map) for _ in range(workers)]
+    branches = [_stream_through(chain, _guarded(shared, lock), state_map) for _ in range(workers)]
 
     async with _racing_branches(branches) as in_flight:
         while in_flight:
@@ -581,21 +581,21 @@ async def race_through(
                 yield result
 
 
-async def feed_through(chain: list[Op], source: AsyncGenerator, terminal: TerminalSink[Any]) -> Any:
+async def _feed_through(chain: list[Op], source: AsyncGenerator, terminal: TerminalSink[Any]) -> Any:
     """Push source -> head -> terminal in a single ordered pass, with nothing
     buffered on the way: the last intermediate sink pushes straight into the
     terminal, so no generator sits between them."""
     head = _wrap_sink(chain, terminal)
-    async with _maybe_aclosing(source) as src:
+    async with maybe_aclosing(source) as src:
         await _copy_into(head, src, {})
     return terminal.result()
 
 
-async def drain(elements: AsyncGenerator, terminal: TerminalSink[Any]) -> Any:
+async def _drain(elements: AsyncGenerator, terminal: TerminalSink[Any]) -> Any:
     """Accumulate an already-composed generator into a terminal sink. The
     terminal sits outside whatever produced `elements`, so cancellation reaches
     only this loop."""
-    async with _maybe_aclosing(elements) as src:
+    async with maybe_aclosing(elements) as src:
         await _copy_into(terminal, src, {})
     return terminal.result()
 
@@ -627,12 +627,12 @@ class Executor(ABC):
     def elements(self, chain: list[Op], source: AsyncGenerator, demand: OrderDemand) -> AsyncGenerator: ...
 
     async def value(self, chain: list[Op], source: AsyncGenerator, terminal: TerminalSink[Any], demand: OrderDemand) -> Any:
-        """The general form: compose, then drain into the terminal. Correct for
-        any executor; Racing uses it unchanged."""
-        return await drain(self.elements(chain, source, demand), terminal)
+        """The general form: compose, then _drain into the terminal. Correct for
+        any executor; _Racing uses it unchanged."""
+        return await _drain(self.elements(chain, source, demand), terminal)
 
 
-class Sequential(Executor):
+class _Sequential(Executor):
     is_parallel = False
 
     # demand is accepted and ignored throughout: a single ordered pass
@@ -642,7 +642,7 @@ class Sequential(Executor):
     # will read it.
 
     def elements(self, chain: list[Op], source: AsyncGenerator, demand: OrderDemand) -> AsyncGenerator:
-        return stream_through(chain, source)
+        return _stream_through(chain, source)
 
     async def value(self, chain: list[Op], source: AsyncGenerator, terminal: TerminalSink[Any], demand: OrderDemand) -> Any:
         """Overrides the general form with the fused push, which is the one
@@ -653,10 +653,10 @@ class Sequential(Executor):
         terminal removes an accept, a buffer append, a truthiness check, a
         yield across the async-generator boundary and a list clear, per
         element. Results are identical to the general form."""
-        return await feed_through(chain, source, terminal)
+        return await _feed_through(chain, source, terminal)
 
 
-class Racing(Executor):
+class _Racing(Executor):
     is_parallel = True
 
     __slots__ = ("workers",)
@@ -665,12 +665,12 @@ class Racing(Executor):
         self.workers = workers
 
     def elements(self, chain: list[Op], source: AsyncGenerator, demand: OrderDemand) -> AsyncGenerator:
-        return race_through(chain, source, self.workers, demand)
+        return _race_through(chain, source, self.workers, demand)
 
     # value() is inherited: each racing branch owns its own sink chain, so
     # there is no single chain to fuse a terminal onto. The general form is
     # the only form available here, which is why it is the base.
 
 
-SEQUENTIAL = Sequential()
-RACING = Racing(PROCESSES)
+SEQUENTIAL = _Sequential()
+RACING = _Racing(PROCESSES)

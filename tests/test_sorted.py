@@ -202,7 +202,7 @@ async def test_parallel_sorted_sorts_the_whole_stream_over_a_sync_source() -> No
 #
 # Every comparator form the capability accepts is covered, because they reach
 # three different algorithms in sort.py: a sync comparator goes to Timsort via
-# cmp_to_key, an async one to merge_sort's hand-written merge, and a comparing()
+# cmp_to_key, an async one to _merge_sort's hand-written merge, and a comparing()
 # key comparator to the decorate-sort-undecorate path.
 
 _STABILITY_SOURCE = [("a", 5), ("b", 3), ("c", 5)]

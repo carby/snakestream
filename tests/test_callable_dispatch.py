@@ -4,7 +4,7 @@ import functools
 import pytest
 
 from snakestream import Stream
-from snakestream.callable_dispatch import _maybe_await, is_async_callable
+from snakestream.callable_dispatch import is_async_callable, maybe_await
 from snakestream.collectors import (
     to_list,
     summing_int,
@@ -61,22 +61,22 @@ class AsyncCallableAccumulator:
 
 @pytest.mark.asyncio
 async def test_maybe_await_sync_function() -> None:
-    assert await _maybe_await(_sync_double, 3) == 6
+    assert await maybe_await(_sync_double, 3) == 6
 
 
 @pytest.mark.asyncio
 async def test_maybe_await_async_function() -> None:
-    assert await _maybe_await(_async_double, 3) == 6
+    assert await maybe_await(_async_double, 3) == 6
 
 
 @pytest.mark.asyncio
 async def test_maybe_await_sync_callable_object() -> None:
-    assert await _maybe_await(SyncCallableDouble(), 3) == 6
+    assert await maybe_await(SyncCallableDouble(), 3) == 6
 
 
 @pytest.mark.asyncio
 async def test_maybe_await_async_callable_object() -> None:
-    assert await _maybe_await(AsyncCallableDouble(), 3) == 6
+    assert await maybe_await(AsyncCallableDouble(), 3) == 6
 
 
 @pytest.mark.asyncio
