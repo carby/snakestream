@@ -118,9 +118,15 @@ class FindSink(UnseededSink[T]):
         self._cancelled = False
 
     async def accept(self, element: Any) -> None:
-        # Keep the first and ignore the rest: a sink that pushes from end()
-        # (sorted) flushes its whole buffer in one go, so cancelling is not
-        # enough to guarantee no further accept() lands here.
+        # Keep the first and ignore the rest. sink-protocol lets a settled
+        # sink meet its no-corruption requirement either way - by being
+        # guaranteed no further push, or by ignoring what arrives - and this
+        # takes the second. It is belt-and-braces, not a gap being covered:
+        # every op that pushes more than once without returning to the driving
+        # loop already checks cancellation between pushes (_SortedSink.end(),
+        # _FlatMapSink.accept()), so nothing in the library reaches this guard
+        # today. Guarding here is what keeps that a property of the ops rather
+        # than a correctness debt this sink is owed.
         if self._cancelled:
             return
         self._container = element
@@ -148,8 +154,9 @@ class MatchSink(AsyncDispatch, TerminalSink[T]):
 
     async def accept(self, element: Any) -> None:
         # Once settled the answer cannot change, and the predicate must not run
-        # again: a sink pushing from end() can still deliver elements after
-        # cancellation was requested.
+        # again. Same posture as FindSink.accept(), which carries the reasoning:
+        # sink-protocol's second disjunct, taken as belt-and-braces rather than
+        # to cover a push the ops layer actually makes.
         if self._cancelled:
             return
         r = self._fn(element)
