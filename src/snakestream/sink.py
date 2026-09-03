@@ -26,6 +26,16 @@ from snakestream.type import StateMap, T
 _UNSET = object()
 
 
+def _unseeded(container: Any) -> Any:
+    """The rule stated once: an accumulation that never saw an element
+    finishes as None. A function rather than five inlined comparisons because
+    it is the only mechanism that reaches both terminals.py's sinks (through
+    _UnseededSink below) and collectors.py's closures, which are dataclass
+    boxes rather than sinks and so cannot share a base class with them - see
+    design Decision 3 of collapse-unseeded-accumulation-rule."""
+    return None if container is _UNSET else container
+
+
 @dataclass(slots=True)
 class Box:
     """A mutable single-value box. Lets a fixed accumulator function rebind a
@@ -269,6 +279,21 @@ class TerminalSink(Sink[T]):
 
     def result(self) -> Any:
         return self._result
+
+
+class _UnseededSink(TerminalSink[T]):
+    """A terminal that starts with no value: _create_container() is _UNSET and
+    _finish() applies the rule _unseeded() states. Not folded into
+    TerminalSink's own default - see design Decision 1 of
+    collapse-unseeded-accumulation-rule for why: most TerminalSink subclasses
+    can never hold _UNSET, and a universal default would assert the rule on
+    all of them regardless."""
+
+    def _create_container(self) -> Any:
+        return _UNSET
+
+    def _finish(self, container: Any) -> Any:
+        return _unseeded(container)
 
 
 class GeneratorBridgeSink(TerminalSink[T]):

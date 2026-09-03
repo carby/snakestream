@@ -6,7 +6,7 @@ from collections.abc import Awaitable
 
 from snakestream.callable_dispatch import AsyncDispatch
 from snakestream.comparator import is_new_extremum
-from snakestream.sink import TerminalSink, _UNSET
+from snakestream.sink import TerminalSink, _UnseededSink, _UNSET
 from snakestream.type import (
     T,
     Accumulator,
@@ -49,19 +49,18 @@ class _ForEachSink(AsyncDispatch, TerminalSink[T]):
                 await r
 
 
-class _ReduceSink(AsyncDispatch, TerminalSink[T]):
+class _ReduceSink(AsyncDispatch, _UnseededSink[T]):
     """Folds every element into an accumulated value. An identity of _UNSET
     means the no-identity overload: the first element seeds the fold instead,
     and an empty source finishes as None.
 
-    That seeding rule is implemented twice, here and in collector.py's
+    The _UNSET-seed rule is implemented twice, here and in collector.py's
     reducing(), which is deliberate and measured rather than an oversight:
     routing Stream.reduce() through reducing() cost +70% per element, because
     the collector form reaches its callables through _classify_step and a
     supplier-made box where this sink has them inline on itself. Keep the two
-    in step by hand - a change to the _UNSET-seed rule or the
-    empty-finishes-as-None rule belongs in both. See the collapse-terminal-
-    collector-duplication change for the figures."""
+    in step by hand - a change to that seed rule belongs in both. See the
+    collapse-terminal-collector-duplication change for the figures."""
 
     def __init__(self, identity: Any, accumulator: Accumulator) -> None:
         super().__init__()
@@ -85,18 +84,12 @@ class _ReduceSink(AsyncDispatch, TerminalSink[T]):
                 r = await r
         self._container = r
 
-    def _finish(self, container: Any) -> Any:
-        return None if container is _UNSET else container
 
-
-class _MinMaxSink(AsyncDispatch, TerminalSink[T]):
+class _MinMaxSink(AsyncDispatch, _UnseededSink[T]):
     def __init__(self, comparator: Comparator, asc: bool) -> None:
         super().__init__()
         self._asc = asc
         self._init_dispatch(comparator)
-
-    def _create_container(self) -> Any:
-        return _UNSET
 
     async def accept(self, element: Any) -> None:
         if self._container is _UNSET:
@@ -114,11 +107,8 @@ class _MinMaxSink(AsyncDispatch, TerminalSink[T]):
         if is_new_extremum(cast(int, sign), self._asc):
             self._container = element
 
-    def _finish(self, container: Any) -> Any:
-        return None if container is _UNSET else container
 
-
-class _FindSink(TerminalSink[T]):
+class _FindSink(_UnseededSink[T]):
     """Keeps the first element it is given and asks the chain to stop. Backs
     both find_first() and find_any() on a sequential Stream, which are the same
     operation there: the drive is already in encounter order."""
@@ -126,9 +116,6 @@ class _FindSink(TerminalSink[T]):
     def __init__(self) -> None:
         super().__init__()
         self._cancelled = False
-
-    def _create_container(self) -> Any:
-        return _UNSET
 
     async def accept(self, element: Any) -> None:
         # Keep the first and ignore the rest: a sink that pushes from end()
@@ -141,9 +128,6 @@ class _FindSink(TerminalSink[T]):
 
     def cancellation_requested(self) -> bool:
         return self._cancelled
-
-    def _finish(self, container: Any) -> Any:
-        return None if container is _UNSET else container
 
 
 class _MatchSink(AsyncDispatch, TerminalSink[T]):
