@@ -1,5 +1,5 @@
 """The collector protocol: Collector, the supplier/accumulator/combiner/
-finisher quadruple mirroring Java's Collector<T,A,R>; _CollectorSink, which
+finisher quadruple mirroring Java's Collector<T,A,R>; CollectorSink, which
 adapts one to the sink protocol; and StreamingCollector, the one collect()
 argument that is not a Collector. The factories that build Collectors live in
 collectors.py, which imports from here - never the other way round."""
@@ -11,7 +11,7 @@ from inspect import isawaitable
 from typing import Any, Generic, cast
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
 
-from snakestream.execution import _maybe_aclosing
+from snakestream.execution import maybe_aclosing
 from snakestream.callable_dispatch import AsyncDispatch
 from snakestream.sink import TerminalSink
 from snakestream.type import (
@@ -119,7 +119,7 @@ class Collector(Generic[T, A, R]):
         self.characteristics = frozenset(characteristics)
 
 
-class _CollectorSink(AsyncDispatch, TerminalSink[T]):
+class CollectorSink(AsyncDispatch, TerminalSink[T]):
     """Adapts any Collector to the sink protocol: supplier -> container
     creation, accumulator -> accept(), finisher -> _finish(). The one
     AsyncDispatch triple here classifies the accumulator itself; a collector
@@ -169,9 +169,9 @@ class StreamingCollector:
 
 
 async def _stream(composition: AsyncGenerator) -> AsyncGenerator[Any, None]:
-    # _maybe_aclosing, not aclosing: to_generator() also accepts a plain
+    # maybe_aclosing, not aclosing: to_generator() also accepts a plain
     # AsyncIterable with no aclose() (a custom __anext__-only iterator)
-    async with _maybe_aclosing(composition) as src:
+    async with maybe_aclosing(composition) as src:
         async for n in src:
             yield n
 

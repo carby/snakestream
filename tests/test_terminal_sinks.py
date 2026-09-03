@@ -366,10 +366,10 @@ async def test_terminals_still_reject_a_superseded_stream() -> None:
 
 @pytest.mark.asyncio
 async def test_find_sink_keeps_the_first_element_if_pushed_past_cancellation() -> None:
-    from snakestream.terminals import _FindSink
+    from snakestream.terminals import FindSink
 
     # given
-    sink = _FindSink()
+    sink = FindSink()
     await sink.begin({})
 
     # when
@@ -384,7 +384,7 @@ async def test_find_sink_keeps_the_first_element_if_pushed_past_cancellation() -
 
 @pytest.mark.asyncio
 async def test_match_sink_keeps_its_answer_if_pushed_past_cancellation() -> None:
-    from snakestream.terminals import _MatchSink
+    from snakestream.terminals import MatchSink
 
     # given
     calls = []
@@ -393,7 +393,7 @@ async def test_match_sink_keeps_its_answer_if_pushed_past_cancellation() -> None
         calls.append(n)
         return n > 0
 
-    sink = _MatchSink(predicate, short_circuit_on=True, default=False)
+    sink = MatchSink(predicate, short_circuit_on=True, default=False)
     await sink.begin({})
 
     # when

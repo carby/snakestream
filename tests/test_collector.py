@@ -52,7 +52,7 @@ async def test_collector_accumulator_return_value_is_ignored() -> None:
 
 class _SyncCallReturningCoroutineAccumulator:
     """__call__ is plain `def` but its body returns a coroutine object -
-    exercises _CollectorSink's own one-time dispatch safety net."""
+    exercises CollectorSink's own one-time dispatch safety net."""
 
     def __call__(self, container: list, element: int):
         return self._append(container, element)

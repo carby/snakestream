@@ -1,16 +1,17 @@
-from snakestream import PROCESSES
-from snakestream.execution import PROCESSES as EXECUTION_PROCESSES
+import snakestream
+import snakestream.stream
 
 
-def test_processes_exported_from_top_level_package() -> None:
-    # then
-    assert PROCESSES == EXECUTION_PROCESSES
+def test_processes_is_not_exported_from_the_top_level_package() -> None:
+    # then: PROCESSES is an import-time-bound fact, not a tunable lever -
+    # assigning to it after RACING is built at import changes nothing a
+    # pipeline does, so it carries no export
+    assert not hasattr(snakestream, "PROCESSES")
+    assert not hasattr(snakestream.stream, "PROCESSES")
 
 
 def test_the_in_flight_bound_has_no_public_name() -> None:
     # given the whole exported surface
-    import snakestream
-
     exported = [name for name in dir(snakestream) if not name.startswith("_")]
 
     # then nothing reads or sets the racing executor's in-flight window: the
@@ -20,5 +21,6 @@ def test_the_in_flight_bound_has_no_public_name() -> None:
     assert not hasattr(snakestream, "_in_flight")
     assert not hasattr(snakestream, "_IN_FLIGHT_PER_WORKER")
 
-    # and PROCESSES is unaffected - it names a concept with a Java counterpart
-    assert "PROCESSES" in exported
+    # PROCESSES is the same kind of import-time-bound constant, and gets the
+    # same answer: neither has a public name, for the same reason
+    assert "PROCESSES" not in exported

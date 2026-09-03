@@ -177,18 +177,6 @@ parallelism. `find_any()` is where a caller who wants the race goes.
 - **WHEN** `find_any()` is called on a parallel stream
 - **THEN** it runs under the stream's own executor and may return any element
 
-### Requirement: PROCESSES is part of the package's public export surface
-
-`PROCESSES`, the tunable worker count the racing executor is built from, SHALL
-be importable directly from the top-level `snakestream` package, not only from
-`snakestream.execution`.
-
-#### Scenario: PROCESSES is importable from the top-level package
-
-- **WHEN** a caller writes `from snakestream import PROCESSES`
-- **THEN** the import succeeds and yields the same `int` value as
-  `snakestream.execution.PROCESSES`
-
 ### Requirement: Source acceptance does not depend on execution mode
 
 The set of source values a stream accepts and can consume SHALL be identical in

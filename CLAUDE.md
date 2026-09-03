@@ -25,6 +25,14 @@ uv run --with pip-audit pip-audit          # dependency vulnerability audit
 
 CI (`.github/workflows/check.yml`) runs the ruff checks, `uv run pytest`, `ty`, `pip-audit` and the coverage gate across Python 3.10–3.14; `ty`, `pip-audit`, and the coverage gate only run on the 3.14 leg. Match that when validating changes.
 
+## Naming
+
+A module-level name in `src/snakestream` carries a leading underscore **iff** no other module in `src/snakestream` uses it. A name another module imports is bare; a name used only where it is defined is underscored. The underscore is not a public-API marker — the package's public surface is the module path a caller imports from (`snakestream.collectors.to_list`, `snakestream.comparator.comparing`, ...) plus the two names `snakestream/__init__.py` re-exports (`Stream`, and as of this rule, nothing else). Every module below `__init__.py` is already an implementation detail, so a bare name inside one is not a promise that callers may import it.
+
+`tests/` may import anything, including an underscore-prefixed name — that is white-box testing, not a violation, and does not make the name non-local. `tests/test_name_visibility.py` enforces the decidable half of the rule (a build check: no module under `src/snakestream` may import a private name from another module in the package); the other half — that a bare name used only inside its module really is absent from every caller — is a one-time judgment applied by hand, since there is no maintained list of caller-facing names to check it against.
+
+Class members are unaffected: a method or attribute's leading underscore still means "not for callers," regardless of which modules use the class.
+
 ## Architecture
 
 ### The chain-of-ops model
@@ -45,18 +53,18 @@ This means:
 Execution mode is a **value, not a type**. There is no `ParallelStream` class. `execution.py` holds two executors and the primitives they are built from:
 
 ```
-stream_through(chain, src)          -> AsyncGenerator   one worker, elements out lazily
-group_through(chain, src, state)    -> AsyncGenerator   one worker, (index, outputs) per source element
-race_through(chain, src, workers, ordered)
+_stream_through(chain, src)          -> AsyncGenerator   one worker, elements out lazily
+_group_through(chain, src, state)    -> AsyncGenerator   one worker, (index, outputs) per source element
+_race_through(chain, src, workers, ordered)
                                     -> AsyncGenerator   N branches racing one shared source
-feed_through(chain, src, terminal)  -> value            fused push, nothing buffered
-drain(elements, terminal)           -> value            any generator into a terminal
+_feed_through(chain, src, terminal)  -> value            fused push, nothing buffered
+_drain(elements, terminal)           -> value            any generator into a terminal
 
-SEQUENTIAL.elements = stream_through      SEQUENTIAL.value = feed_through  (override)
-RACING.elements     = race_through        RACING.value     = inherited generic
+SEQUENTIAL.elements = _stream_through      SEQUENTIAL.value = _feed_through  (override)
+RACING.elements     = _race_through        RACING.value     = inherited generic
 ```
 
-`Executor.value()`'s generic default is `drain(self.elements(...), terminal)`, which `Racing` uses unchanged — each racing branch owns its own sink chain, so there is no single chain to fuse a terminal onto. `Sequential.value()` overrides it with the fused push purely on measurement: composing and then draining costs +125% per element on `count()`. That override is the one asymmetry in the protocol; its docstring carries the figures.
+`Executor.value()`'s generic default is `_drain(self.elements(...), terminal)`, which `_Racing` uses unchanged — each racing branch owns its own sink chain, so there is no single chain to fuse a terminal onto. `_Sequential.value()` overrides it with the fused push purely on measurement: composing and then draining costs +125% per element on `count()`. That override is the one asymmetry in the protocol; its docstring carries the figures.
 
 A stream consults its executor in exactly two places: `iterator()` (`self._executor.elements(...)`) and `_evaluate()` (`self._executor.value(...)`). Both operations carry the consumer's `OrderDemand` declaration alongside the chain and the source — a second axis, orthogonal to which executor the stream carries, and the input to the delivery barrier described below. No terminal names an executor for itself any more. A terminal that needs encounter order says so as a *demand* — `OrderDemand`, the value it passes alongside the chain — and the executor it runs under is always the stream's. `find_first()` is the one terminal whose demand is unconditional (`ALWAYS`), which is why it has one implementation rather than a per-mode pair; `for_each_ordered()`'s is conditional (`IF_ORDERED`) like every other order-observing terminal's. Both used to name `SEQUENTIAL` and both stopped, because naming it forfeited the caller's mode to express an ordering demand, and went a step further than Java: `ForEachOrderedTask` is itself a fork-join task, and `FindTask` scans leftmost *across* branches rather than dropping to a sequential traversal.
 
@@ -67,13 +75,13 @@ A stream consults its executor in exactly two places: `iterator()` (`self._execu
 ### The ordering barrier
 
 Racing destroys encounter order at the `FIRST_COMPLETED` merge. Two things want
-it back, and one mechanism gives it to both: `race_through()` has a second gear,
+it back, and one mechanism gives it to both: `_race_through()` has a second gear,
 and whether it engages is a property of the chain plus the consumer, not of the
 executor. The whole encounter-order model behind this section — `Ordering`,
-`OrderDemand`, `is_ordered()` and `_split_point()` — lives in one file,
+`OrderDemand`, `is_ordered()` and `split_point()` — lives in one file,
 `ordering.py`; `sink.py` and `execution.py` each import from it what they need.
 
-`ordering.py`'s `_split_point(chain, demand, ordered_in)` returns where order
+`ordering.py`'s `split_point(chain, demand, ordered_in)` returns where order
 has to be restored. Three clauses, first hit wins, and the third is the first
 two again one level up — `Ordering.SET` is to `OrderDemand.ALWAYS` what
 `order_sensitive` is to `OrderDemand.IF_ORDERED`:
@@ -90,20 +98,20 @@ two again one level up — `Ordering.SET` is to `OrderDemand.ALWAYS` what
   per-element concurrency.
 
 When there is no split — every pipeline the caller declared `unordered()` before
-the relevant point, and every order-blind terminal — `race_through()` runs
+the relevant point, and every order-blind terminal — `_race_through()` runs
 exactly the code it always did, at the same per-element cost.
 
 When there is one, the chain splits there. The head races across branches as
 ever, but over `_guarded(shared, lock, window)`, which tags each element with
 the source index it assigns under the lock — the last point at which pull order
-still *is* encounter order. Each branch runs `group_through()` rather than
-`stream_through()`, yielding `(index, outputs)`: everything the head emitted for
+still *is* encounter order. Each branch runs `_group_through()` rather than
+`_stream_through()`, yielding `(index, outputs)`: everything the head emitted for
 one source element, since a head chain does not preserve one output per input
 (`filter` drops, `flat_map` multiplies) and the group is the invariant a
 per-element tag is not. `_release_in_order()` holds arriving groups until every
 earlier index has gone out, and `_run_ordered_tail()` takes the rest: the
 barrier op alone runs in one ordered pass, and **everything after it races**,
-re-entering `race_through()` with `ordered_in` carrying the ordering
+re-entering `_race_through()` with `ordered_in` carrying the ordering
 characteristic across the split. So `.limit(n).map(fetch)` races the `map`, and
 an order-observing terminal downstream of it gets its own delivery barrier from
 the resumed race. `is_ordered(chain, upto, initial)`'s `initial` seed exists for
@@ -146,12 +154,12 @@ The split is internal. It is not a third executor, is not selectable, and
 each part sync or async, plus a `characteristics` frozenset (data, not a
 callable, so it is neither invoked nor awaited) mirroring Java's
 `Collector.Characteristics` — and drives the composed chain into a
-`_CollectorSink` built from it. `Characteristics` ships one member,
+`CollectorSink` built from it. `Characteristics` ships one member,
 `UNORDERED`, declared by `to_set()` and derived by `mapping()`/
 `collecting_and_then()` from their downstream. `collect()` reads it to decide
 whether the racing executor owes the collector a reorder barrier. The two halves
 live in two modules, on Java's own naming:
-`collector.py` holds the *protocol* (`Collector`, `_CollectorSink`,
+`collector.py` holds the *protocol* (`Collector`, `CollectorSink`,
 `StreamingCollector`, `to_generator`), and `collectors.py` holds the ~20
 *factories* (`to_list()`, `to_set()`, `counting()`, `grouping_by()`, ...).
 The import edge runs one way, `collectors` -> `collector`, never back. Every
@@ -180,7 +188,7 @@ Two guarantees that subclass relies on, both from `_derive()` copying the next s
 
 Being async-first decides the rest: `__len__`, `__iter__`, `__contains__`, `__getitem__`, `__reversed__` and `__eq__` demand a value synchronously and every terminal here is a coroutine, so they are refused rather than implemented. `__bool__` is the exception that proves it — it **raises**, because `object.__bool__` otherwise makes every stream truthy including an empty one, so `if stream:` answers wrong silently. `__getitem__` carries a trap worth remembering: Python synthesizes an iterator from it when `__iter__` is absent, so adding slice support would make `for x in stream` loop forever over `stream[0]`, `stream[1]`, …; anyone adding it must add `__iter__` raising in the same change. See the `python-data-model` spec, which records the refusals as decisions.
 
-An op renders its own name for `__repr__` (`Op.__repr__` in `sink.py`, derived from the class name: `_FlatMapOp` -> `flat_map`), so `Stream.__repr__` only formats a list.
+An op renders its own name for `__repr__` (`Op.__repr__` in `sink.py`, derived from the class name: `FlatMapOp` -> `flat_map`), so `Stream.__repr__` only formats a list.
 
 ## Feature-parity tracking
 

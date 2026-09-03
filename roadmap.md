@@ -65,19 +65,24 @@ test applied here is what decides this item, and it may well decide against it.
 
 Not claimed. Not scaffolded — recorded as a diagnosis, not as available work.
 
-**1. `_UNSET`, `_unseeded()` and `Box` sit in `sink.py` on the same
-import-topology reasoning `extract-encounter-order-model` just rejected for
-the encounter-order model.** `_UNSET`'s own comment says why it landed there:
+**1. `UNSET`, `unseeded()` and `Box` sit in `sink.py` on the same
+import-topology reasoning `extract-encounter-order-model` rejected for the
+encounter-order model.** `UNSET`'s own comment says why it landed there:
 "Lives here rather than in `terminals.py` or `collector.py` because both need
 it and neither may import the other" — placement decided by which module both
 callers could already reach, not by what `sink.py`'s docstring says the module
 is for (the push protocol). It is the identical shape `Ordering` and
-`is_ordered()` were just moved out of.
+`is_ordered()` were moved out of.
 
-The diagnosis transfers; the decision does not. Whether these three earn a
+**Narrowed 2026-09-03 by `name-by-visibility-not-underscore`:** the naming
+half of this is now moot — all three were underscored and cross-module, and
+that change's rule made them bare (`_UNSET` -> `UNSET`, `_unseeded()` ->
+`unseeded()`), the same as it did to `_split_point()`. What is left is only
+the module-placement question the title names: whether these three earn a
 fourth module, fold into an existing one, or stay put on the grounds that a
 sentinel and a rule-with-a-name are a smaller, more defensible exception than
-four symbols were, is a call for whoever picks this up — not settled here.
+four symbols were. Still a call for whoever picks this up — not settled
+here.
 
 ## Next
 
@@ -161,7 +166,7 @@ core semantic.
 
 | Item | Why later |
 |---|---|
-| **Implement real (multiprocess) parallelism for `.parallel()` / `ParallelStream` / `PROCESSES`** — today it's just `asyncio` tasks racing over a shared generator (I/O-bound only, GIL-bound, no multiprocessing). Decided to keep the `.parallel()`/`PROCESSES` naming as-is (see README) rather than rename to the more accurate `.concurrent()`/`CONCURRENCY`, specifically so that *if* real parallelism is ever implemented under the same names, it's not a second breaking rename. | No concrete use case for true CPU parallelism has come up yet, and the path there is blocked on a real problem, not just unscoped effort: a `ProcessPoolExecutor`-backed implementation needs to serialize the mapper/predicate/comparator/accumulator/combiner across the process boundary, and stdlib `pickle` can't handle lambdas or local closures (the idiomatic way to call every op in this library), can't pickle generators/async generators at all (so the source itself can never be shipped whole), and even picklable *sync* callables don't solve it since async user callables would need each worker to bootstrap its own event loop rather than just running a function. Revisit only once there's both a concrete need and an answer for lambdas/closures across the process boundary (`cloudpickle`/`dill`, or a restricted sync-only picklable-callable mode) and for running async user callables inside a worker process. **The executor-value redesign is done** (see **Done**), which is the enabler this entry used to point forward to: real parallelism is now *a third executor* implementing `elements()`/`value()`, not a third subclass, and `execution.py` is the natural owner for whatever has to cross the process boundary. It does not solve the pickling blocker. The `ParallelStream` name in this item's title is retired; the mode is now `Racing`. |
+| **Implement real (multiprocess) parallelism for `.parallel()` / `ParallelStream` / `PROCESSES`** — today it's just `asyncio` tasks racing over a shared generator (I/O-bound only, GIL-bound, no multiprocessing). Decided to keep the `.parallel()`/`PROCESSES` naming as-is (see README) rather than rename to the more accurate `.concurrent()`/`CONCURRENCY`, specifically so that *if* real parallelism is ever implemented under the same names, it's not a second breaking rename. | No concrete use case for true CPU parallelism has come up yet, and the path there is blocked on a real problem, not just unscoped effort: a `ProcessPoolExecutor`-backed implementation needs to serialize the mapper/predicate/comparator/accumulator/combiner across the process boundary, and stdlib `pickle` can't handle lambdas or local closures (the idiomatic way to call every op in this library), can't pickle generators/async generators at all (so the source itself can never be shipped whole), and even picklable *sync* callables don't solve it since async user callables would need each worker to bootstrap its own event loop rather than just running a function. Revisit only once there's both a concrete need and an answer for lambdas/closures across the process boundary (`cloudpickle`/`dill`, or a restricted sync-only picklable-callable mode) and for running async user callables inside a worker process. **The executor-value redesign is done** (see **Done**), which is the enabler this entry used to point forward to: real parallelism is now *a third executor* implementing `elements()`/`value()`, not a third subclass, and `execution.py` is the natural owner for whatever has to cross the process boundary. It does not solve the pickling blocker. The `ParallelStream` name in this item's title is retired; the mode is now `RACING`, built from the private `_Racing` executor class (`name-by-visibility-not-underscore`, 2026-09-03). |
 | **`BaseStream.spliterator()`** — Java's parallel-decomposition iterator, used by `parallelStream()` to split a source into chunks shared threads can each work over. | Depends on the item above: Java's `Spliterator` assumes shared-memory thread decomposition, which only becomes meaningful once real (multiprocess) partitioned execution is decided — until then there's nothing for it to expose, and it may end up intentionally-skipped rather than implemented. Moved down from **Now**, where it was flagged as decision-blocked rather than ready to build. **Something now depends on it (2026-09-01):** the combiner row below is sequenced behind this one, because contiguous decomposition is exactly what makes an associative combine correct and what `race_through()`'s shared-source stealing cannot supply. If this row does end up intentionally-skipped, that row needs re-deciding rather than inheriting the skip. |
 | **Make combiners mean something** — both of them, and in this order: **after** real multiprocess parallelism and `spliterator()`, the two rows above. Two halves in different states. `collect(supplier, accumulator, combiner)`'s parameter already ships and is never invoked, which README's row states, so it would have to *start* doing something. `Stream.reduce(identity, accumulator, combiner)` does not exist at all, so it would have to be *added* — and adding it inert first is the cheaper option this row deliberately does not take. **Re-merged here 2026-09-01**, having been split on 2026-08-31 by `enumerate-java-8-parity-gaps` (which was right that the two are in different states, and filed the `reduce()` half as gap 1 in **Now**). What re-merged them is that the question is now the same one for both: not "is an inert parameter worth the signature" but "what would make it live", and that has one answer serving both. | **Sequenced, not merely blocked** — the decision this row needs is already taken, and it is that this waits for the two rows above. Three findings from the 2026-09-01 exploration, recorded so they are not re-derived. **(a) The combiner is a declaration, not a parameter.** `reduce()`'s 2-arg form assumes nothing about its accumulator and so folds strictly in encounter order (`stream.py`'s own comment says as much); passing a combiner is the caller asserting associativity, and it is the only channel through which that can ever be said. It is also the only operation that can merge two *widened* accumulations — `Accumulator` is `(U, T) -> U` and cannot combine two `U`s — so no concurrent fold of a widened type is expressible without it. **(b) Java's partitioning argument does not transfer.** Java may combine on associativity alone because `Spliterator` splits into *contiguous* ranges. `race_through()` does not split, it steals: branches pull from one shared iterator under a lock, so their partitions interleave, and combining interleaved partials demands *commutativity* — which Java does not require. That is a divergence in observable API behaviour, which the guiding principle rules out. Hence the sequencing behind `spliterator()`: contiguous decomposition is the missing prerequisite, and it is that row's subject. **(c) There is a correct shape that needs neither** — partition only under `unordered()`, where the caller has already released encounter order and interleaved merging is sound on associativity alone. It is recorded as a fallback, not a plan: its payoff is confined to a slow *accumulator*, and the common shape (`.parallel().map(slow).reduce(0, add)`) already races the expensive half today with only the cheap fold serialized. It would also overturn the architectural claim in CLAUDE.md that "each racing branch owns its own sink chain, so there is no single chain to fuse a terminal onto", needing a fifth primitive in `execution.py` and a partition protocol on `TerminalSink`. Anyone taking it should measure the slow-accumulator curve first. See `openspec/changes/archive/2026-08-17-add-collect-supplier-accumulator-combiner`. |
 | **Java 9 `Stream` additions** — `takeWhile(predicate)`, `dropWhile(predicate)`, `Stream.ofNullable(t)`, and the 3-arg `iterate(seed, hasNext, next)` overload (distinct from the already-implemented 2-arg `iterate(seed, next)`). | **No longer sequencing-blocked, and arguably no longer a *Later* item.** README gates Java 9 on "some sort of feature parity with Java 8"; `enumerate-java-8-parity-gaps` (2026-08-31, **Done**) met that gate and enumerated the remainder as five non-structural gaps, now queued in **Now**. The only Java 8 work genuinely blocked is `spliterator()` and `collect()`'s combiner, both parked behind the real-parallelism decision above — so Java 9 cannot wait on them without waiting forever. What keeps it here is that it is unstarted and unscoped, not that anything blocks it; it competes with the five gaps on merit. |
@@ -169,6 +174,76 @@ core semantic.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should be declared permanent. **Narrowed 2026-08-31: the behaviour is now documented in README's `of()` row.** That was a defect independent of this decision — the row described Java's semantics, so the divergence used by every example in the file was invisible to a reader. Documenting it does not close this item; what remains is the call on whether to keep it. Surfaced 2026-08-20 in the same code-quality read that produced the first batch of **Now** items, all since closed. |
 
 ## Done
+
+- **`name-by-visibility-not-underscore`** (2026-09-03) — the leading
+  underscore on a module-level name in `src/snakestream` had been doing the
+  work of a public-API marker in a package that has no public API to mark:
+  every module below `snakestream/__init__.py` is already an implementation
+  detail, so 27 names were underscored *and* imported by another module in
+  the package — a contradiction in terms, worst on `ordering.py`, extracted
+  three days earlier, which held `is_ordered()` bare and `_split_point()`
+  underscored side by side with nothing distinguishing them but which module
+  each had come from.
+
+  **The rule, adopted:** a module-level name carries a leading underscore iff
+  no other module in `src/snakestream` uses it; a name reachable only through
+  a module path or the package's `__init__.py` export list is bare regardless
+  of whether anything inside the package imports it; `tests/` may import
+  anything, which is white-box testing and not a violation. Applied as three
+  stories: **27 renames** (the contradiction above, dropped one direction),
+  **8 renames the other way** (`execution.py`'s `stream_through`,
+  `group_through`, `race_through`, `feed_through`, `drain`, `Sequential`,
+  `Racing` and `sort.py`'s `merge_sort`, each used only in its own module and
+  reachable by no caller — so the rule reads in both directions rather than
+  only ever removing underscores, which is how `ordering.py` got into this
+  state in the first place), and **one export removed**: `PROCESSES`, cut
+  from `snakestream/__init__.py` and `stream.py`'s re-export, because it was
+  never a tunable lever — `execution.py` binds `RACING` from it at import
+  time, so assigning to the exported name changed nothing a pipeline did —
+  and the same reasoning the `racing-encounter-order` capability already
+  applies to `_IN_FLIGHT_PER_WORKER` (no public name for an import-time-bound
+  constant) now applies to both. Supersedes the 2026-08-24 entry below that
+  added the export.
+
+  The decidable half of the rule — underscored-and-imported-elsewhere — is
+  now enforced by `tests/test_name_visibility.py`, an AST check with no
+  maintained name list to fall out of date; the other half (a bare name
+  really is caller-facing) is a one-time judgment with no mechanical check,
+  since there is no maintained list of caller-facing names to check it
+  against without the `__init__.py`-as-boundary move this rejected.
+
+  **Two design questions answered, so neither is re-opened:**
+  Making `__init__.py` the public boundary instead — re-exporting the ~40
+  caller-facing names and treating every module path as internal — was
+  rejected: it cannot be enforced (nothing stops `from snakestream.collectors
+  import to_list` regardless of what `__init__.py` exports), and it would
+  re-break the `collector`/`collectors` split done three weeks earlier for
+  the opposite reason. Ruff's `PLC2701` (import-private-name) is exactly this
+  rule and was rejected for now, not permanently: it is preview-only, so
+  enabling it changes the behaviour of all fifteen rule families this
+  project already selects, not just the one being added; and it skips
+  imports used only in annotations, which would have missed `_Aiter` — one
+  of the 27. Revisit when `PLC2701` stabilises, per the `lint-rule-selection`
+  capability's per-rule-exemption pattern.
+
+  1000 tests green (997 + 3 for the new check), coverage held at the
+  baseline figure exactly (98.61%, `--cov-fail-under=98`), `ruff`,
+  `ruff format --check` and `ty check src` all pass. `PROCESSES` is the one
+  loud break (`ImportError` at the import site); everything else is
+  caller-invisible by construction — same objects, same `is` comparisons,
+  same call sites, resolved at import time.
+
+  **One design-doc claim, priced during implementation and found not to
+  hold, recorded so it is not re-asserted:** the design took `_UNSET` -> 
+  `UNSET` as, independent of the rule, "a small correctness win" because the
+  sentinel is a public factory argument's default (`reducing(identity=_UNSET,
+  ...)`) and so "already rendered to users by `help()`". Checked against both
+  `inspect.signature()` and `pydoc.render_doc()`, before and after the
+  rename: both show the sentinel's raw `object()` repr (`<object object at
+  0x...>`) in either case, never the variable name that held it at
+  definition. The rename is still correct — `UNSET` is genuinely
+  cross-module and the rule requires it bare regardless — but the
+  independent correctness win the design claimed for it does not exist.
 
 - **`extract-encounter-order-model`** (2026-09-03) — one concept, the
   encounter-order model, was split across two modules that were each about
@@ -200,6 +275,11 @@ core semantic.
   the graph, not on preference — `ops.py` and `sink.py` both need `Ordering`
   and neither may import `execution.py`, which imports `sink.py`; that
   direction is an actual cycle, not a judgement call.
+
+  **Renamed by `name-by-visibility-not-underscore` (2026-09-03, below):**
+  `_split_point()` is now bare `split_point()` — the one holdout this entry
+  left underscored beside bare `is_ordered()` in the same file, closed once
+  that change's build-time check existed to enforce it either way.
 
 - **`collapse-unseeded-accumulation-rule`** (2026-09-03) — the "an accumulation
   that never saw an element finishes as `None`" rule, previously stated five
@@ -237,6 +317,15 @@ core semantic.
   costs ~0.2 us/sort of fixed `zip(*columns)` overhead on the lane every plain
   `comparing()` call takes: +18.6% / +18.8% at n=4, noise-dominated by
   n=20,000. Declined on measurement, not available work.
+
+  **Renamed by `name-by-visibility-not-underscore` (2026-09-03, below):**
+  `_UNSET` -> `UNSET`, `_unseeded()` -> `unseeded()`, `_UnseededSink` ->
+  `UnseededSink`, `_ReduceSink`/`_MinMaxSink`/`_FindSink` -> bare — every name
+  this entry introduced or read from was underscored while being imported by
+  another module in the package, the exact shape that change's rule forbids.
+  `_CountSink`/`_ForEachSink`/`_MatchSink`/`_CollectorSink` (named above as
+  never holding `UNSET`) are bare now too, for the same reason, unrelated to
+  this rule's Decision 1.
 
 - **`sort-mixed-lane-by-successive-passes`** (2026-09-02) — `_sort_by_key()`'s
   mixed-direction lane was the only place left in the sort where a comparison
@@ -2179,6 +2268,14 @@ core semantic.
   no README wording change was needed, and no existing top-level-exports
   table needed touching (none exists). Covered by a new
   `tests/test_package_exports.py`.
+
+  **Superseded by `name-by-visibility-not-underscore` (2026-09-03, below):**
+  the export is removed. It never was a tunable lever — `execution.py` binds
+  `RACING` from `PROCESSES` at import time, so assigning to the exported
+  name never changed the worker count — and the `stream-execution-model`
+  requirement this added is the one that change's spec delta removes.
+  `PROCESSES` keeps its name and value in `snakestream.execution`; only the
+  two import paths are gone.
 
   **(c)** The four `# pylint: disable=missing-*-docstring` /
   `# pylint: disable=invalid-name` pragmas at the top of `collector.py`

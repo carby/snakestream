@@ -12,7 +12,7 @@ A = TypeVar("A")
 # builds, and the bare AsyncIterables accepted untouched. Bound rather than
 # fixed to AsyncGenerator so a helper handed one kind gives that same kind
 # back, and its callers don't have to widen in sympathy.
-_Aiter = TypeVar("_Aiter", bound=AsyncIterator[Any])
+Aiter = TypeVar("Aiter", bound=AsyncIterator[Any])
 
 # Sink protocol: the state passed through begin(), keyed by the originating
 # operation object so a sink can look up its own shared state.
@@ -56,10 +56,10 @@ class _SupportsAdd(Protocol):
     def add(self, item: Any) -> Any: ...
 
 
-_C = TypeVar("_C", bound=_SupportsAdd)
+C = TypeVar("C", bound=_SupportsAdd)
 
 # The container typevar for the caller-supplied *mapping* forms - to_map()'s
-# map_supplier and grouping_by()'s map_factory. Separate from _C, which is
+# map_supplier and grouping_by()'s map_factory. Separate from C, which is
 # bound to _SupportsAdd: a mapping is written by key rather than by add(), so
 # neither bound serves the other.
-_M = TypeVar("_M", bound=MutableMapping[Any, Any])
+M = TypeVar("M", bound=MutableMapping[Any, Any])

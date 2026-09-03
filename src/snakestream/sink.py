@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, Generic
 from collections.abc import Callable
 
-from snakestream.callable_dispatch import _maybe_await
+from snakestream.callable_dispatch import maybe_await
 from snakestream.ordering import Ordering
 from snakestream.type import StateMap, T
 
@@ -24,17 +24,17 @@ from snakestream.type import StateMap, T
 # from one seeded with a legitimately falsy identity. Lives here rather than in
 # terminals.py or collector.py because both need it and neither may import the
 # other.
-_UNSET = object()
+UNSET = object()
 
 
-def _unseeded(container: Any) -> Any:
+def unseeded(container: Any) -> Any:
     """The rule stated once: an accumulation that never saw an element
     finishes as None. A function rather than five inlined comparisons because
     it is the only mechanism that reaches both terminals.py's sinks (through
-    _UnseededSink below) and collectors.py's closures, which are dataclass
+    UnseededSink below) and collectors.py's closures, which are dataclass
     boxes rather than sinks and so cannot share a base class with them - see
     design Decision 3 of collapse-unseeded-accumulation-rule."""
-    return None if container is _UNSET else container
+    return None if container is UNSET else container
 
 
 @dataclass(slots=True)
@@ -80,7 +80,7 @@ class Op(ABC):
     ordering declares what this op does to encounter order. PRESERVE is right
     for every op that neither reorders nor imposes an order — filter, map,
     flat_map, peek, distinct, limit, skip — which is why it is the default and
-    why only _UnorderedOp and _SortedOp state it. It is a ClassVar because it
+    why only UnorderedOp and SortedOp state it. It is a ClassVar because it
     is a property of the operation, not of the arguments the user passed to it:
     every sort sets ordering, whatever comparator it was given.
 
@@ -103,13 +103,17 @@ class Op(ABC):
         return None
 
     def __repr__(self) -> str:
-        """The operation's name as a caller wrote it: `_FlatMapOp` -> flat_map.
+        """The operation's name as a caller wrote it: `FlatMapOp` -> flat_map.
 
         Derived from the class name rather than declared per op, so an op added
         later renders without anyone having to remember to name it. It lives
         here because it is a property of an Op; Stream.__repr__ knows only how
-        to format a list of them."""
-        name = type(self).__name__.removeprefix("_").removesuffix("Op")
+        to format a list of them. Does not strip a leading underscore: every
+        Op subclass is bare per the internal-name-visibility rule, so an
+        underscored one here would be violating that rule, and rendering it
+        with the underscore is the correct failure - not something this
+        should paper over."""
+        name = type(self).__name__.removesuffix("Op")
         return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
 
 
@@ -197,9 +201,9 @@ class TerminalSink(Sink[T]):
     exposed via result().
 
     _create_container() and _finish() may each return an awaitable instead of
-    a value: begin() and end() route both through _maybe_await. Three sites
+    a value: begin() and end() route both through maybe_await. Three sites
     depend on this and read like a missing await until this contract is
-    traced - _CollectorSink._create_container() returns a possibly-async
+    traced - CollectorSink._create_container() returns a possibly-async
     supplier's result un-awaited, and grouping_by()'s and partitioning_by()'s
     _finish are *sync* functions returning the un-awaited coroutine of
     _finish_groups().
@@ -219,31 +223,31 @@ class TerminalSink(Sink[T]):
     def _create_container(self) -> Any: ...
 
     async def begin(self, state_map: StateMap) -> None:
-        self._container = await _maybe_await(self._create_container)
+        self._container = await maybe_await(self._create_container)
 
     def _finish(self, container: Any) -> Any:
         return container
 
     async def end(self) -> None:
-        self._result = await _maybe_await(self._finish, self._container)
+        self._result = await maybe_await(self._finish, self._container)
 
     def result(self) -> Any:
         return self._result
 
 
-class _UnseededSink(TerminalSink[T]):
-    """A terminal that starts with no value: _create_container() is _UNSET and
-    _finish() applies the rule _unseeded() states. Not folded into
+class UnseededSink(TerminalSink[T]):
+    """A terminal that starts with no value: _create_container() is UNSET and
+    _finish() applies the rule unseeded() states. Not folded into
     TerminalSink's own default - see design Decision 1 of
     collapse-unseeded-accumulation-rule for why: most TerminalSink subclasses
-    can never hold _UNSET, and a universal default would assert the rule on
+    can never hold UNSET, and a universal default would assert the rule on
     all of them regardless."""
 
     def _create_container(self) -> Any:
-        return _UNSET
+        return UNSET
 
     def _finish(self, container: Any) -> Any:
-        return _unseeded(container)
+        return unseeded(container)
 
 
 class GeneratorBridgeSink(TerminalSink[T]):

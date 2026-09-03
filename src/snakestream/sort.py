@@ -7,7 +7,7 @@ from collections.abc import Callable
 
 from snakestream.callable_dispatch import is_async_callable
 from snakestream.comparator import (
-    _ASYNC_COMPARATOR_MESSAGE,
+    ASYNC_COMPARATOR_MESSAGE,
     KeyComparator,
     NullPlacement,
     Segment,
@@ -49,7 +49,7 @@ def _checked_segment_comparator(comparator: Comparator) -> Callable[[Any, Any], 
     def compare(a: Any, b: Any) -> int:
         sign = comparator(a, b)
         if isawaitable(sign):
-            raise StreamBuildException(_ASYNC_COMPARATOR_MESSAGE)
+            raise StreamBuildException(ASYNC_COMPARATOR_MESSAGE)
         if type(sign) is not int:
             raise ComparatorContractException(sign)
         return sign
@@ -61,7 +61,7 @@ async def sort(arr: list[Any], comparator: Comparator) -> list[Any]:
     """Sort by comparator, picking the algorithm the comparator allows.
 
     A sync comparator goes to list.sort() with cmp_to_key, i.e. Timsort in C;
-    only an async one needs merge_sort's hand-written merge with an await in
+    only an async one needs _merge_sort's hand-written merge with an await in
     its inner loop. Measured 2.1x on 20,000 floats here, 1.8x end-to-end
     through sorted() once the pipeline's own per-element cost is counted.
 
@@ -71,7 +71,7 @@ async def sort(arr: list[Any], comparator: Comparator) -> list[Any]:
     silently produce a wrong order instead. Hence _checked().
 
     The choice between the two is made by one trial comparison, positively:
-    an awaitable result takes merge_sort, anything else takes list.sort. There
+    an awaitable result takes _merge_sort, anything else takes list.sort. There
     is no `is_async_callable()` pre-test, because it could only ever
     over-approximate what the trial answers exactly - a comparator with a
     plain `def __call__` returning a coroutine classifies as sync
@@ -95,14 +95,14 @@ async def sort(arr: list[Any], comparator: Comparator) -> list[Any]:
     TypeError; a check on the trial would only catch a comparator whose return
     *type* is asymmetric between (a, b) and (b, a).
 
-    Returns the sorted list either way, though only merge_sort builds a new
+    Returns the sorted list either way, though only _merge_sort builds a new
     one - list.sort is in place, and unifying the signature is worth more than
     saving the rebind.
 
     A list of fewer than two elements returns before any dispatch. It is the
     dispatcher's guard, not three defensive ones: no branch below is reachable
     with a shorter list, so `_sort_by_key()` needs no empty check and the trial
-    comparison needs no `len(arr) > 1` of its own. merge_sort keeps its
+    comparison needs no `len(arr) > 1` of its own. _merge_sort keeps its
     `len(arr) <= 1` because that is its recursion base case, not an entry
     guard. It also settles what a one-element sort observes: no comparator
     invocation and no key extraction, matching Java, where TimSort returns
@@ -116,7 +116,7 @@ async def sort(arr: list[Any], comparator: Comparator) -> list[Any]:
     trial = comparator(arr[0], arr[1])
     if isawaitable(trial):
         await trial
-        return await merge_sort(arr, cast("AsyncComparator", comparator))
+        return await _merge_sort(arr, cast("AsyncComparator", comparator))
     arr.sort(key=cmp_to_key(_checked(comparator)))
     return arr
 
@@ -131,7 +131,7 @@ def _interleave(arr: list[Any], values: list[Any]) -> list[Any]:
 
 async def _column(extractor: Callable[[Any], Any], arr: list[Any]) -> list[Any]:
     """Extract one segment's key for every element, concurrently across
-    elements. No cmp_to_key, no merge_sort, and no sign/bool validation -
+    elements. No cmp_to_key, no _merge_sort, and no sign/bool validation -
     there is no comparator sign on this path, just a key.
 
     A `None` element yields `None` directly - the extractor is never invoked
@@ -287,15 +287,15 @@ async def _sort_by_key(
     return list(map(itemgetter(-1), paired))
 
 
-async def merge_sort(arr: list[Any], comparator: AsyncComparator) -> list[Any]:
+async def _merge_sort(arr: list[Any], comparator: AsyncComparator) -> list[Any]:
     # Reached only for a comparator sort() has already established returns
     # awaitables, so there is no classification left to make or share here.
     if len(arr) <= 1:
         return arr
 
     middle = len(arr) // 2
-    left = await merge_sort(arr[:middle], comparator)
-    right = await merge_sort(arr[middle:], comparator)
+    left = await _merge_sort(arr[:middle], comparator)
+    right = await _merge_sort(arr[middle:], comparator)
 
     return await _merge(left, right, comparator)
 

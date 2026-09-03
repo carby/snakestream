@@ -6,7 +6,7 @@ from collections.abc import Awaitable
 
 from snakestream.callable_dispatch import AsyncDispatch
 from snakestream.comparator import is_new_extremum
-from snakestream.sink import TerminalSink, _UnseededSink, _UNSET
+from snakestream.sink import UNSET, TerminalSink, UnseededSink
 from snakestream.type import (
     T,
     Accumulator,
@@ -16,9 +16,9 @@ from snakestream.type import (
 )
 
 
-class _CountSink(TerminalSink[T]):
+class CountSink(TerminalSink[T]):
     """A plain int, not a Box: this sink owns its container exclusively,
-    so it can rebind it the way _ReduceSink rebinds its accumulation. The
+    so it can rebind it the way ReduceSink rebinds its accumulation. The
     counting() collector genuinely needs the Box, because its
     accumulator is a free function that has to mutate a container it was
     handed."""
@@ -30,7 +30,7 @@ class _CountSink(TerminalSink[T]):
         self._container += 1
 
 
-class _ForEachSink(AsyncDispatch, TerminalSink[T]):
+class ForEachSink(AsyncDispatch, TerminalSink[T]):
     def __init__(self, consumer: Consumer) -> None:
         super().__init__()
         self._init_dispatch(consumer)
@@ -49,15 +49,15 @@ class _ForEachSink(AsyncDispatch, TerminalSink[T]):
                 await r
 
 
-class _ReduceSink(AsyncDispatch, _UnseededSink[T]):
-    """Folds every element into an accumulated value. An identity of _UNSET
+class ReduceSink(AsyncDispatch, UnseededSink[T]):
+    """Folds every element into an accumulated value. An identity of UNSET
     means the no-identity overload: the first element seeds the fold instead,
     and an empty source finishes as None.
 
-    The _UNSET-seed rule is implemented twice, here and in collector.py's
+    The UNSET-seed rule is implemented twice, here and in collector.py's
     reducing(), which is deliberate and measured rather than an oversight:
     routing Stream.reduce() through reducing() cost +70% per element, because
-    the collector form reaches its callables through _classify_step and a
+    the collector form reaches its callables through classify_step and a
     supplier-made box where this sink has them inline on itself. Keep the two
     in step by hand - a change to that seed rule belongs in both. See the
     collapse-terminal-collector-duplication change for the figures."""
@@ -71,7 +71,7 @@ class _ReduceSink(AsyncDispatch, _UnseededSink[T]):
         return self._identity
 
     async def accept(self, element: Any) -> None:
-        if self._container is _UNSET:
+        if self._container is UNSET:
             self._container = element
             return
         r = self._fn(self._container, element)
@@ -85,14 +85,14 @@ class _ReduceSink(AsyncDispatch, _UnseededSink[T]):
         self._container = r
 
 
-class _MinMaxSink(AsyncDispatch, _UnseededSink[T]):
+class MinMaxSink(AsyncDispatch, UnseededSink[T]):
     def __init__(self, comparator: Comparator, asc: bool) -> None:
         super().__init__()
         self._asc = asc
         self._init_dispatch(comparator)
 
     async def accept(self, element: Any) -> None:
-        if self._container is _UNSET:
+        if self._container is UNSET:
             self._container = element
             return
 
@@ -108,7 +108,7 @@ class _MinMaxSink(AsyncDispatch, _UnseededSink[T]):
             self._container = element
 
 
-class _FindSink(_UnseededSink[T]):
+class FindSink(UnseededSink[T]):
     """Keeps the first element it is given and asks the chain to stop. Backs
     both find_first() and find_any() on a sequential Stream, which are the same
     operation there: the drive is already in encounter order."""
@@ -130,7 +130,7 @@ class _FindSink(_UnseededSink[T]):
         return self._cancelled
 
 
-class _MatchSink(AsyncDispatch, TerminalSink[T]):
+class MatchSink(AsyncDispatch, TerminalSink[T]):
     """Backs all_match/any_match/none_match. short_circuit_on is the predicate
     result that settles the answer; default is the answer for a source that
     never produces it (including an empty one)."""

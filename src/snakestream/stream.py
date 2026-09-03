@@ -7,30 +7,30 @@ from typing import TYPE_CHECKING, Any, Generic, cast, overload
 from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Coroutine, Iterable
 
 from snakestream.callable_dispatch import is_async_callable
-from snakestream.collector import Characteristics, Collector, StreamingCollector, _CollectorSink
+from snakestream.collector import Characteristics, Collector, CollectorSink, StreamingCollector
 from snakestream.collectors import to_list
 from snakestream.exception import IllegalStateException, StreamBuildException
-from snakestream.execution import PROCESSES as PROCESSES, RACING, SEQUENTIAL, Executor
+from snakestream.execution import RACING, SEQUENTIAL, Executor
 from snakestream.ops import (
-    _DistinctOp,
-    _FilterOp,
-    _FlatMapOp,
-    _LimitOp,
-    _MapOp,
-    _PeekOp,
-    _SkipOp,
-    _SortedOp,
-    _UnorderedOp,
+    DistinctOp,
+    FilterOp,
+    FlatMapOp,
+    LimitOp,
+    MapOp,
+    PeekOp,
+    SkipOp,
+    SortedOp,
+    UnorderedOp,
 )
 from snakestream.ordering import OrderDemand, is_ordered
-from snakestream.sink import _UNSET, Op, TerminalSink
+from snakestream.sink import UNSET, Op, TerminalSink
 from snakestream.terminals import (
-    _CountSink,
-    _FindSink,
-    _ForEachSink,
-    _MatchSink,
-    _MinMaxSink,
-    _ReduceSink,
+    CountSink,
+    FindSink,
+    ForEachSink,
+    MatchSink,
+    MinMaxSink,
+    ReduceSink,
 )
 from snakestream.type import (
     R,
@@ -305,7 +305,7 @@ class Stream(Generic[T]):
 
     def unordered(self) -> Stream[T]:
         """Queues an op that clears encounter order for everything after it,
-        and nothing else - see _UnorderedOp, which links to no sink at all.
+        and nothing else - see UnorderedOp, which links to no sink at all.
         Being an op is what makes this positional: Java's unordered() is a
         pipeline stage for the same reason, the deliberate opposite of its
         parallel(), which sets a flag on the source stage so as *not* to be.
@@ -315,7 +315,7 @@ class Stream(Generic[T]):
         element until every earlier one has been released - for an operation
         that reads position, and for delivery to a terminal that observes
         order. Clearing the characteristic removes both."""
-        return self._derive(_UnorderedOp())
+        return self._derive(UnorderedOp())
 
     def _is_ordered(self) -> bool:
         """Folded from the chain, never stored. Java's combineOpFlags() folds
@@ -436,34 +436,34 @@ class Stream(Generic[T]):
 
     # Intermediaries
     def filter(self, predicate: Predicate[T]) -> Stream[T]:
-        return self._derive(_FilterOp(predicate))
+        return self._derive(FilterOp(predicate))
 
     def map(self, mapper: Mapper[T, R]) -> Stream[R]:
-        return self._derive(_MapOp(mapper))
+        return self._derive(MapOp(mapper))
 
     def flat_map(self, flat_mapper: FlatMapper[T, R]) -> Stream[R]:
         # Pre-call rejection, not a dispatch site: flat_mapper must return a
         # Stream synchronously, so an async def here is always a caller
-        # mistake. This is unrelated to _maybe_await's post-call awaiting.
+        # mistake. This is unrelated to maybe_await's post-call awaiting.
         if iscoroutinefunction(flat_mapper):
             raise StreamBuildException("flat_map() does not support coroutines")
 
-        return self._derive(_FlatMapOp(flat_mapper))
+        return self._derive(FlatMapOp(flat_mapper))
 
     def sorted(self, comparator: Comparator[T] | None = None, reverse: bool = False) -> Stream[T]:
-        return self._derive(_SortedOp(comparator, reverse))
+        return self._derive(SortedOp(comparator, reverse))
 
     def distinct(self) -> Stream[T]:
-        return self._derive(_DistinctOp())
+        return self._derive(DistinctOp())
 
     def peek(self, consumer: Consumer[T]) -> Stream[T]:
-        return self._derive(_PeekOp(consumer))
+        return self._derive(PeekOp(consumer))
 
     def limit(self, max_size: int) -> Stream[T]:
-        return self._derive(_LimitOp(max_size))
+        return self._derive(LimitOp(max_size))
 
     def skip(self, n: int) -> Stream[T]:
-        return self._derive(_SkipOp(n))
+        return self._derive(SkipOp(n))
 
     # Terminals
     @overload
@@ -486,7 +486,7 @@ class Stream(Generic[T]):
                 # that any ordering of the same elements collects to an equal
                 # result, which is exactly the question the barrier asks.
                 demand = OrderDemand.NONE if Characteristics.UNORDERED in collector.characteristics else OrderDemand.IF_ORDERED
-                return self._evaluate(_CollectorSink(collector), demand)
+                return self._evaluate(CollectorSink(collector), demand)
             if isinstance(collector, StreamingCollector):
                 return collector(self.iterator())
             raise StreamBuildException(
@@ -507,7 +507,7 @@ class Stream(Generic[T]):
         # assumed to be. The Collector form has UNORDERED to say otherwise;
         # this form declares no characteristics, so it stays IF_ORDERED by
         # the same derivation the single-argument branch above uses.
-        return self._evaluate(_CollectorSink(collector), OrderDemand.IF_ORDERED)
+        return self._evaluate(CollectorSink(collector), OrderDemand.IF_ORDERED)
 
     @overload
     async def reduce(self, identity: T | R, accumulator: Accumulator[T, R]) -> T | R: ...
@@ -515,26 +515,26 @@ class Stream(Generic[T]):
     @overload
     async def reduce(self, accumulator: BinaryOperator[T]) -> T | None: ...
 
-    async def reduce(self, identity: Any = _UNSET, accumulator: Any = _UNSET) -> Any:
-        if accumulator is _UNSET:
+    async def reduce(self, identity: Any = UNSET, accumulator: Any = UNSET) -> Any:
+        if accumulator is UNSET:
             # Called as reduce(accumulator): the single positional arg is the
             # accumulator, and the identity is seeded from the stream itself.
-            identity, accumulator = _UNSET, identity
+            identity, accumulator = UNSET, identity
         # the accumulator is not required to be associative or commutative
         # here, so the fold is over encounter order or it is over nothing
-        return await self._evaluate(_ReduceSink(identity, accumulator), OrderDemand.IF_ORDERED)
+        return await self._evaluate(ReduceSink(identity, accumulator), OrderDemand.IF_ORDERED)
 
     async def for_each(self, consumer: Consumer[T]) -> None:
         # explicitly order-blind, as Java's forEach() is: for_each_ordered() is
         # the one that promises encounter order, and this is what it costs less
         # than
-        return await self._evaluate(_ForEachSink(consumer), OrderDemand.NONE)
+        return await self._evaluate(ForEachSink(consumer), OrderDemand.NONE)
 
     async def for_each_ordered(self, consumer: Consumer[T]) -> None:
         """for_each() that observes encounter order - the whole difference
         between the two, and the only thing this declares.
 
-        It asks for order rather than for an executor. _split_point() releases
+        It asks for order rather than for an executor. split_point() releases
         the demand on an unordered pipeline, which is the javadoc's "if the
         stream has a defined encounter order" caveat and the same condition
         ForEachOps.OfRef.evaluateParallel() reads when it picks between
@@ -546,7 +546,7 @@ class Stream(Generic[T]):
         *delivery* is ordered. The barrier is that shape. Every op still races;
         an op queued upstream is therefore not ordered by this call, and a side
         effect that needs to be belongs in `consumer`."""
-        return await self._evaluate(_ForEachSink(consumer), OrderDemand.IF_ORDERED)
+        return await self._evaluate(ForEachSink(consumer), OrderDemand.IF_ORDERED)
 
     async def to_array(self) -> list[T]:
         # collect() runs _check_not_consumed() itself, and to_list() declares no
@@ -565,11 +565,11 @@ class Stream(Generic[T]):
         # permits returning any element there; the implementation declines to.
         # find_any() is where a caller who wants the race goes -- not for the
         # concurrency, which this keeps, but for the answer.
-        return await self._evaluate(_FindSink(), OrderDemand.ALWAYS)
+        return await self._evaluate(FindSink(), OrderDemand.ALWAYS)
 
     async def find_any(self) -> T | None:
         # the whole point of it: any element will do, so no barrier is owed
-        return await self._evaluate(_FindSink(), OrderDemand.NONE)
+        return await self._evaluate(FindSink(), OrderDemand.NONE)
 
     async def max(self, comparator: Comparator[T]) -> T | None:
         return await self._min_max(comparator, asc=False)
@@ -585,11 +585,11 @@ class Stream(Generic[T]):
         # cheapest split there is - at len(chain), so every op still races and
         # only the handing over is ordered - and unordered() releases it, which
         # is where a caller who would rather have the concurrency goes.
-        return await self._evaluate(_MinMaxSink(comparator, asc), OrderDemand.IF_ORDERED)
+        return await self._evaluate(MinMaxSink(comparator, asc), OrderDemand.IF_ORDERED)
 
     async def _match(self, predicate: Predicate[T], short_circuit_on: bool, default: bool) -> bool:
         # a predicate over the whole stream has one answer whatever the order
-        return await self._evaluate(_MatchSink(predicate, short_circuit_on, default), OrderDemand.NONE)
+        return await self._evaluate(MatchSink(predicate, short_circuit_on, default), OrderDemand.NONE)
 
     async def all_match(self, predicate: Predicate[T]) -> bool:
         return await self._match(predicate, short_circuit_on=False, default=True)
@@ -601,4 +601,4 @@ class Stream(Generic[T]):
         return await self._match(predicate, short_circuit_on=True, default=False)
 
     async def count(self) -> int:
-        return await self._evaluate(_CountSink(), OrderDemand.NONE)
+        return await self._evaluate(CountSink(), OrderDemand.NONE)

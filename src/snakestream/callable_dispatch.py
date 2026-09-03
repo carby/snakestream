@@ -3,7 +3,7 @@ from typing import Any
 from collections.abc import Callable
 
 
-async def _maybe_await(fn: Callable, *args: Any) -> Any:
+async def maybe_await(fn: Callable, *args: Any) -> Any:
     result = fn(*args)
     return await result if isawaitable(result) else result
 
@@ -72,7 +72,7 @@ class AsyncDispatch:
         self._checked = False
 
 
-def _classify_step(fn: Callable, is_async: bool, checked: bool, *args: Any) -> tuple[Any, bool, bool]:
+def classify_step(fn: Callable, is_async: bool, checked: bool, *args: Any) -> tuple[Any, bool, bool]:
     # Same per-element classification as the canonical shape above, factored
     # out (plain sync helper, no wrapper coroutine) for call sites that
     # classify several callables per element — e.g. reducing()'s mapper and
