@@ -142,6 +142,16 @@ should expect the answer to be "extract the *declaration* (the box's fields and
 their seeding) while leaving the per-element dance inlined" rather than a clean
 collapse.
 
+*Sharpened 2026-09-03* by the read recorded in **Done** below. That predicted
+answer now has a reason behind it rather than only a benchmark: the
+declaration is precisely the part carrying the structural guarantee, because
+per-composition classification is a property of *where the state is
+allocated* — here, a box the supplier builds once per collection — and not of
+the lines that read it. So a shared base box is admissible only while it
+stays allocated per collection. One that did not would trade the cheapest
+safety property in the package for line count, and would do it silently: the
+behavioural tests would still pass, since every one of them collects once.
+
 ## Later
 
 **Entry criterion: blocked on a decision, not on effort.** Every item here
@@ -174,6 +184,52 @@ core semantic.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should be declared permanent. **Narrowed 2026-08-31: the behaviour is now documented in README's `of()` row.** That was a defect independent of this decision — the row described Java's semantics, so the divergence used by every example in the file was invisible to a reader. Documenting it does not close this item; what remains is the call on whether to keep it. Surfaced 2026-08-20 in the same code-quality read that produced the first batch of **Now** items, all since closed. |
 
 ## Done
+
+- **The per-element dispatch dance, re-examined and declined a fourth time**
+  (2026-09-03) — no change directory, which is why it is recorded here. The
+  six-line classification dance appears at 9 sink/generator sites and
+  longhand across 9 collector boxes, and is the largest literal duplication
+  in the repository. It was re-opened from a fresh angle: not another attempt
+  to unify the *code* — `add-callsite-dispatch` closed that — but an attempt
+  to unify the *check*, an AST-level build test asserting the sites share one
+  skeleton, on the `tests/test_name_visibility.py` precedent of enforcing
+  mechanically what cannot be enforced structurally. It costs nothing at
+  runtime, so the benchmark objection does not reach it.
+
+  **Declined, on a reason that is not the benchmark.** The check would assert
+  a skeleton that carries no invariant. What the canonical comment in
+  `callable_dispatch.py` actually warns about is *state placement* — hoisting
+  the `is_async`/`checked` pair out of the per-composition body, which leaks
+  classification across compositions and racing branches and violates
+  `callable-dispatch`'s "Classification does not leak across compositions".
+  That is the one silent failure worth a mechanical guard, and all three
+  families already make it unexpressible:
+
+  | Family | State lives on | Allocated once per |
+  |---|---|---|
+  | 8 sink sites | the sink instance, via `AsyncDispatch._init_dispatch` | sink chain (`op.link()`) |
+  | 9 collector boxes | the supplier-made container | collection (`supplier()`) |
+  | `Stream.iterate()` | locals in the generator body | composition |
+
+  So `AsyncDispatch` is not a code-sharing device — it shares three attribute
+  declarations and a three-line seeder. It is what puts the state on the
+  instance, and that is the whole of the guarantee. The only way to
+  reintroduce the leak is to allocate the state somewhere else deliberately,
+  which is a redesign and not a slip.
+
+  The dance's remaining obligation — awaiting correctly — is already pinned
+  per site: `tests/test_callable_dispatch.py` section 5.6 exists to take the
+  `elif not checked` arc "at every call site, not just
+  map/filter/summing_int", and `ops.py`, `terminals.py` and `collector.py`
+  sit at 100% branch coverage, so every arc of every copy is exercised.
+
+  **What this adds to the record**, since `add-callsite-dispatch`'s
+  benchmark-findings.md is otherwise the whole of it: the duplication is not
+  only cheap but *safe*, on an argument independent of measurement. Anyone
+  re-opening this should know both halves — the runtime half is closed by
+  that benchmark ("the cost of any abstraction here is not the abstraction
+  versus a cheaper abstraction but the abstraction versus free"), and the
+  build-time half is closed by the table above.
 
 - **`name-by-visibility-not-underscore`** (2026-09-03) — the leading
   underscore on a module-level name in `src/snakestream` had been doing the
