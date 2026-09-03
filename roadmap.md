@@ -34,31 +34,12 @@ whoever picks them up should make the batching call themselves.
 
 ### Surfaced 2026-09-02, by the `sort-mixed-lane-by-successive-passes` read
 
-Two smaller findings from the same pass over `src/`, recorded rather than
-scaffolded because the sort item was the one worth taking first. Neither is
-claimed. **Ranked as listed.** Both were checked against **Done** before being
-filed here: neither is a re-proposal of anything in the rejection log.
+One smaller finding from the same pass over `src/`, recorded rather than
+scaffolded because the sort item was the one worth taking first. Not claimed.
+**Ranked as listed.** Checked against **Done** before being filed here: it is
+not a re-proposal of anything in the rejection log.
 
-**1. The unseeded-accumulation rule is written five times.** `None if container
-is _UNSET else container` is the whole body of `_ReduceSink._finish`,
-`_MinMaxSink._finish` and `_FindSink._finish` in `terminals.py`, and of
-`_extremum()`'s and `reducing()`'s `_finish` in `collectors.py`. One rule —
-"an accumulation that never saw an element finishes as `None`" — stated in five
-places, none of which references the others, beside the `_UNSET` sentinel that
-already lives in `sink.py` precisely because both modules need it and neither
-may import the other.
-
-*The gate: there isn't one, and that is what makes this the cheap one.* A
-`_finish` runs **once per collection**, not once per element, so the `+10%`
-ns/element threshold that governs everything else in this neighbourhood does not
-apply — the same exemption `collapse-sort-decorate-lanes` claimed and used. The
-five call sites are already one-liners, so the win is that the rule acquires a
-name and a single home, not that any line count falls. Whoever takes it should
-check first whether `TerminalSink._finish`'s default can carry it rather than a
-free helper, since three of the five are sinks; that is the design question, and
-it is the only one.
-
-**2. `_guarded()` re-asks a question decided at composition, once per pull.**
+**1. `_guarded()` re-asks a question decided at composition, once per pull.**
 `if window is None` is checked on every element, guarding two nearly-disjoint
 loop bodies inside one `while True`, with only the `finally` genuinely shared.
 The answer never changes for the life of the generator: `race_through()` passes
@@ -170,6 +151,43 @@ core semantic.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should be declared permanent. **Narrowed 2026-08-31: the behaviour is now documented in README's `of()` row.** That was a defect independent of this decision — the row described Java's semantics, so the divergence used by every example in the file was invisible to a reader. Documenting it does not close this item; what remains is the call on whether to keep it. Surfaced 2026-08-20 in the same code-quality read that produced the first batch of **Now** items, all since closed. |
 
 ## Done
+
+- **`collapse-unseeded-accumulation-rule`** (2026-09-03) — the "an accumulation
+  that never saw an element finishes as `None`" rule, previously stated five
+  times with no site referencing another (`_ReduceSink._finish`,
+  `_MinMaxSink._finish` and `_FindSink._finish` in `terminals.py`; `_extremum()`
+  and `reducing()`'s `_finish` closures in `collectors.py`), now lives once as
+  `_unseeded()` beside `_UNSET` in `sink.py`, plus a `_UnseededSink` base
+  collapsing the shared `_create_container() -> _UNSET` hook the three sinks
+  also duplicated. No behaviour change and no spec delta (`skip_specs: true`) —
+  every capability that specifies the empty-source result already did, and
+  none of them changed.
+
+  The roadmap's open design question — whether `TerminalSink._finish`'s default
+  could carry the rule instead of a dedicated base — is answered, not left for
+  a later reader: it can, but shouldn't, because most `TerminalSink` subclasses
+  (`_CountSink`, `_ForEachSink`, `_MatchSink`, `_CollectorSink`,
+  `GeneratorBridgeSink`) can never hold `_UNSET`, and a universal default would
+  assert the rule on all of them regardless (design Decision 1).
+
+  It also takes a documented exception to the repository's recorded preference
+  against thin helpers (`_checked()` in `sort.py`, `ComparatorContractException`
+  are that preference applied): `_unseeded()` is a free function wrapping a
+  one-line check, which the preference says to inline. Kept anyway because no
+  other mechanism reaches all five sites — `collectors.py`'s two are closures
+  over dataclass boxes, not sinks, so `_UnseededSink` cannot reach them, and
+  without the function the collapse would be three sites out of five, leaving
+  the worse half of the problem (a rule stated in two separate modules) exactly
+  as it was (design Decision 3).
+
+  **A fresh finding surfaced by this change's exploration, priced and
+  declined, recorded so it is not re-derived:** `_sort_by_key`'s
+  `len(columns) == 1` lane is character-for-character the general lane at
+  `last = 0` — verified identical on 8,000 randomized cases, including ties
+  and null-tolerant `(present, key)` tuples, both directions. Collapsing it
+  costs ~0.2 us/sort of fixed `zip(*columns)` overhead on the lane every plain
+  `comparing()` call takes: +18.6% / +18.8% at n=4, noise-dominated by
+  n=20,000. Declined on measurement, not available work.
 
 - **`sort-mixed-lane-by-successive-passes`** (2026-09-02) — `_sort_by_key()`'s
   mixed-direction lane was the only place left in the sort where a comparison

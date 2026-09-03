@@ -14,7 +14,7 @@ from snakestream.callable_dispatch import _classify_step, _maybe_await, is_async
 from snakestream.collector import Characteristics, Collector
 from snakestream.comparator import is_new_extremum
 from snakestream.exception import IllegalStateException, StreamBuildException
-from snakestream.sink import Box, _UNSET
+from snakestream.sink import Box, _unseeded, _UNSET
 from snakestream.type import (
     R,
     T,
@@ -318,7 +318,7 @@ def _extremum(comparator: Comparator[T], asc: bool) -> Collector[T, _ExtremumBox
             container.found = element
 
     def _finish(container: _ExtremumBox) -> T | None:
-        return None if container.found is _UNSET else container.found
+        return _unseeded(container.found)
 
     return Collector(_supply, _accumulate, finisher=_finish)
 
@@ -355,10 +355,9 @@ def reducing(
 
 
 def reducing(identity: Any = _UNSET, mapper: Any = _UNSET, binary_operator: Any = _UNSET) -> Any:
-    """Implements the same _UNSET-seed fold as terminals.py's _ReduceSink, and
-    the same empty-finishes-as-None rule. The duplication is deliberate and
-    measured - see that sink's docstring - so a change to either rule belongs
-    in both places."""
+    """Implements the same _UNSET-seed fold as terminals.py's _ReduceSink. The
+    duplication is deliberate and measured - see that sink's docstring - so a
+    change to that seed rule belongs in both places."""
     if mapper is _UNSET:
         # Called as reducing(binary_operator): the single positional arg is
         # the fold operator, with no identity and no element mapper.
@@ -391,7 +390,7 @@ def reducing(identity: Any = _UNSET, mapper: Any = _UNSET, binary_operator: Any 
         container.acc = r
 
     def _finish(container: _ReduceBox) -> Any:
-        return None if container.acc is _UNSET else container.acc
+        return _unseeded(container.acc)
 
     return Collector(_supply, _accumulate, finisher=_finish)
 
