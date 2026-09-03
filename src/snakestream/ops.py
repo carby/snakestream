@@ -11,11 +11,11 @@ from typing import Any, cast
 from collections.abc import Awaitable
 
 from snakestream.callable_dispatch import AsyncDispatch
+from snakestream.ordering import Ordering
 from snakestream.sink import (
     Box,
     IntermediateSink,
     Op,
-    Ordering,
     Sink,
     StatefulOp,
     StatefulSink,

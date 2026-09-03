@@ -4,19 +4,20 @@ one push protocol - begin(state_map), accept(element), end() - plus a
 synchronous cancellation_requested() query a driving loop polls to stop
 early. IntermediateSink, StatefulSink, TerminalSink and GeneratorBridgeSink
 are the shapes that protocol comes in; ops.py builds one Op/Sink pair per
-intermediate operation on top of them."""
+intermediate operation on top of them. The encounter-order vocabulary an Op's
+ClassVars below declare themselves in lives in ordering.py."""
 
 from __future__ import annotations
 
 import re
 
 from abc import ABC, abstractmethod
-from enum import Enum, auto
 from dataclasses import dataclass
 from typing import Any, ClassVar, Generic
 from collections.abc import Callable
 
 from snakestream.callable_dispatch import _maybe_await
+from snakestream.ordering import Ordering
 from snakestream.type import StateMap, T
 
 # Sentinel for "no value yet": distinguishes an unseeded reduction/accumulation
@@ -60,23 +61,6 @@ class Sink(ABC, Generic[T]):
 
     def cancellation_requested(self) -> bool:
         return False
-
-
-class Ordering(Enum):
-    """What an op does to the pipeline's encounter-order characteristic — the
-    three things Java's StreamOpFlag can say about a flag at a given stage:
-    PRESERVE it from upstream, CLEAR it, or SET it.
-
-    Java encodes this as two bits per flag in a packed int, folded down the
-    stage list by combineOpFlags(). We port the meaning, not the encoding: it
-    packs bits because it carries five characteristics (ORDERED, SIZED, SORTED,
-    DISTINCT, SHORT_CIRCUIT) through a fold that runs on every stage, and we
-    carry one. A three-member enum says what a two-bit field says, and says it
-    in words."""
-
-    PRESERVE = auto()
-    CLEAR = auto()
-    SET = auto()
 
 
 class Op(ABC):
@@ -127,40 +111,6 @@ class Op(ABC):
         to format a list of them."""
         name = type(self).__name__.removeprefix("_").removesuffix("Op")
         return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
-
-
-def is_ordered(chain: list[Op], upto: int | None = None, initial: bool = True) -> bool:
-    """Whether the pipeline carries an encounter-order requirement at position
-    `upto` (the end of the chain when omitted): the three-valued fold over the
-    ops before it, seeded with `initial`. Java's combineOpFlags() folds the same
-    answer down its stage list; here the fold is the whole of it, because there
-    is one characteristic rather than five.
-
-    Never cached onto anything. A denormalised copy of a chain property is
-    exactly what let unordered() apply to a whole pipeline regardless of where
-    it was written. Chains are single digits long, and this runs at most once
-    per terminal plus once per composition under the racing executor.
-
-    The `upto` form is what the racing executor's split search needs: an op is a
-    split point only if the pipeline is ordered *at its own position*, which is
-    the fold over everything queued before it.
-
-    `initial` is what a *suffix* needs. The racing executor splits a chain at a
-    barrier and re-enters itself on what follows, so it folds over a list of ops
-    that is not the whole pipeline. Seeding with True there would read
-    `.sorted(c).unordered().map(f)`'s suffix as ordered and reinstate a
-    requirement the caller cleared two ops earlier; the seed carries the answer
-    across the split. A full chain starts from True because a source is ordered
-    until something says otherwise.
-
-    Lives here rather than on Stream because execution.py needs it and may not
-    import stream.py; the fold is a property of a list of Ops, and Op and
-    Ordering both live here already."""
-    ordered = initial
-    for op in chain[:upto] if upto is not None else chain:
-        if op.ordering is not Ordering.PRESERVE:
-            ordered = op.ordering is Ordering.SET
-    return ordered
 
 
 class _ArgsOp(Op):

@@ -60,7 +60,7 @@ RACING.elements     = race_through        RACING.value     = inherited generic
 
 A stream consults its executor in exactly two places: `iterator()` (`self._executor.elements(...)`) and `_evaluate()` (`self._executor.value(...)`). Both operations carry the consumer's `OrderDemand` declaration alongside the chain and the source — a second axis, orthogonal to which executor the stream carries, and the input to the delivery barrier described below. No terminal names an executor for itself any more. A terminal that needs encounter order says so as a *demand* — `OrderDemand`, the value it passes alongside the chain — and the executor it runs under is always the stream's. `find_first()` is the one terminal whose demand is unconditional (`ALWAYS`), which is why it has one implementation rather than a per-mode pair; `for_each_ordered()`'s is conditional (`IF_ORDERED`) like every other order-observing terminal's. Both used to name `SEQUENTIAL` and both stopped, because naming it forfeited the caller's mode to express an ordering demand, and went a step further than Java: `ForEachOrderedTask` is itself a fork-join task, and `FindTask` scans leftmost *across* branches rather than dropping to a sequential traversal.
 
-`_is_ordered()`, the private fold over the chain's ordering characteristic, has one caller left: `Stream.concat()`, which uses it to decide whether the concatenation inherits `unordered()`. It is deliberately not public: Java exposes only `isParallel()` and keeps `ORDERED` in the package-private `StreamOpFlag`.
+`Stream._is_ordered()`, the private wrapper around `ordering.py`'s `is_ordered()` fold, has one caller left: `Stream.concat()`, which uses it to decide whether the concatenation inherits `unordered()`. It is deliberately not public: Java exposes only `isParallel()` and keeps `ORDERED` in the package-private `StreamOpFlag`.
 
 `.parallel()` / `.sequential()` each derive with no op and their target executor — `_derive()` with its `op` argument omitted and `executor` set to `RACING`/`SEQUENTIAL` — giving a new stream over the **same source and same chain**, differing only in its executor, with the receiver consumed. `sequential()`'s docstring carries the rules both obey and `parallel()` points at it. They deliberately do **not** compose — that is what makes them position-independent, matching Java, where `parallel()` sets a flag on the source stage. The last mode switch before a terminal governs the whole pipeline.
 
@@ -69,12 +69,14 @@ A stream consults its executor in exactly two places: `iterator()` (`self._execu
 Racing destroys encounter order at the `FIRST_COMPLETED` merge. Two things want
 it back, and one mechanism gives it to both: `race_through()` has a second gear,
 and whether it engages is a property of the chain plus the consumer, not of the
-executor.
+executor. The whole encounter-order model behind this section — `Ordering`,
+`OrderDemand`, `is_ordered()` and `_split_point()` — lives in one file,
+`ordering.py`; `sink.py` and `execution.py` each import from it what they need.
 
-`_split_point(chain, demand, ordered_in)` returns where order has to be
-restored. Three clauses, first hit wins, and the third is the first two again
-one level up — `Ordering.SET` is to `OrderDemand.ALWAYS` what `order_sensitive`
-is to `OrderDemand.IF_ORDERED`:
+`ordering.py`'s `_split_point(chain, demand, ordered_in)` returns where order
+has to be restored. Three clauses, first hit wins, and the third is the first
+two again one level up — `Ordering.SET` is to `OrderDemand.ALWAYS` what
+`order_sensitive` is to `OrderDemand.IF_ORDERED`:
 
 - an op declaring `Ordering.SET` (`sorted()`, wherever it sits — a sort claims
   its output is ordered, so it must see the whole stream), or

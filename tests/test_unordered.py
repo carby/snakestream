@@ -6,7 +6,7 @@ from snakestream.collectors import to_list
 from snakestream.exception import IllegalStateException
 from conftest import TIE_SOURCE, TIED_EARLY, TIED_LATE, by_key, overtaken
 from snakestream.comparator import comparing
-from snakestream.execution import OrderDemand, _split_point
+from snakestream.ordering import OrderDemand, _split_point
 from snakestream.ops import _MapOp
 from snakestream.stream import Stream
 

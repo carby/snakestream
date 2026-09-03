@@ -61,6 +61,24 @@ first — it kept arming and teardown shared while leaving the two merge loops
 apart, on the grounds that only the identical parts belong together. The same
 test applied here is what decides this item, and it may well decide against it.
 
+### Surfaced 2026-09-03, by the `extract-encounter-order-model` move
+
+Not claimed. Not scaffolded — recorded as a diagnosis, not as available work.
+
+**1. `_UNSET`, `_unseeded()` and `Box` sit in `sink.py` on the same
+import-topology reasoning `extract-encounter-order-model` just rejected for
+the encounter-order model.** `_UNSET`'s own comment says why it landed there:
+"Lives here rather than in `terminals.py` or `collector.py` because both need
+it and neither may import the other" — placement decided by which module both
+callers could already reach, not by what `sink.py`'s docstring says the module
+is for (the push protocol). It is the identical shape `Ordering` and
+`is_ordered()` were just moved out of.
+
+The diagnosis transfers; the decision does not. Whether these three earn a
+fourth module, fold into an existing one, or stay put on the grounds that a
+sentinel and a rule-with-a-name are a smaller, more defensible exception than
+four symbols were, is a call for whoever picks this up — not settled here.
+
 ## Next
 
 **Entry criterion: claimed.** Someone has committed to doing it next. That is
@@ -151,6 +169,37 @@ core semantic.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should be declared permanent. **Narrowed 2026-08-31: the behaviour is now documented in README's `of()` row.** That was a defect independent of this decision — the row described Java's semantics, so the divergence used by every example in the file was invisible to a reader. Documenting it does not close this item; what remains is the call on whether to keep it. Surfaced 2026-08-20 in the same code-quality read that produced the first batch of **Now** items, all since closed. |
 
 ## Done
+
+- **`extract-encounter-order-model`** (2026-09-03) — one concept, the
+  encounter-order model, was split across two modules that were each about
+  something else: `Ordering` and `is_ordered()` lived in `sink.py` (subject:
+  the push protocol), `OrderDemand` and `_split_point()` lived in
+  `execution.py` (subject: how a chain runs), and both placements were
+  justified in-source by import topology rather than by concern — each landed
+  in the deepest module its callers could already reach. The four now live
+  together in a new `src/snakestream/ordering.py`, which `sink.py` and
+  `execution.py` import from. A pure module-level move: the same objects, the
+  same `is` comparisons, the same call sites, resolved at import time. No
+  behaviour changed, no benchmark was owed (design decision 5, the same
+  once-per-composition/once-per-terminal argument
+  `collapse-unseeded-accumulation-rule` made), and no spec delta
+  (`skip_specs: true`) — no capability under `openspec/specs/` names a module
+  path for any of the four symbols.
+
+  This is the roadmap's first **Done** entry that is a module-boundary move
+  rather than a duplication collapse — the prior five per-element rejections
+  and the two prior collapses were all about a rule or a hook stated more than
+  once, not about where something lives.
+
+  **Two consolidations were priced and declined, recorded so neither is
+  re-derived:** folding the pair down into `sink.py` was rejected on the
+  concern, not the graph — it would add a *terminal-operation policy* enum
+  (`OrderDemand`, declared at a `Stream` terminal call site, not by any sink)
+  to a module whose subject is `begin`/`accept`/`end`, worsening the exact
+  problem being fixed. Folding the pair up into `execution.py` was rejected on
+  the graph, not on preference — `ops.py` and `sink.py` both need `Ordering`
+  and neither may import `execution.py`, which imports `sink.py`; that
+  direction is an actual cycle, not a judgement call.
 
 - **`collapse-unseeded-accumulation-rule`** (2026-09-03) — the "an accumulation
   that never saw an element finishes as `None`" rule, previously stated five

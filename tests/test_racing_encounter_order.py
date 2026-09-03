@@ -19,15 +19,14 @@ from snakestream.collectors import to_list
 from snakestream import execution
 from snakestream.execution import (
     PROCESSES,
-    OrderDemand,
     _Window,
     _guarded,
     _in_flight,
     _release_in_order,
-    _split_point,
     group_through,
 )
 from snakestream.ops import _DistinctOp, _LimitOp, _SkipOp, _SortedOp
+from snakestream.ordering import OrderDemand, _split_point
 from snakestream.sink import IntermediateSink, StatelessOp
 
 
