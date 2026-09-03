@@ -1,7 +1,8 @@
 import pytest
 
 from snakestream.collectors import to_list
-from snakestream.sink import GeneratorBridgeSink, Op, Ordering, Sink, is_ordered
+from snakestream.ordering import Ordering, is_ordered
+from snakestream.sink import GeneratorBridgeSink, Op, Sink
 from snakestream.ops import (
     _DistinctOp,
     _FilterOp,

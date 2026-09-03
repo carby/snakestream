@@ -10,7 +10,7 @@ from snakestream.callable_dispatch import is_async_callable
 from snakestream.collector import Characteristics, Collector, StreamingCollector, _CollectorSink
 from snakestream.collectors import to_list
 from snakestream.exception import IllegalStateException, StreamBuildException
-from snakestream.execution import PROCESSES as PROCESSES, RACING, SEQUENTIAL, Executor, OrderDemand
+from snakestream.execution import PROCESSES as PROCESSES, RACING, SEQUENTIAL, Executor
 from snakestream.ops import (
     _DistinctOp,
     _FilterOp,
@@ -22,7 +22,8 @@ from snakestream.ops import (
     _SortedOp,
     _UnorderedOp,
 )
-from snakestream.sink import _UNSET, Op, TerminalSink, is_ordered
+from snakestream.ordering import OrderDemand, is_ordered
+from snakestream.sink import _UNSET, Op, TerminalSink
 from snakestream.terminals import (
     _CountSink,
     _FindSink,
