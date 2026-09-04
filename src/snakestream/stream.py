@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sys
 from copy import copy
 from inspect import isawaitable, iscoroutinefunction
 from typing import TYPE_CHECKING, Any, Generic, cast, overload
@@ -342,17 +341,15 @@ class Stream(Generic[T]):
         for close_handler in self._close_handlers:
             try:
                 close_handler()
-            except Exception as e:  # noqa: PERF203
-                # PERF203 objects to try/except inside a loop; here that is the
-                # loop's contract. close() invokes *every* registered handler
-                # (stream-close-handling spec), so a raising handler must be
-                # caught per iteration rather than aborting the rest.
+            except Exception as e:
+                # close() invokes *every* registered handler (stream-close-handling
+                # spec), so a raising handler must be caught per iteration rather
+                # than aborting the rest.
                 exceptions.append(e)
         if exceptions:
             first = exceptions[0]
-            if sys.version_info >= (3, 11):
-                for later in exceptions[1:]:
-                    first.add_note(f"close() also raised: {later!r}")
+            for later in exceptions[1:]:
+                first.add_note(f"close() also raised: {later!r}")
             raise first
 
     def is_parallel(self) -> bool:

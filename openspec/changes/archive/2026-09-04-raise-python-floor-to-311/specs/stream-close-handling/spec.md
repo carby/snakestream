@@ -1,22 +1,12 @@
-## Purpose
+## REMOVED Requirements
 
-Defines the `on_close()`/`close()` close-handler contract on `Stream`, regardless of execution mode — Java's AutoClose equivalent. Covers registering close handlers, invoking them on `close()`, initializing a stream's close handlers at construction time (including via an explicit `close_handlers` argument), and carrying registered handlers across `sequential()`/`parallel()` mode switches.
+### Requirement: close() invokes every registered close handler
 
-## Requirements
+**Reason**: Superseded by the two ADDED requirements below, which split it. The requirement carried two contracts at once — which handlers run and in what order, and how their failures are reported — and only the second is affected by the floor raise. Splitting is also what lets the interpreter-dependent scenario go: it described `close()` on Python 3.10, the only interpreter lacking `BaseException.add_note()`, and 3.10 is no longer supported. A MODIFIED delta may not drop a scenario, so the requirement is removed and its two halves re-stated under names of their own.
 
-### Requirement: on_close() registers a close handler
+**Migration**: None for any caller on a supported interpreter. Handler invocation, ordering, and which exception propagates are all restated verbatim; note attachment on 3.11+ is exactly what shipped before. Only the 3.10 fallback path is gone, and `requires-python >= 3.11` now refuses that interpreter at install time.
 
-`Stream.on_close(close_handler)` SHALL append `close_handler` (a plain no-arg callable) to the stream's list of close handlers and SHALL return the same stream instance, following the mutate-and-return-self convention used by other chainable `Stream` methods.
-
-#### Scenario: Registering a single close handler
-
-- **WHEN** `on_close(handler)` is called on a stream
-- **THEN** `handler` is added to the stream's close handlers, and the call returns the same stream instance
-
-#### Scenario: Registering multiple close handlers preserves order
-
-- **WHEN** `on_close(handler_a)` then `on_close(handler_b)` are both called on the same stream
-- **THEN** both handlers are registered, in the order they were added
+## ADDED Requirements
 
 ### Requirement: close() runs every registered close handler and raises the first failure
 
@@ -64,31 +54,3 @@ This SHALL be unconditional. `BaseException.add_note()` has existed since Python
 
 - **WHEN** `close()` is called with two raising handlers on any interpreter the distribution supports
 - **THEN** the first exception is raised carrying a note for the second, with no version-dependent path that would raise it unmodified
-
-### Requirement: A stream constructed with initial close handlers uses them
-
-`Stream(source, close_handlers)` SHALL initialize the new stream's close handlers to the given list. `Stream(source)` (no `close_handlers` argument, or `None`) SHALL initialize the new stream with an empty list of close handlers. This holds whichever executor the resulting stream carries.
-
-#### Scenario: Constructing with an explicit close_handlers list
-
-- **WHEN** `Stream(source, [handler])` is constructed
-- **THEN** `close()` on the resulting stream invokes `handler`
-
-#### Scenario: Constructing with no close_handlers argument
-
-- **WHEN** `Stream(source)` is constructed without a `close_handlers` argument
-- **THEN** `close()` on the resulting stream invokes nothing, and `on_close()` can still be used afterward to register handlers
-
-### Requirement: Close handlers propagate across sequential()/parallel() mode switches
-
-`Stream.sequential()` and `Stream.parallel()` SHALL carry the calling stream's current close handlers over to the new stream instance they return.
-
-#### Scenario: Close handlers survive a parallel() call
-
-- **WHEN** a stream with a registered close handler calls `.parallel()`
-- **THEN** the resulting stream's `close()` still invokes that handler
-
-#### Scenario: Close handlers survive a sequential() call
-
-- **WHEN** a parallel stream with a registered close handler calls `.sequential()`
-- **THEN** the resulting stream's `close()` still invokes that handler
