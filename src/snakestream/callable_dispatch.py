@@ -57,18 +57,24 @@ class AsyncDispatch:
     it sit on two different bases (IntermediateSink, TerminalSink) with
     different constructor signatures, and several take further arguments.
 
-    The state is per-sink, and a sink is built once per composition - so
-    classification never leaks across compositions or across RACING's
-    branches, which is the same requirement the comment above places on the
-    generator form's locals."""
+    The state is per-sink, so classification never leaks across compositions,
+    the same requirement the comment above places on the generator form's
+    locals. Fork/join's per-element sink (execution._run_element) breaks the
+    "a sink is built once per composition" premise this rests on - a sink
+    built once per *element* would reclassify every element unless the
+    classification itself is precomputed and handed in rather than
+    recomputed here. `is_async` therefore lets a caller that already knows
+    the answer skip is_async_callable() entirely; see ops.py's
+    `_SinglePureCallableOp`, which classifies once on the Op - shared across
+    every composition and every element - rather than once per sink."""
 
     _fn: Callable
     _is_async: bool
     _checked: bool
 
-    def _init_dispatch(self, fn: Callable) -> None:
+    def _init_dispatch(self, fn: Callable, is_async: bool | None = None) -> None:
         self._fn = fn
-        self._is_async = is_async_callable(fn)
+        self._is_async = is_async_callable(fn) if is_async is None else is_async
         self._checked = False
 
 

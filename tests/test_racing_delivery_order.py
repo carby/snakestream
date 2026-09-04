@@ -31,7 +31,6 @@ from snakestream.collectors import (
     to_set,
 )
 from snakestream.exception import IllegalStateException
-from snakestream.execution import PROCESSES, _in_flight
 
 
 def _asc(a: int, b: int) -> int:
@@ -150,8 +149,16 @@ async def test_count_is_unaffected() -> None:
 
 @pytest.mark.asyncio
 async def test_an_order_blind_terminal_holds_nothing_back() -> None:
-    # given a slow first element and an unbounded source, so a barrier would
-    # stall the whole pipeline behind element 0
+    # given a slow first element and an unbounded source, so waiting on
+    # element 0's batch would stall the whole pipeline behind it. The match
+    # (20) is placed past the initial fill of up to `workers` batches
+    # (4 workers x 4-element first batches = 16) so it lands in a batch
+    # dispatched only after the first fill completes, not alongside element
+    # 0's own batch - fork-join-executor-and-spliterator's design.md decision
+    # 10 documents the one place order-blindness still doesn't buy this: a
+    # match sharing its own batch with an unrelated slow element, bounded by
+    # that batch's size (see racing-encounter-order's "An order-blind
+    # terminal may be delayed by its own batch")
     async def endless():
         i = 0
         while True:
@@ -164,7 +171,7 @@ async def test_an_order_blind_terminal_holds_nothing_back() -> None:
 
     # when an order-blind short-circuiting terminal is asked
     res = await asyncio.wait_for(
-        Stream.of(endless()).parallel().map(one_slow_element).any_match(lambda n: n == 3),
+        Stream.of(endless()).parallel().map(one_slow_element).any_match(lambda n: n == 20),
         timeout=2,
     )
 
@@ -543,32 +550,6 @@ async def test_an_error_under_a_delivery_barrier_propagates_without_hanging() ->
             Stream.of(SOURCE).parallel().map(_boom).collect(to_list()),
             timeout=5,
         )
-
-
-@pytest.mark.asyncio
-async def test_read_ahead_under_a_delivery_barrier_is_bounded() -> None:
-    # given a source far longer than the window and a slow first element
-    pulled: list[int] = []
-
-    async def counting():
-        for i in range(400):
-            pulled.append(i)
-            yield i
-
-    async def one_slow_element(n: int) -> int:
-        await asyncio.sleep(0.2 if n == 0 else 0.0)
-        return n
-
-    # when the first element is taken from a chain with no order-sensitive
-    # operation in it
-    agen = Stream.of(counting()).parallel().map(one_slow_element).iterator()
-    first = await anext(agen)
-    pulled_before_first_release = len(pulled)
-    await agen.aclose()
-
-    # then the delivery barrier is bounded exactly as an operation's is
-    assert first == 0
-    assert pulled_before_first_release <= _in_flight(PROCESSES)
 
 
 # --- the marked scalar collectors -------------------------------------------

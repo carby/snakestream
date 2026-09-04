@@ -56,9 +56,9 @@ violation produced a wrong answer.
 #### Scenario: A mode switch is position-independent where unordered() is not
 - **WHEN** `.parallel()` is declared before an operation and, in a second
   pipeline, after that same operation
-- **THEN** both pipelines run that operation under the racing executor, whereas
-  moving `.unordered()` across an operation does change which side of the
-  ordering boundary that operation falls on
+- **THEN** both pipelines run that operation under the fork-join executor,
+  whereas moving `.unordered()` across an operation does change which side of
+  the ordering boundary that operation falls on
 
 ### Requirement: Ordering is derived from the stream's queued operations
 A stream's ordered/unordered characteristic SHALL be derived from the
@@ -141,14 +141,15 @@ subsequent sort.
 
 This requirement's scenarios SHALL be behavioural. They previously asserted on
 the internal accessor because observing the rule requires a sort running under
-the racing executor, and that path gave a wrong answer in its own right: a sort
-was order-blind there, so a sort under the racing executor was indistinguishable
-from an unordered one and a behavioural assertion would have pinned the defect
-rather than the rule. With order-sensitive operations honouring encounter order
-under the racing executor (see the `racing-encounter-order` capability), the
-distinction is observable and the exemption is withdrawn. The mode-switch
-requirement's accessor assertions are unaffected: their reason is structural,
-not temporary, and they remain the sole exception in this capability.
+a parallel executor, and that path gave a wrong answer in its own right: a sort
+was order-blind there, so a sort under the parallel executor was
+indistinguishable from an unordered one and a behavioural assertion would have
+pinned the defect rather than the rule. With order-sensitive operations
+honouring encounter order under the fork-join executor (see the
+`racing-encounter-order` capability), the distinction is observable and the
+exemption is withdrawn. The mode-switch requirement's accessor assertions are
+unaffected: their reason is structural, not temporary, and they remain the
+sole exception in this capability.
 
 The rule SHALL be observable in the ordinary way — through what an operation
 downstream of the sort selects, and through whether a downstream operation

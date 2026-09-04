@@ -65,10 +65,11 @@ def test_stateful_op_makes_a_fresh_empty_container_each_call(op) -> None:
     # then
     assert first is not None
     assert first is not second
-    # "empty" is per container type: an empty set for distinct, a zeroed
-    # counter for limit/skip
+    # "empty" is per container type: an empty set for distinct (guarded by a
+    # lock, per fork-join-executor-and-spliterator's cross-thread fix), a
+    # zeroed counter for limit/skip (also lock-guarded)
     for container in (first, second):
-        assert container == set() if isinstance(container, set) else container.value == 0
+        assert container._seen == set() if hasattr(container, "_seen") else container.value == 0
 
 
 @pytest.mark.asyncio

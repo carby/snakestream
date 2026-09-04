@@ -81,8 +81,8 @@ the stream's type, executor or ordering characteristic.
 
 #### Scenario: An op declared before .parallel() does not defeat the order guarantee
 - **WHEN** `.map(f)` is declared before `.parallel()` on a stream and
-  `.find_first()` is called, so that the map now runs under the racing executor
-  for ordinary terminals
+  `.find_first()` is called, so that the map now runs under the fork-join
+  executor for ordinary terminals
 - **THEN** `find_first()` still returns the first element in encounter order,
   because its demand for encounter order at delivery does not depend on where
   the mode switch was written
@@ -120,14 +120,14 @@ cannot, it SHALL be no slower.
 ### Requirement: find_first() may invoke a chain's callables more than once
 On a parallel stream, `Stream.find_first()` SHALL be permitted to invoke the
 callables of the operations in its chain on source elements other than the one
-it ultimately returns, because the branches must be racing before it is known
-which element is first.
+it ultimately returns, because the batches must be dispatched and running
+before it is known which element is first.
 
-The number of such elements SHALL be bounded. It SHALL NOT exceed the racing
-executor's read-ahead bound, and where the source's elements complete at a
-uniform rate it SHALL NOT exceed the worker count, because the call settles as
-soon as the first element is released and no branch can be more than one
-element ahead at that point.
+The number of such elements SHALL be bounded. Under the fork-join executor it
+SHALL NOT exceed the total number of elements pulled into the first round of
+batches — `WORKERS` batches of up to `_FIRST_BATCH_SIZE` elements each — because
+the call settles as soon as the first element is released, and unless the
+source is exhausted first, resolving it never requires starting a second round.
 
 A sequential `find_first()` SHALL continue to invoke them for exactly one
 element.
@@ -139,7 +139,7 @@ invocation SHALL declare `.sequential()`.
 - **WHEN** `.parallel().map(f).find_first()` is awaited on a source of many
   elements
 - **THEN** the correct first element is returned, and `f` is permitted to have
-  been invoked on more than one element, up to the read-ahead bound
+  been invoked on more than one element, up to the first round's bound
 
 #### Scenario: A sequential find_first() processes exactly one
 - **WHEN** `.sequential().map(f).find_first()` is awaited on the same source

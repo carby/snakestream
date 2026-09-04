@@ -1,6 +1,6 @@
 ## Purpose
 
-Defines the contract for `Stream.iterator()`, an escape-hatch terminal-ish operation that composes a stream's currently-queued chain of intermediate operations into an executable `AsyncGenerator` and hands it to the caller without pulling any elements from it. Unlike other terminal operations, `iterator()` does not drive consumption itself — the caller does, via `async for`, direct `__anext__()` calls, or partial consumption — and, like other terminal operations, it composes non-destructively so the stream instance remains valid for further use afterward. Applies under `SEQUENTIAL` and `RACING` alike, with no mode-specific override; because it hands out raw elements, the order they arrive in is part of its contract, and an ordered `RACING` stream yields in encounter order.
+Defines the contract for `Stream.iterator()`, an escape-hatch terminal-ish operation that composes a stream's currently-queued chain of intermediate operations into an executable `AsyncGenerator` and hands it to the caller without pulling any elements from it. Unlike other terminal operations, `iterator()` does not drive consumption itself — the caller does, via `async for`, direct `__anext__()` calls, or partial consumption — and, like other terminal operations, it composes non-destructively so the stream instance remains valid for further use afterward. Applies under the sequential and fork-join executors alike, with no mode-specific override; because it hands out raw elements, the order they arrive in is part of its contract, and an ordered parallel stream yields in encounter order.
 
 ## Requirements
 
@@ -22,15 +22,15 @@ The written form `AsyncGenerator[T]` denotes the same type the spec previously w
 - **THEN** no error occurs, and only the elements actually pulled are computed through the chain
 
 ### Requirement: iterator() works identically for sequential and parallel streams
-`Stream.iterator()` SHALL work under either executor — sequential composition, linking the chain onto one sink via `_wrap_sink()`, or racing composition — without requiring any mode-specific override, relying on the executor's element-producing operation.
+`Stream.iterator()` SHALL work under either executor — sequential composition, linking the chain onto one sink via `_wrap_sink()`, or fork-join composition — without requiring any mode-specific override, relying on the executor's element-producing operation.
 
 `iterator()` hands raw elements to the caller, so the order they arrive in is
 definitionally observable. It SHALL therefore declare to the executor that it
-observes encounter order: on an ordered racing stream the returned generator
+observes encounter order: on an ordered parallel stream the returned generator
 SHALL yield in encounter order, matching what `collect(to_list())` on the same
 stream produces. On a stream the caller has declared `unordered()`, it SHALL
-yield in whatever order the race resolves elements, at the racing executor's
-unmodified cost.
+yield in whatever order the batches resolve elements, at the fork-join
+executor's unmodified cost.
 
 `collect(to_generator)`, which composes through the same element-producing
 operation, SHALL follow the same rule.
@@ -39,14 +39,14 @@ operation, SHALL follow the same rule.
 - **WHEN** `.iterator()` is called on a stream using `RACING` execution with a
   queued chain of intermediate operations and no `unordered()`
 - **THEN** the returned `AsyncGenerator`, when iterated, yields the elements the
-  racing composition would produce, in encounter order
+  fork-join composition would produce, in encounter order
 
 #### Scenario: iterator() under RACING execution on an unordered stream
 - **WHEN** `.iterator()` is called on a stream using `RACING` execution with
   `.unordered()` queued
-- **THEN** the returned `AsyncGenerator` yields those elements as racing branches
-  resolve them, in no guaranteed order, following the racing executor's existing
-  execution semantics
+- **THEN** the returned `AsyncGenerator` yields those elements as batches
+  resolve them, in no guaranteed order, following the fork-join executor's
+  existing execution semantics
 
 #### Scenario: to_generator matches iterator()
 - **WHEN** `collect(to_generator)` is called on an ordered racing stream

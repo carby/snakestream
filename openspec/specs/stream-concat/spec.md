@@ -189,7 +189,7 @@ the concatenated stream's chain — the same mechanism `unordered()` uses, appli
 here by `concat()` on the caller's behalf.
 
 An operation queued onto an unordered concatenated stream SHALL therefore see an
-unordered pipeline, and under the racing executor SHALL NOT be charged the
+unordered pipeline, and under the fork-join executor SHALL NOT be charged the
 reorder barrier that an ordered pipeline requires.
 
 #### Scenario: Both operands ordered

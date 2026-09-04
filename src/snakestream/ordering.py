@@ -121,10 +121,12 @@ def split_point(chain: list[Op], demand: OrderDemand, ordered_in: bool) -> int |
 
     The *terminal* needs it restored before delivery, which is the third
     clause and is why this returns `len(chain)` rather than an op's index: a
-    split at the end means every op still races and only the handing over is
-    ordered. Expressing it as a split is what lets one mechanism serve both —
-    _race_through() runs the same head/reorder/tail branch either way, with an
-    empty tail here.
+    split at the end means every op still runs in parallel and only the
+    handing over is ordered (though under fork/join, where contiguous
+    batches never scramble it in the first place, that handing-over is
+    already ordered before the split is even asked for). Expressing it as a
+    split is what lets one mechanism serve both — the executor runs the same
+    head/barrier/tail shape either way, with an empty tail here.
 
     That third clause is the two op clauses again, one level up, which is what
     OrderDemand's three values are for:
@@ -135,8 +137,10 @@ def split_point(chain: list[Op], demand: OrderDemand, ordered_in: bool) -> int |
 
     ALWAYS is find_first()'s, and nothing else's. It reads as a contradiction
     on a pipeline the caller declared unordered() and is not one: the barrier
-    can always restore encounter order, because _guarded() assigns the source
-    index under the lock and unordered() clears the *requirement* to honour it,
+    can always restore encounter order, because a split's head still pulls
+    contiguous batches in source order regardless of unordered() — that
+    property was never conditional on the ordering characteristic, only its
+    *delivery* is — and unordered() clears the *requirement* to honour it,
     never the ability. So a demand that survives the clearing is coherent, and
     it is the one Java's FindOp makes when mustFindFirst is fixed at
     construction and never consults the upstream ORDERED flag.

@@ -5,15 +5,17 @@ gets driven, sequentially or racing, is execution.py's job."""
 
 from __future__ import annotations
 
+import threading
+
 from contextlib import aclosing
+from dataclasses import dataclass, field
 from inspect import isawaitable
 from typing import Any, cast
 from collections.abc import Awaitable
 
-from snakestream.callable_dispatch import AsyncDispatch
+from snakestream.callable_dispatch import AsyncDispatch, is_async_callable
 from snakestream.ordering import Ordering
 from snakestream.sink import (
-    Box,
     IntermediateSink,
     Op,
     Sink,
@@ -33,10 +35,34 @@ from snakestream.type import (
 )
 
 
+class _SinglePureCallableOp(StatelessOp):
+    """A StatelessOp wrapping exactly one user callable at _args[0]
+    (FilterOp/MapOp/PeekOp), classified once here rather than once per sink.
+
+    Under fork/join, execution._run_element() builds a fresh sink chain per
+    element - one op.link() call per element, not once per composition -
+    so an ordinary StatelessOp.link() would leave AsyncDispatch._init_dispatch()
+    re-running is_async_callable() on every element, violating
+    callable-dispatch's "Awaitability is classified once per composition"
+    requirement (measured: 1001 calls for 500 elements through map+filter,
+    against 3 under the sequential executor). Awaitability is a pure function
+    of the callable, and the callable is fixed for the Op's lifetime - Op
+    instances are themselves reused across every composition
+    (pipeline-composition) - so classifying once here, at construction, meets
+    the "once per composition" bar with room to spare rather than exactly."""
+
+    def __init__(self, fn: Any) -> None:
+        super().__init__(fn)
+        self._is_async = is_async_callable(fn)
+
+    def link(self, downstream: Sink[Any]) -> Sink[Any]:
+        return self._sink_cls(downstream, *self._args, self._is_async)
+
+
 class _FilterSink(AsyncDispatch, IntermediateSink[T]):
-    def __init__(self, downstream: Sink[Any], predicate: Predicate) -> None:
+    def __init__(self, downstream: Sink[Any], predicate: Predicate, is_async: bool | None = None) -> None:
         super().__init__(downstream)
-        self._init_dispatch(predicate)
+        self._init_dispatch(predicate, is_async)
 
     async def accept(self, element: Any) -> None:
         keep = self._fn(element)
@@ -51,14 +77,14 @@ class _FilterSink(AsyncDispatch, IntermediateSink[T]):
             await self.downstream.accept(element)
 
 
-class FilterOp(StatelessOp):
+class FilterOp(_SinglePureCallableOp):
     _sink_cls = _FilterSink
 
 
 class _MapSink(AsyncDispatch, IntermediateSink[T]):
-    def __init__(self, downstream: Sink[Any], mapper: Mapper) -> None:
+    def __init__(self, downstream: Sink[Any], mapper: Mapper, is_async: bool | None = None) -> None:
         super().__init__(downstream)
-        self._init_dispatch(mapper)
+        self._init_dispatch(mapper, is_async)
 
     async def accept(self, element: Any) -> None:
         r = self._fn(element)
@@ -72,14 +98,14 @@ class _MapSink(AsyncDispatch, IntermediateSink[T]):
         await self.downstream.accept(r)
 
 
-class MapOp(StatelessOp):
+class MapOp(_SinglePureCallableOp):
     _sink_cls = _MapSink
 
 
 class _PeekSink(AsyncDispatch, IntermediateSink[T]):
-    def __init__(self, downstream: Sink[Any], consumer: Consumer) -> None:
+    def __init__(self, downstream: Sink[Any], consumer: Consumer, is_async: bool | None = None) -> None:
         super().__init__(downstream)
-        self._init_dispatch(consumer)
+        self._init_dispatch(consumer, is_async)
 
     async def accept(self, element: Any) -> None:
         r = self._fn(element)
@@ -93,7 +119,7 @@ class _PeekSink(AsyncDispatch, IntermediateSink[T]):
         await self.downstream.accept(element)
 
 
-class PeekOp(StatelessOp):
+class PeekOp(_SinglePureCallableOp):
     _sink_cls = _PeekSink
 
 
@@ -167,11 +193,43 @@ class FlatMapOp(StatelessOp):
     _sink_cls = _FlatMapSink
 
 
+@dataclass(slots=True)
+class _GuardedCounter:
+    """LimitOp/SkipOp's shared state: a counter plus the OS-thread lock its
+    read-modify-write needs when several sinks built from the same op share
+    it. Under RACING that check-then-increment was atomic for free - one
+    event loop, no await between the two - but under fork/join each sink
+    sharing this counter runs its batch's chain on its own thread, so the
+    same compound operation is a genuine data race without a real lock.
+    Kept out of Box (sink.py), which collectors also build per composition
+    and never share across threads - the lock would be dead weight there."""
+
+    value: int = 0
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+
+class _GuardedSet:
+    """DistinctOp's shared state: a set plus the lock its check-then-add
+    needs for the same reason _GuardedCounter's increment does."""
+
+    __slots__ = ("_lock", "_seen")
+
+    def __init__(self) -> None:
+        self._seen: set = set()
+        self._lock = threading.Lock()
+
+    def add_if_absent(self, element: Any) -> bool:
+        with self._lock:
+            if element in self._seen:
+                return False
+            self._seen.add(element)
+            return True
+
+
 class _DistinctSink(StatefulSink[T]):
     async def accept(self, element: Any) -> None:
-        if element in self._state:
+        if not self._state.add_if_absent(element):
             return
-        self._state.add(element)
         await self.downstream.accept(element)
 
 
@@ -179,8 +237,8 @@ class DistinctOp(StatefulOp):
     _sink_cls = _DistinctSink
     order_sensitive = True
 
-    def make_shared_state(self) -> set:
-        return set()
+    def make_shared_state(self) -> _GuardedSet:
+        return _GuardedSet()
 
 
 class _LimitSink(StatefulSink[T]):
@@ -193,21 +251,26 @@ class _LimitSink(StatefulSink[T]):
         # super() first: StatefulSink.begin() is what resolves self._state.
         # Settling the flag here rather than only in accept() is what lets a
         # limit(0) - or a branch whose shared counter is already full - report
-        # cancellation before the driving loop issues its first pull.
+        # cancellation before the driving loop issues its first pull. Reads
+        # under the lock: another sink sharing this counter may be mutating
+        # it on its own thread right now, under fork/join.
         await super().begin(state_map)
-        self._cancelled = self._state.value >= self._max_size
+        with self._state.lock:
+            self._cancelled = self._state.value >= self._max_size
 
     async def accept(self, element: Any) -> None:
-        if self._state.value >= self._max_size:
-            self._cancelled = True
-            return
         # reserve the slot before pushing downstream: a genuinely async
         # downstream can cede control, so checking and reserving must be
-        # atomic (no await between them) to stay correct across racing
-        # branches sharing self._state
-        self._state.value += 1
-        if self._state.value >= self._max_size:
-            self._cancelled = True
+        # atomic - under a real OS-thread lock now, not just cooperative
+        # scheduling, since a sink sharing self._state may run on another
+        # thread entirely under fork/join
+        with self._state.lock:
+            if self._state.value >= self._max_size:
+                self._cancelled = True
+                return
+            self._state.value += 1
+            if self._state.value >= self._max_size:
+                self._cancelled = True
         await self.downstream.accept(element)
 
     def cancellation_requested(self) -> bool:
@@ -218,8 +281,8 @@ class LimitOp(StatefulOp):
     _sink_cls = _LimitSink
     order_sensitive = True
 
-    def make_shared_state(self) -> Box:
-        return Box(0)
+    def make_shared_state(self) -> _GuardedCounter:
+        return _GuardedCounter(0)
 
 
 class _SkipSink(StatefulSink[T]):
@@ -228,9 +291,10 @@ class _SkipSink(StatefulSink[T]):
         self._n = n
 
     async def accept(self, element: Any) -> None:
-        if self._state.value < self._n:
-            self._state.value += 1
-            return
+        with self._state.lock:
+            if self._state.value < self._n:
+                self._state.value += 1
+                return
         await self.downstream.accept(element)
 
 
@@ -238,5 +302,5 @@ class SkipOp(StatefulOp):
     _sink_cls = _SkipSink
     order_sensitive = True
 
-    def make_shared_state(self) -> Box:
-        return Box(0)
+    def make_shared_state(self) -> _GuardedCounter:
+        return _GuardedCounter(0)

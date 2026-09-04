@@ -1,16 +1,21 @@
 ## Purpose
 
-Defines what encounter order means under the racing executor: how order is
-preserved across branches that finish out of order, who requires it, where in a
-pipeline the requirement takes effect, and what it costs. Racing destroys
-encounter order at the merge, and two things need it back — an operation whose
-answer depends on global position (`sorted()`, `limit()`, `skip()`,
-`distinct()`), which needs it restored before it decides, and a terminal that
-can tell what order elements reach it in, which needs it restored before
-delivery. This capability is the contract for both restorations, for how much
-of the pipeline still races around them, and for the deliberate absence of them
-on an unordered pipeline, where the cheaper order-blind behaviour is correct and
-is what runs.
+Defines what encounter order means under the parallel executor: who requires
+it, where in a pipeline the requirement takes effect, and what it costs. This
+capability's name and the mechanism it once described - branches racing a
+shared source to a `FIRST_COMPLETED` merge - predate `fork-join-executor-and-
+spliterator` (2026-09-04), which replaced that merge with contiguous batches
+that never scramble encounter order in the first place; the directory keeps
+the old name deliberately rather than being renamed mid-flight (see that
+change's design.md, decision 5). What still needs restoring is narrower now:
+an operation whose answer depends on global position (`sorted()`, `limit()`,
+`skip()`, `distinct()`) needs a single ordered pass rather than a per-batch
+view, and a terminal that can tell what order elements reach it in needs
+delivery held to encounter order across batches. This capability is the
+contract for both restorations, for how much of the pipeline still runs
+concurrently around them, and for the deliberate absence of them on an
+unordered pipeline, where the cheaper order-blind behaviour is correct and is
+what runs.
 
 ## Requirements
 
@@ -93,8 +98,14 @@ A terminal operation SHALL declare whether it observes encounter order:
   cheapest split there is — at `len(chain)`, so every operation still races and
   only delivery is ordered — and `unordered()` releases them from it.
 - `count()`, `for_each()`, `find_any()`, `all_match()`, `any_match()` and
-  `none_match()` do NOT observe it and SHALL pay nothing for this requirement —
-  neither reorder buffering nor head-of-line delay.
+  `none_match()` do NOT observe it and SHALL pay nothing for this requirement in
+  the general case — neither reorder buffering nor head-of-line delay against
+  an *earlier* element. **A short-circuiting one of these** (`find_any()`,
+  `any_match()`, `none_match()`) is subject to the same bounded exception the
+  read-ahead requirement below now documents: under
+  `fork-join-executor-and-spliterator`'s executor, such a terminal may still be
+  delayed by a slow *unrelated* element sharing its own batch with the one that
+  satisfies it — never by an earlier one, and never unboundedly.
 - `find_first()` observes it **unconditionally**. It is the only terminal whose
   demand survives `unordered()`: the barrier can always restore encounter order,
   because the source index is assigned at the point elements are pulled and
@@ -146,8 +157,9 @@ finished elements to the terminal is ordered.
 #### Scenario: An order-blind terminal pays nothing
 - **WHEN** `count()`, `for_each()`, `any_match()` or `find_any()` is called on
   an ordered racing pipeline
-- **THEN** no element is held back waiting for an earlier one, and the pipeline
-  behaves exactly as it does without this requirement
+- **THEN** no element is held back waiting for an *earlier* one, and the
+  pipeline behaves exactly as it does without this requirement, subject to the
+  bounded same-batch exception documented under the read-ahead requirement
 
 #### Scenario: An UNORDERED collector takes the order-blind path
 - **WHEN** an ordered racing pipeline is collected with `to_set()`, which
@@ -250,7 +262,20 @@ this capability.
 one: on any racing pipeline delivering to an order-observing terminal, and on
 any pipeline containing an order-sensitive operation, declaring the pipeline
 unordered SHALL admit concurrency that the ordered form cannot. This SHALL be
-measurable and SHALL be measured.
+measurable, **subject to there being more than one independently-dispatched
+unit of work to admit concurrency between** — a pipeline whose entire source is
+processed as a single unit has nothing for `unordered()` to let race ahead of
+anything else, on any executor. `fork-join-executor-and-spliterator`'s executor
+dispatches contiguous batches, so this precondition is source-size-dependent
+there in a way it was not under a per-element racing executor: a source larger
+than one batch's worth of elements SHALL show the effect; a source that fits in
+a single batch is not required to. See that change's design.md, decisions 9
+and 10, for the batch boundary and the one further, genuinely new and
+bounded exception this capability now carries: an order-blind,
+short-circuiting terminal may still be delayed by a slow element sharing its
+own batch with the one that would have satisfied it, bounded by that batch's
+size — a variant of the read-ahead requirement's already-accepted over-pull
+allowance below, not a new kind of claim.
 
 #### Scenario: An unordered limit() takes the first n to arrive
 - **WHEN** `.unordered()` is queued before a mapping operation with variable
@@ -271,7 +296,7 @@ measurable and SHALL be measured.
 
 #### Scenario: An unordered pipeline with no order-sensitive operation pays no delivery cost
 - **WHEN** `.parallel().unordered().map(f).collect(to_list())` is run and again
-  without the `.unordered()`
+  without the `.unordered()`, over a source spanning more than one batch
 - **THEN** the unordered run engages no reorder buffer and holds no element back
 
 #### Scenario: unordered() applies only to operations queued after it
@@ -325,6 +350,14 @@ run it on, up to the window. A racing pipeline is permitted this over-pull where
 a sequential one is not, matching the existing racing behaviour and Java's
 parallel `limit()`. The elements *selected* are unaffected.
 
+**This same allowance extends to an order-blind, short-circuiting terminal
+under `fork-join-executor-and-spliterator`'s executor**, which is not itself
+racing branches against a window but batches against a batch boundary: such a
+terminal may be delayed by a slow element sharing its own batch with the
+element that would have satisfied it, bounded by that batch's size, for the
+same reason and on the same footing as the over-pull this requirement already
+accepts. Which element eventually satisfies the terminal is unaffected.
+
 #### Scenario: A slow first element does not draw the whole source into memory
 - **WHEN** an ordered racing pipeline is run over a large source in which the
   first element's upstream work is far slower than every other element's
@@ -356,6 +389,15 @@ parallel `limit()`. The elements *selected* are unaffected.
 - **THEN** the number of elements each branch may have pulled but unreleased is
   not smaller than it is at the default worker count
 
+#### Scenario: An order-blind terminal may be delayed by its own batch
+- **WHEN** an order-blind, short-circuiting terminal (`any_match()`,
+  `find_any()`) is run under `fork-join-executor-and-spliterator`'s executor
+  over an unbounded source whose satisfying element shares a batch with an
+  unrelated slow element
+- **THEN** the terminal is delayed by at most that batch's bound, and is not
+  delayed at all when the satisfying element lands in a different batch than
+  the slow one
+
 ### Requirement: The read-ahead bound is not part of the public surface
 
 The value of the read-ahead window SHALL NOT be exported from the package, and
@@ -371,7 +413,7 @@ of every other bound whose effect is observable but whose mechanism is not
 selectable — `find_any()`'s choice of element is observable and specified, and
 is likewise not exposed as a setting.
 
-`PROCESSES` SHALL remain exported and is unaffected by this requirement; it
+`WORKERS` SHALL remain exported and is unaffected by this requirement; it
 names a concept with a Java counterpart, while the read-ahead window does not.
 
 #### Scenario: No public name exposes the bound

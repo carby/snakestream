@@ -32,6 +32,47 @@ oversight rather than a decision. Filed as five and not one batched entry: they
 share a shape only at the surface (see that change's design.md, decision 6), and
 whoever picks them up should make the batching call themselves.
 
+**Make combiners mean something**, moved here 2026-09-04 by
+`fork-join-executor-and-spliterator` (see Done) — both of them, in this order.
+`collect(supplier, accumulator, combiner)`'s parameter already ships and is
+never invoked, which README's row states, so it would have to *start* doing
+something. `Stream.reduce(identity, accumulator, combiner)` does not exist at
+all, so it would have to be *added* — and adding it inert first is the cheaper
+option this item deliberately does not take. **No longer decision-blocked**:
+the item sat in **Later** behind two prerequisites, real parallelism and
+`spliterator()`, and both are resolved (see the Later section's note). Three
+findings from the 2026-09-01 exploration that first scoped this, carried
+forward so they are not re-derived. **(a) The combiner is a declaration, not a
+parameter.** `reduce()`'s 2-arg form assumes nothing about its accumulator and
+so folds strictly in encounter order (`stream.py`'s own comment says as much);
+passing a combiner is the caller asserting associativity, and it is the only
+channel through which that can ever be said. It is also the only operation
+that can merge two *widened* accumulations — `Accumulator` is `(U, T) -> U`
+and cannot combine two `U`s — so no concurrent fold of a widened type is
+expressible without it. **(b) Java's partitioning argument now transfers,
+where it didn't before.** Java may combine on associativity alone because
+`Spliterator` splits into *contiguous* ranges. The old racing executor did not
+split, it stole: branches pulled from one shared iterator under a lock, so
+their partitions interleaved, and combining interleaved partials would have
+demanded *commutativity*, which Java does not require — a divergence in
+observable API behaviour the guiding principle would have ruled out. The
+fork-join executor's batches, dispatched via `spliterator()`, are contiguous,
+so this objection is gone: combining them on associativity alone is now
+correct in the same shape Java relies on. **(c) The `unordered()`-only
+fallback is superseded, not merely unneeded.** It was recorded as a shape
+needing neither prerequisite — partition only under `unordered()`, sound on
+associativity alone since the caller had already released encounter order —
+but it also overturned the (now-outdated) architectural claim that "each
+racing branch owns its own sink chain, so there is no single chain to fuse a
+terminal onto"; `fork-join-executor-and-spliterator`'s `stream-execution-model`
+spec delta already re-examined that claim for `value()`'s generic form and
+found the fused form still doesn't apply, for a different reason — each
+batch's chain is its own instance, torn down per batch, not one a terminal
+could share. Actually wiring the combiner up needs its own primitive in
+`execution.py` regardless of which of (a)-(c) it takes; whoever picks this up
+should re-read that delta before assuming (c)'s conclusion. See
+`openspec/changes/archive/2026-08-17-add-collect-supplier-accumulator-combiner`.
+
 ### Surfaced 2026-09-02, by the `sort-mixed-lane-by-successive-passes` read
 
 One smaller finding from the same pass over `src/`, recorded rather than
@@ -40,6 +81,12 @@ scaffolded because the sort item was the one worth taking first. Not claimed.
 not a re-proposal of anything in the rejection log.
 
 **1. `_guarded()` re-asks a question decided at composition, once per pull.**
+**Moot as of `fork-join-executor-and-spliterator` (2026-09-04, see Done):**
+`_guarded()` and `race_through()` are both deleted — the racing executor they
+belonged to no longer exists, replaced by the fork-join executor built on
+`spliterator()`. Left here rather than deleted outright so a reader does not
+wonder whether the finding was ever recorded.
+
 `if window is None` is checked on every element, guarding two nearly-disjoint
 loop bodies inside one `while True`, with only the `finally` genuinely shared.
 The answer never changes for the life of the generator: `race_through()` passes
@@ -174,13 +221,26 @@ depends on. Nothing blocks it; nothing yet demands it either.
 Bigger, structural — needs explicit buy-in before starting since it changes a
 core semantic.
 
+**Resolved 2026-09-04 by `fork-join-executor-and-spliterator` (see Done):**
+three rows formerly here — real parallelism, `spliterator()`, and the
+combiners those two gated — are gone from this table. `spliterator()` is
+implemented. `.parallel()` runs on real OS threads now, and delivers genuine
+CPU parallelism on the free-threaded build (3.14t, PEP 779); the
+`ProcessPoolExecutor`/pickling blocker the old real-parallelism row described
+never applied to a thread-based design, since nothing crosses a process
+boundary. Full multiprocess parallelism is not implemented and nobody has
+asked for it now that threads deliver the real thing on the free-threaded
+build; if it resurfaces, it is a fresh decision, not a continuation of this
+row, so it is not re-filed here speculatively. The combiner item is no longer
+sequenced behind a decision — `spliterator()`'s contiguous decomposition,
+its load-bearing prerequisite, is shipped — so it moved to **Now**, see
+**Queued changes**; that entry carries the (a)/(b)/(c) findings the old row
+here recorded.
+
 | Item | Why later |
 |---|---|
-| **Implement real (multiprocess) parallelism for `.parallel()` / `ParallelStream` / `PROCESSES`** — today it's just `asyncio` tasks racing over a shared generator (I/O-bound only, GIL-bound, no multiprocessing). Decided to keep the `.parallel()`/`PROCESSES` naming as-is (see README) rather than rename to the more accurate `.concurrent()`/`CONCURRENCY`, specifically so that *if* real parallelism is ever implemented under the same names, it's not a second breaking rename. | No concrete use case for true CPU parallelism has come up yet, and the path there is blocked on a real problem, not just unscoped effort: a `ProcessPoolExecutor`-backed implementation needs to serialize the mapper/predicate/comparator/accumulator/combiner across the process boundary, and stdlib `pickle` can't handle lambdas or local closures (the idiomatic way to call every op in this library), can't pickle generators/async generators at all (so the source itself can never be shipped whole), and even picklable *sync* callables don't solve it since async user callables would need each worker to bootstrap its own event loop rather than just running a function. Revisit only once there's both a concrete need and an answer for lambdas/closures across the process boundary (`cloudpickle`/`dill`, or a restricted sync-only picklable-callable mode) and for running async user callables inside a worker process. **The executor-value redesign is done** (see **Done**), which is the enabler this entry used to point forward to: real parallelism is now *a third executor* implementing `elements()`/`value()`, not a third subclass, and `execution.py` is the natural owner for whatever has to cross the process boundary. It does not solve the pickling blocker. The `ParallelStream` name in this item's title is retired; the mode is now `RACING`, built from the private `_Racing` executor class (`name-by-visibility-not-underscore`, 2026-09-03). |
-| **`BaseStream.spliterator()`** — Java's parallel-decomposition iterator, used by `parallelStream()` to split a source into chunks shared threads can each work over. | Depends on the item above: Java's `Spliterator` assumes shared-memory thread decomposition, which only becomes meaningful once real (multiprocess) partitioned execution is decided — until then there's nothing for it to expose, and it may end up intentionally-skipped rather than implemented. Moved down from **Now**, where it was flagged as decision-blocked rather than ready to build. **Something now depends on it (2026-09-01):** the combiner row below is sequenced behind this one, because contiguous decomposition is exactly what makes an associative combine correct and what `race_through()`'s shared-source stealing cannot supply. If this row does end up intentionally-skipped, that row needs re-deciding rather than inheriting the skip. |
-| **Make combiners mean something** — both of them, and in this order: **after** real multiprocess parallelism and `spliterator()`, the two rows above. Two halves in different states. `collect(supplier, accumulator, combiner)`'s parameter already ships and is never invoked, which README's row states, so it would have to *start* doing something. `Stream.reduce(identity, accumulator, combiner)` does not exist at all, so it would have to be *added* — and adding it inert first is the cheaper option this row deliberately does not take. **Re-merged here 2026-09-01**, having been split on 2026-08-31 by `enumerate-java-8-parity-gaps` (which was right that the two are in different states, and filed the `reduce()` half as gap 1 in **Now**). What re-merged them is that the question is now the same one for both: not "is an inert parameter worth the signature" but "what would make it live", and that has one answer serving both. | **Sequenced, not merely blocked** — the decision this row needs is already taken, and it is that this waits for the two rows above. Three findings from the 2026-09-01 exploration, recorded so they are not re-derived. **(a) The combiner is a declaration, not a parameter.** `reduce()`'s 2-arg form assumes nothing about its accumulator and so folds strictly in encounter order (`stream.py`'s own comment says as much); passing a combiner is the caller asserting associativity, and it is the only channel through which that can ever be said. It is also the only operation that can merge two *widened* accumulations — `Accumulator` is `(U, T) -> U` and cannot combine two `U`s — so no concurrent fold of a widened type is expressible without it. **(b) Java's partitioning argument does not transfer.** Java may combine on associativity alone because `Spliterator` splits into *contiguous* ranges. `race_through()` does not split, it steals: branches pull from one shared iterator under a lock, so their partitions interleave, and combining interleaved partials demands *commutativity* — which Java does not require. That is a divergence in observable API behaviour, which the guiding principle rules out. Hence the sequencing behind `spliterator()`: contiguous decomposition is the missing prerequisite, and it is that row's subject. **(c) There is a correct shape that needs neither** — partition only under `unordered()`, where the caller has already released encounter order and interleaved merging is sound on associativity alone. It is recorded as a fallback, not a plan: its payoff is confined to a slow *accumulator*, and the common shape (`.parallel().map(slow).reduce(0, add)`) already races the expensive half today with only the cheap fold serialized. It would also overturn the architectural claim in CLAUDE.md that "each racing branch owns its own sink chain, so there is no single chain to fuse a terminal onto", needing a fifth primitive in `execution.py` and a partition protocol on `TerminalSink`. Anyone taking it should measure the slow-accumulator curve first. See `openspec/changes/archive/2026-08-17-add-collect-supplier-accumulator-combiner`. |
-| **Java 9 `Stream` additions** — `takeWhile(predicate)`, `dropWhile(predicate)`, `Stream.ofNullable(t)`, and the 3-arg `iterate(seed, hasNext, next)` overload (distinct from the already-implemented 2-arg `iterate(seed, next)`). | **No longer sequencing-blocked, and arguably no longer a *Later* item.** README gates Java 9 on "some sort of feature parity with Java 8"; `enumerate-java-8-parity-gaps` (2026-08-31, **Done**) met that gate and enumerated the remainder as five non-structural gaps, now queued in **Now**. The only Java 8 work genuinely blocked is `spliterator()` and `collect()`'s combiner, both parked behind the real-parallelism decision above — so Java 9 cannot wait on them without waiting forever. What keeps it here is that it is unstarted and unscoped, not that anything blocks it; it competes with the five gaps on merit. |
-| **Bound speculation separately from read-ahead** — one counter serves memory held by the reorder buffer, latency behind a straggler, and how many elements a chain callable runs on under a short-circuiting terminal, and under the third it bounds the wrong thing: `.peek(fn).find_first()` fills the whole window behind an outstanding index 0 and throws away everything but the winner. The shape would be to stop starting new groups past an outstanding candidate the terminal could settle on, bounding in-flight work near the worker count — already the usual regime under uniform latency, per `collapse-find-first-onto-barrier`'s correction. | **Moved here 2026-09-01, from Now → Queued changes where `bound-in-flight-work-per-worker` first filed it.** It is decision-blocked, which is what this bucket is for: the policy is a *trade* — branches that stop pulling idle instead — and nobody has decided that trade is wanted. It also needs a signal path that does not exist, since `race_through()` cannot see that its terminal short-circuits: that lives in the sink's `cancellation_requested()`, downstream of the window. Figures to beat, already recorded: `filter`/`flat_map` waste 3.11x/3.21x invocations, `map` 0.96x — so it helps the shapes where speculation runs *in front of* the element that matters and does nothing where it runs alongside. `bound-in-flight-work-per-worker` (2026-09-01, **Done**) is what made the case legible while deliberately not taking it; that change renamed a constant and altered no behaviour, this one is behaviour and nothing else. |
+| **Java 9 `Stream` additions** — `takeWhile(predicate)`, `dropWhile(predicate)`, `Stream.ofNullable(t)`, and the 3-arg `iterate(seed, hasNext, next)` overload (distinct from the already-implemented 2-arg `iterate(seed, next)`). | **No longer sequencing-blocked, and arguably no longer a *Later* item.** README gates Java 9 on "some sort of feature parity with Java 8"; `enumerate-java-8-parity-gaps` (2026-08-31, **Done**) met that gate and enumerated the remainder as five non-structural gaps, now queued in **Now**. `spliterator()` is shipped and `collect()`'s combiner moved to **Now** (2026-09-04, `fork-join-executor-and-spliterator`) — the last of the Java 8 work genuinely blocked on the resolved real-parallelism row above — so nothing structural blocks Java 9 either any more. What keeps it here is that it is unstarted and unscoped, not that anything blocks it; it competes with the queued items on merit. |
+| **Bound speculation separately from read-ahead** — one counter serves memory held by the reorder buffer, latency behind a straggler, and how many elements a chain callable runs on under a short-circuiting terminal, and under the third it bounds the wrong thing: `.peek(fn).find_first()` fills the whole window behind an outstanding index 0 and throws away everything but the winner. | **Moot as of `fork-join-executor-and-spliterator` (2026-09-04, see Done).** The read-ahead window this row is about — `_guarded()`'s slot protocol under `race_through()` — is deleted along with the racing executor; fork-join bounds `find_first()`'s over-processing by the first round's batch size instead (`stream-find-first`'s "may invoke a chain's callables more than once" requirement, restated for the new mechanism). Left here rather than deleted outright, on the same reasoning as the `_guarded()` finding above. |
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should be declared permanent. **Narrowed 2026-08-31: the behaviour is now documented in README's `of()` row.** That was a defect independent of this decision — the row described Java's semantics, so the divergence used by every example in the file was invisible to a reader. Documenting it does not close this item; what remains is the call on whether to keep it. Surfaced 2026-08-20 in the same code-quality read that produced the first batch of **Now** items, all since closed. |
 
 ## Done

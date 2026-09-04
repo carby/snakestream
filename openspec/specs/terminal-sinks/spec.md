@@ -1,6 +1,6 @@
 ## Purpose
 
-Defines how a stream's terminal operations execute: as terminal sinks fed by the same push protocol the intermediate operations use, driven by a loop that pushes source elements through the chain and returns the terminal's finished result — rather than pulling elements out of a composed `AsyncGenerator`. Covers what a short-circuiting terminal is entitled to do (request cancellation so upstream operations stop) and which terminals still go through a generator. It no longer covers an ordered single-flight drive: that existed for `for_each_ordered()` and `find_first()`, and both now obtain encounter order from the racing executor's delivery barrier instead, which the `racing-encounter-order` capability specifies. No terminal names an executor for itself.
+Defines how a stream's terminal operations execute: as terminal sinks fed by the same push protocol the intermediate operations use, driven by a loop that pushes source elements through the chain and returns the terminal's finished result — rather than pulling elements out of a composed `AsyncGenerator`. Covers what a short-circuiting terminal is entitled to do (request cancellation so upstream operations stop) and which terminals still go through a generator. It no longer covers an ordered single-flight drive: that existed for `for_each_ordered()` and `find_first()`, and both now obtain encounter order from the fork-join executor's delivery barrier instead, which the `racing-encounter-order` capability specifies. No terminal names an executor for itself.
 
 ## Requirements
 
@@ -79,18 +79,18 @@ terminal's `result()` SHALL be the result fixed before the stop.
 
 ### Requirement: A parallel stream's terminal accumulates across all branches
 
-When a terminal sink is driven under the racing executor, it SHALL receive every
-element that the racing branches produce, exactly once each, and SHALL produce
-the same result the same terminal produces under the sequential executor for any
-order-independent operation.
+When a terminal sink is driven under the fork-join executor, it SHALL receive
+every element that the batches produce, exactly once each, and SHALL produce
+the same result the same terminal produces under the sequential executor for
+any order-independent operation.
 
-A short-circuiting terminal under the racing executor SHALL stop consuming the
-race once its result is fixed, and SHALL leave no in-flight branch task
-uncancelled or its exception unretrieved.
+A short-circuiting terminal under the fork-join executor SHALL stop consuming
+once its result is fixed, and SHALL leave no in-flight batch uncancelled or its
+exception unretrieved.
 
-Cancellation under the racing executor SHALL reach the loop consuming the race,
-but NOT the sinks inside an in-flight branch: each branch holds its own sink
-chain and the terminal is not a member of it. A branch's own `limit()` or
+Cancellation under the fork-join executor SHALL reach the loop dispatching
+batches, but NOT the sinks inside an in-flight batch: each batch holds its own
+sink chain and the terminal is not a member of it. A batch's own `limit()` or
 `flat_map()` therefore SHALL NOT be expected to stop on a terminal's behalf.
 
 #### Scenario: A parallel terminal sees every element once
@@ -99,7 +99,7 @@ chain and the terminal is not a member of it. A branch's own `limit()` or
 
 #### Scenario: A parallel short-circuiting terminal tears down cleanly
 - **WHEN** `any_match(predicate)` is called on a parallel stream and an early element satisfies `predicate`
-- **THEN** it returns `True` and no unhandled exception or warning escapes from the abandoned racing branches
+- **THEN** it returns `True` and no unhandled exception or warning escapes from the abandoned batches
 
 ### Requirement: Operations that need a generator use the executor's element-producing form
 

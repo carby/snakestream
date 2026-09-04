@@ -41,11 +41,11 @@ class Characteristics(Enum):
     `UNORDERED` is a declaration a collector makes about itself - that any two
     orderings of the same elements collect to an equal result - rather than an
     instruction to the pipeline. Stream.collect() reads it, and it is the only
-    reader: under RACING it decides whether the executor owes the collector a
-    reorder barrier before delivery. Declaring it never changes the value a
-    correct collector produces; it removes the head-of-line blocking and the
-    reorder buffer that producing it in encounter order would cost. Under
-    SEQUENTIAL it has no effect at all.
+    reader: under the parallel executor it decides whether split_point() owes
+    the collector an ordered pass before delivery. Declaring it never changes
+    the value a correct collector produces; it removes the wait that
+    producing it in encounter order would cost. Under SEQUENTIAL it has no
+    effect at all.
 
     Equal means `==` on the collected result, as that result's own type
     defines it, and nothing stronger. A collector declaring `UNORDERED` makes
