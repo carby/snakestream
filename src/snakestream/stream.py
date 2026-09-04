@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from copy import copy
 from inspect import isawaitable, iscoroutinefunction
-from typing import TYPE_CHECKING, Any, Generic, cast, overload
+from typing import TYPE_CHECKING, Any, cast, overload
 from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Coroutine, Iterable
 
 from snakestream.callable_dispatch import is_async_callable
@@ -33,7 +33,6 @@ from snakestream.terminals import (
 )
 from snakestream.type import (
     R,
-    T,
     Accumulator,
     BiConsumer,
     BinaryOperator,
@@ -100,7 +99,7 @@ async def _concat(a: AsyncGenerator, b: AsyncGenerator) -> AsyncGenerator:
         yield j
 
 
-class Stream(Generic[T]):
+class Stream[T]:
     def __init__(self, source: Any, close_handlers: list[CloseHandler] | None = None) -> None:
         self._source: AsyncGenerator[T, None] = _accept(source) or _normalize(source)
         self._chain: list[Op] = []
