@@ -286,7 +286,7 @@ class _BareAsyncIter:
     def __init__(self, n: int) -> None:
         self._it = iter(range(n))
 
-    def __aiter__(self) -> "_BareAsyncIter":
+    def __aiter__(self) -> _BareAsyncIter:
         return self
 
     async def __anext__(self) -> int:

@@ -505,7 +505,7 @@ class _CountingSource:
         self._it = iter(range(n))
         self.closes = 0
 
-    def __aiter__(self) -> "_CountingSource":
+    def __aiter__(self) -> _CountingSource:
         return self
 
     async def __anext__(self) -> int:
@@ -564,7 +564,7 @@ class _NoCloseSource:
     def __init__(self, n: int) -> None:
         self._it = iter(range(n))
 
-    def __aiter__(self) -> "_NoCloseSource":
+    def __aiter__(self) -> _NoCloseSource:
         return self
 
     async def __anext__(self) -> int:
