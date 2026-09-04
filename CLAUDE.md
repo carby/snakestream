@@ -21,9 +21,10 @@ uv run ruff format --check .               # verify formatting
 uv run ruff format .                       # apply formatting
 uv run ty check src                        # static type check
 uv run --with pip-audit pip-audit          # dependency vulnerability audit
+uv run --python 3.14t pytest               # run the suite on the free-threaded build (installs 3.14t via uv if not already present)
 ```
 
-CI (`.github/workflows/check.yml`) runs the ruff checks, `uv run pytest`, `ty`, `pip-audit` and the coverage gate on Python 3.14, the sole supported version; all five run unconditionally, since there is no other leg to distinguish. Match that when validating changes.
+CI (`.github/workflows/check.yml`) runs `code_check` on two Python 3.14 legs — GIL-enabled (`3.14`) and free-threaded (`3.14t`, PEP 779). The ruff checks and `uv run pytest` run on both legs; `ty`, `pip-audit` and the coverage gate run on the GIL-enabled leg only, since none of the three varies by interpreter build. `install_smoke_test` stays at the single `3.14` leg — the package is pure Python with no dependencies, so a free-threaded leg there would install a byte-identical artifact. Match that when validating changes.
 
 ## Naming
 
