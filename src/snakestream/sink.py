@@ -235,6 +235,29 @@ class TerminalSink(Sink[T]):
     def result(self) -> Any:
         return self._result
 
+    def can_partition(self) -> bool:
+        """Whether this terminal supports the parallel executor's partition
+        protocol: spawning a peer accumulation per batch and merging peers
+        back in. False by default, so a terminal that does not override
+        new_partition()/merge_from() is untouched by partitioning (design
+        decision 1, make-combiners-live) - the fork-join executor falls
+        through to today's single-container _drain() path for it."""
+        return False
+
+    def new_partition(self) -> TerminalSink[T]:
+        """A fresh peer sink, configured the same way as this one, ready to
+        accumulate its own batch into its own container. Only called where
+        can_partition() is True; the base raises because the base's
+        can_partition() already declines, so nothing should reach this."""
+        raise NotImplementedError
+
+    async def merge_from(self, peer: TerminalSink[T]) -> None:
+        """Fold `peer`'s accumulated container into this sink's, in place.
+        Called once per batch, in batch order (design decision 2), never
+        concurrently - so an implementation needs no locking of its own.
+        Only called where can_partition() is True."""
+        raise NotImplementedError
+
 
 class UnseededSink(TerminalSink[T]):
     """A terminal that starts with no value: _create_container() is UNSET and

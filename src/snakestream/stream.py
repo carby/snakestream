@@ -538,13 +538,13 @@ class Stream[T]:
                 "collect() requires a Collector (see snakestream.collector.Collector), "
                 "or to_generator for a lazy, streaming result"
             )
-        # 3-arg mutable reduction: supplier/accumulator, sync or async, are
-        # exactly a Collector's supplier/accumulator. combiner is accepted for
-        # signature parity with Java's Stream.collect(Supplier, BiConsumer,
-        # BiConsumer) but is never invoked: collect() always folds over a
-        # single composed AsyncGenerator, sequential or parallel, with no
-        # independently accumulated partitions to merge - the same posture
-        # reduce() already has under .parallel().
+        # 3-arg mutable reduction: supplier/accumulator/combiner, sync or
+        # async, are exactly a Collector's supplier/accumulator/combiner.
+        # Under .parallel() with a chain the executor can partition, combiner
+        # is invoked to merge each batch's independently accumulated
+        # container into the next (parallel-reduction capability); under
+        # .sequential(), or wherever partitioning does not apply, it is
+        # never invoked, because there is only ever one container.
         supplier, accumulator, combiner = args
         collector = Collector(supplier, accumulator, combiner)
         return self._evaluate(CollectorSink(collector), collector.demand())
@@ -555,14 +555,25 @@ class Stream[T]:
     @overload
     async def reduce(self, accumulator: BinaryOperator[T]) -> T | None: ...
 
-    async def reduce(self, identity: Any = UNSET, accumulator: Any = UNSET) -> Any:
+    @overload
+    async def reduce(self, identity: R, accumulator: Accumulator[T, R], combiner: BinaryOperator[R]) -> R: ...
+
+    async def reduce(self, identity: Any = UNSET, accumulator: Any = UNSET, combiner: Any = UNSET) -> Any:
         if accumulator is UNSET:
             # Called as reduce(accumulator): the single positional arg is the
             # accumulator, and the identity is seeded from the stream itself.
             identity, accumulator = UNSET, identity
+        # combiner is UNSET for both the one- and two-argument forms, and
+        # None is what ReduceSink.can_partition() reads as "not supplied" -
+        # arity alone decides which overload this call is, exactly as it
+        # already did between one and two arguments.
+        #
         # the accumulator is not required to be associative or commutative
-        # here, so the fold is over encounter order or it is over nothing
-        return await self._evaluate(ReduceSink(identity, accumulator), OrderDemand.IF_ORDERED)
+        # here, so the fold is over encounter order or it is over nothing;
+        # a supplied combiner carries its own contract instead, stated on
+        # parallel-reduction rather than here.
+        reduce_combiner = None if combiner is UNSET else combiner
+        return await self._evaluate(ReduceSink(identity, accumulator, reduce_combiner), OrderDemand.IF_ORDERED)
 
     async def for_each(self, consumer: Consumer[T]) -> None:
         # explicitly order-blind, as Java's forEach() is: for_each_ordered() is

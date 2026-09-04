@@ -106,13 +106,22 @@ async def test_collector_combiner_not_invoked_sequential() -> None:
 
 
 @pytest.mark.asyncio
-async def test_collector_combiner_not_invoked_parallel() -> None:
-    def raising_combiner(a: list, b: list) -> list:
-        raise AssertionError("combiner must not be called")
+async def test_collector_combiner_invoked_parallel() -> None:
+    # make-combiners-live: a Collector supplying a combiner is partitioned
+    # under .parallel() (task 1.1's protocol via CollectorSink), so this is
+    # now the case that exercises it rather than the case that forbids it.
+    calls = 0
 
-    collector = Collector(list, lambda c, e: c.append(e), combiner=raising_combiner)
-    actual = await Stream.of([1, 2, 3, 4]).parallel().collect(collector)
-    assert sorted(actual) == [1, 2, 3, 4]
+    def combiner(a: list, b: list) -> list:
+        nonlocal calls
+        calls += 1
+        a.extend(b)
+        return a
+
+    collector = Collector(list, lambda c, e: c.append(e), combiner=combiner)
+    actual = await Stream.of(list(range(50))).parallel().collect(collector)
+    assert sorted(actual) == list(range(50))
+    assert calls > 0
 
 
 @pytest.mark.asyncio

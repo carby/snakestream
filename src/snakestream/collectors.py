@@ -6,6 +6,7 @@ edge runs one way, collectors -> collector, never back."""
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import partial
 from inspect import isawaitable
 from typing import Any, NamedTuple, cast, overload
 from collections.abc import Awaitable, Callable
@@ -45,12 +46,26 @@ from snakestream.type import (
 _ORDER_BLIND = (Characteristics.UNORDERED,)
 
 
+def _extend_list(a: list[Any], b: list[Any]) -> list[Any]:
+    # Shared by to_list() and joining(), whose accumulation is the same
+    # list-of-parts shape: merging two contiguous partitions in batch order
+    # is exactly list.extend(), and list.extend() returns None where a
+    # combiner must return the merged container (parallel-reduction's
+    # caller-contract requirement) - this wraps it rather than passing the
+    # bound method directly.
+    a.extend(b)
+    return a
+
+
 # Every name in this module is a factory, like Java's Collectors.toList().
 # A Collector holds no per-collection state, so the instance one call returns
 # is still safe to reuse across collections - the factory shape is about one
 # consistent rule for the public surface, not about state.
 def to_list() -> Collector[T, list[T], list[T]]:
-    return Collector(list, list.append)
+    # Merging two contiguous partitions' lists is associative - append is a
+    # special case of extend, so list concatenation in batch order is exactly
+    # what a sequential fold already does.
+    return Collector(list, list.append, combiner=_extend_list)
 
 
 # The default downstream for grouping_by()/partitioning_by(), named here rather
@@ -62,21 +77,28 @@ def to_list() -> Collector[T, list[T], list[T]]:
 _TO_LIST: Collector[Any, list[Any], list[Any]] = to_list()
 
 
+def _union_set(a: set[Any], b: set[Any]) -> set[Any]:
+    a.update(b)
+    return a
+
+
 def to_set() -> Collector[T, set[T], set[T]]:
     # The only factory in this module whose Java counterpart carries
     # UNORDERED (CH_UNORDERED_ID). The declaration is true of the behaviour,
     # not merely asserted: two sets holding the same members compare equal
     # irrespective of the order either was built in, which is what UNORDERED
     # promises. It promises nothing about iteration order, and a set's does
-    # depend on insertion history.
-    return Collector(set, set.add, characteristics=(Characteristics.UNORDERED,))
+    # depend on insertion history. Set union is associative independently of
+    # that, and is declared combinable on that ground alone - the two
+    # properties are independent (parallel-reduction's own requirement).
+    return Collector(set, set.add, combiner=_union_set, characteristics=(Characteristics.UNORDERED,))
 
 
 def joining(delimiter: str = "", prefix: str = "", suffix: str = "") -> Collector[str, list[str], str]:
     def _finish(parts: list[str]) -> str:
         return prefix + delimiter.join(parts) + suffix
 
-    return Collector(list, list.append, finisher=_finish)
+    return Collector(list, list.append, combiner=_extend_list, finisher=_finish)
 
 
 def counting() -> Collector[Any, Any, int]:
@@ -88,10 +110,14 @@ def counting() -> Collector[Any, Any, int]:
     def _accumulate(container: Box, element: Any) -> None:
         container.value += 1
 
+    def _combine(a: Box, b: Box) -> Box:
+        a.value += b.value
+        return a
+
     def _finish(container: Box) -> int:
         return container.value
 
-    return Collector(lambda: Box(0), _accumulate, finisher=_finish, characteristics=_ORDER_BLIND)
+    return Collector(lambda: Box(0), _accumulate, combiner=_combine, finisher=_finish, characteristics=_ORDER_BLIND)
 
 
 # summing_int/summing_long and averaging_int/averaging_long/averaging_double
@@ -114,6 +140,7 @@ def _summing(
     seed: int | float,
     coerce: Callable[[Any], Any] | None,
     characteristics: tuple[Characteristics, ...] = (),
+    combinable: bool = True,
 ) -> Collector[Any, _SumBox, Any]:
     # coerce is None means "add the mapped value as-is", not "coerce with an
     # identity function": the int/long path must preserve whatever numeric type
@@ -143,7 +170,16 @@ def _summing(
     def _finish(container: _SumBox) -> Any:
         return container.total
 
-    return Collector(_supply, _accumulate, finisher=_finish, characteristics=characteristics)
+    def _combine(a: _SumBox, b: _SumBox) -> _SumBox:
+        a.total += b.total
+        return a
+
+    # combinable is False only for summing_double, whose seed=0.0 routes
+    # through this same body (design decision 4, make-combiners-live): the
+    # int/long callers below leave it at the default.
+    return Collector(
+        _supply, _accumulate, combiner=_combine if combinable else None, finisher=_finish, characteristics=characteristics
+    )
 
 
 @dataclass(slots=True)
@@ -196,7 +232,7 @@ def summing_long(mapper: NumberMapper) -> Collector[Any, Any, int]:
 # them as closed rather than re-weigh them. averaging_int/averaging_long are
 # included despite their int inputs, because each divides a float accumulator.
 def summing_double(mapper: NumberMapper) -> Collector[Any, Any, float]:
-    return _summing(mapper, 0.0, float)
+    return _summing(mapper, 0.0, float, combinable=False)
 
 
 def averaging_int(mapper: NumberMapper) -> Collector[Any, Any, float]:
@@ -229,11 +265,22 @@ class _SummaryBox:
     checked: bool = False
 
 
+def _combine_summary(a: _SummaryBox, b: _SummaryBox) -> _SummaryBox:
+    a.count += b.count
+    a.total += b.total
+    if b.least is not None and (a.least is None or b.least < a.least):
+        a.least = b.least
+    if b.greatest is not None and (a.greatest is None or b.greatest > a.greatest):
+        a.greatest = b.greatest
+    return a
+
+
 def _summarizing(
     mapper: NumberMapper,
     seed: int | float,
     coerce: Callable[[Any], Any] | None,
     characteristics: tuple[Characteristics, ...] = (),
+    combinable: bool = True,
 ) -> Collector[Any, _SummaryBox, SummaryStatistics]:
     # characteristics is stated per caller, as in _summing(): sharing this body
     # must not let summarizing_double() inherit summarizing_int()'s mark.
@@ -263,7 +310,17 @@ def _summarizing(
         average = container.total / container.count if container.count else 0.0
         return SummaryStatistics(container.count, container.total, container.least, container.greatest, average)
 
-    return Collector(_supply, _accumulate, finisher=_finish, characteristics=characteristics)
+    # combinable is False only for summarizing_double (design decision 4,
+    # make-combiners-live): summing_double carries the reason, and the sum
+    # field alone is enough to make the whole SummaryStatistics compare
+    # unequal under a different partitioning, however exact count/min/max are.
+    return Collector(
+        _supply,
+        _accumulate,
+        combiner=_combine_summary if combinable else None,
+        finisher=_finish,
+        characteristics=characteristics,
+    )
 
 
 # summarizing_int/summarizing_long declare UNORDERED, and the claim is only as
@@ -285,7 +342,7 @@ def summarizing_long(mapper: NumberMapper) -> Collector[Any, Any, SummaryStatist
 # field is enough to make the whole result compare unequal, however exact the
 # count/min/max fields beside it are.
 def summarizing_double(mapper: NumberMapper) -> Collector[Any, Any, SummaryStatistics]:
-    return _summarizing(mapper, 0.0, float)
+    return _summarizing(mapper, 0.0, float, combinable=False)
 
 
 @dataclass(slots=True)
@@ -293,6 +350,27 @@ class _ExtremumBox:
     found: Any = UNSET
     is_async: bool = False
     checked: bool = False
+
+
+async def _combine_extremum(comparator: Comparator[T], asc: bool, a: _ExtremumBox, b: _ExtremumBox) -> _ExtremumBox:
+    # Left-biased: a is the earlier partition in batch order, so a's found
+    # element is kept on a tie exactly as accept()'s own
+    # comparator(element, found) keeps the earlier-seen element - the case
+    # that proves combinable and UNORDERED are independent (design decision
+    # 4, make-combiners-live): this declines UNORDERED (the tie must follow
+    # encounter order) yet combines correctly, because a left-biased merge
+    # over contiguous partitions preserves that order.
+    if b.found is UNSET:
+        return a
+    if a.found is UNSET:
+        a.found = b.found
+        return a
+    sign = comparator(b.found, a.found)
+    if isawaitable(sign):
+        sign = await sign
+    if is_new_extremum(cast(int, sign), asc):
+        a.found = b.found
+    return a
 
 
 def _extremum(comparator: Comparator[T], asc: bool) -> Collector[T, _ExtremumBox, T | None]:
@@ -320,7 +398,7 @@ def _extremum(comparator: Comparator[T], asc: bool) -> Collector[T, _ExtremumBox
     def _finish(container: _ExtremumBox) -> T | None:
         return unseeded(container.found)
 
-    return Collector(_supply, _accumulate, finisher=_finish)
+    return Collector(_supply, _accumulate, combiner=partial(_combine_extremum, comparator, asc), finisher=_finish)
 
 
 def min_by(comparator: Comparator[T]) -> Collector[T, Any, T | None]:
@@ -338,6 +416,21 @@ class _ReduceBox:
     mapper_checked: bool = False
     op_is_async: bool = False
     op_checked: bool = False
+
+
+async def _combine_reduce(binary_operator: Any, a: _ReduceBox, b: _ReduceBox) -> _ReduceBox:
+    # Mirrors accept()'s own UNSET handling (the no-identity form has no
+    # seed, so an empty partition's acc stays UNSET and contributes nothing
+    # to the merge) - identical shape to accept()'s first-element seeding,
+    # one level up.
+    if b.acc is UNSET:
+        return a
+    if a.acc is UNSET:
+        a.acc = b.acc
+        return a
+    r, a.op_is_async, a.op_checked = classify_step(binary_operator, a.op_is_async, a.op_checked, a.acc, b.acc)
+    a.acc = await r if a.op_is_async else r
+    return a
 
 
 @overload
@@ -392,7 +485,7 @@ def reducing(identity: Any = UNSET, mapper: Any = UNSET, binary_operator: Any = 
     def _finish(container: _ReduceBox) -> Any:
         return unseeded(container.acc)
 
-    return Collector(_supply, _accumulate, finisher=_finish)
+    return Collector(_supply, _accumulate, combiner=partial(_combine_reduce, binary_operator), finisher=_finish)
 
 
 @dataclass(slots=True)
@@ -404,6 +497,18 @@ class _ToMapBox:
     value_checked: bool = False
     merge_is_async: bool = False
     merge_checked: bool = False
+
+
+def _combine_to_map(a: _ToMapBox, b: _ToMapBox) -> _ToMapBox:
+    # Only ever built when merge_function is None (see the combiner=
+    # argument on the Collector() this feeds): the same "raise on collision"
+    # rule the accumulator applies, applied once more across two partial
+    # maps instead of once per element.
+    for key, value in b.result.items():
+        if key in a.result:
+            raise IllegalStateException(f"Duplicate key: {key!r}")
+        a.result[key] = value
+    return a
 
 
 @overload
@@ -503,7 +608,13 @@ def to_map(
     # key IllegalStateException names can, under the parallel executor, once
     # two or more distinct collisions are in play and nothing orders their
     # arrival.
-    return Collector(_supply, _accumulate, finisher=_finish, characteristics=_ORDER_BLIND if merge_function is None else ())
+    return Collector(
+        _supply,
+        _accumulate,
+        combiner=_combine_to_map if merge_function is None else None,
+        finisher=_finish,
+        characteristics=_ORDER_BLIND if merge_function is None else (),
+    )
 
 
 @dataclass(slots=True)
@@ -571,6 +682,23 @@ def _check_downstream(downstream: Collector[Any, Any, Any]) -> None:
         raise StreamBuildException("downstream must be a Collector")
 
 
+async def _combine_groups(downstream: Collector[Any, Any, Any], a: _GroupBox, b: _GroupBox) -> _GroupBox:
+    # Shared by grouping_by() and partitioning_by(): merge each of b's group
+    # containers into a's counterpart by key, via the downstream's own
+    # combiner - a key seen only in b is copied across rather than merged,
+    # since a has nothing yet to merge it with. Only ever called where
+    # downstream.combiner is not None (the rule this module already applies
+    # to characteristics, applied once more to combinability).
+    combiner = downstream.combiner
+    assert combiner is not None  # only ever called where this holds
+    for key, group in b.groups.items():
+        if key in a.groups:
+            a.groups[key] = await maybe_await(combiner, a.groups[key], group)
+        else:
+            a.groups[key] = group
+    return a
+
+
 @overload
 def grouping_by(classifier: Mapper[T, R]) -> Collector[T, Any, dict[R, Any]]: ...  # pragma: no cover
 
@@ -619,6 +747,9 @@ def grouping_by(
     async def _accumulate(container: _GroupBox, element: T) -> None:
         await _group_into(container, classifier, downstream, element)
 
+    async def _combine(a: _GroupBox, b: _GroupBox) -> _GroupBox:
+        return await _combine_groups(downstream, a, b)
+
     def _finish(container: _GroupBox) -> Any:
         return _finish_groups(downstream, container.groups)
 
@@ -650,6 +781,7 @@ def grouping_by(
     return Collector(
         _supply,
         _accumulate,
+        combiner=_combine if downstream.combiner is not None else None,
         finisher=_finish,
         characteristics=() if supplied_factory else downstream.characteristics,
     )
@@ -677,10 +809,19 @@ def partitioning_by(
         # non-bool predicate result must land in the True bucket, as today.
         await _group_into(container, predicate, downstream, element, bool)
 
+    async def _combine(a: _GroupBox, b: _GroupBox) -> _GroupBox:
+        return await _combine_groups(downstream, a, b)
+
     def _finish(container: _GroupBox) -> Any:
         return _finish_groups(downstream, container.groups)
 
-    return Collector(_supply, _accumulate, finisher=_finish, characteristics=downstream.characteristics)
+    return Collector(
+        _supply,
+        _accumulate,
+        combiner=_combine if downstream.combiner is not None else None,
+        finisher=_finish,
+        characteristics=downstream.characteristics,
+    )
 
 
 @dataclass(slots=True)
@@ -714,9 +855,22 @@ def mapping(mapper: Mapper[T, R], downstream: Collector[R, Any, Any]) -> Collect
         finisher = downstream.finisher
         return container.container if finisher is None else finisher(container.container)
 
+    async def _combine(a: _MappingBox, b: _MappingBox) -> _MappingBox:
+        combiner = downstream.combiner
+        assert combiner is not None  # only ever wired in where this holds
+        a.container = await maybe_await(combiner, a.container, b.container)
+        return a
+
     # The mapper runs per element and the result is downstream's unchanged, so
-    # every trait of that result - including UNORDERED - is downstream's too.
-    return Collector(_supply, _accumulate, finisher=_finish, characteristics=downstream.characteristics)
+    # every trait of that result - including UNORDERED and combinability - is
+    # downstream's too.
+    return Collector(
+        _supply,
+        _accumulate,
+        combiner=_combine if downstream.combiner is not None else None,
+        finisher=_finish,
+        characteristics=downstream.characteristics,
+    )
 
 
 @dataclass(slots=True)
@@ -750,13 +904,29 @@ def collecting_and_then(downstream: Collector[T, Any, R], finisher: Finisher[R, 
     def _finish(container: _CollectAndThenBox) -> Any:
         return _finish_collecting_and_then(downstream, finisher, container.container)
 
+    async def _combine(a: _CollectAndThenBox, b: _CollectAndThenBox) -> _CollectAndThenBox:
+        # Merges the downstream's container, before finisher ever runs -
+        # finisher applies once, in _finish, to the container that survived
+        # every merge, not once per partition.
+        combiner = downstream.combiner
+        assert combiner is not None  # only ever wired in where this holds
+        a.container = await maybe_await(combiner, a.container, b.container)
+        return a
+
     # finisher runs once on the finished result, not per element, so it
     # cannot introduce a dependence on arrival order - downstream's
-    # characteristics carry over unchanged. Java additionally clears
-    # IDENTITY_FINISH here, since adding a finisher is what makes the finish
-    # non-identity; not done here because that member does not exist yet -
-    # whoever adds it adds the clearing with it.
-    return Collector(_supply, _accumulate, finisher=_finish, characteristics=downstream.characteristics)
+    # characteristics carry over unchanged, and so does combinability: this
+    # merges downstream's container and lets finisher run once at the end.
+    # Java additionally clears IDENTITY_FINISH here, since adding a finisher
+    # is what makes the finish non-identity; not done here because that
+    # member does not exist yet - whoever adds it adds the clearing with it.
+    return Collector(
+        _supply,
+        _accumulate,
+        combiner=_combine if downstream.combiner is not None else None,
+        finisher=_finish,
+        characteristics=downstream.characteristics,
+    )
 
 
 def to_collection(collection_supplier: Supplier[C]) -> Collector[Any, C, C]:
@@ -766,4 +936,15 @@ def to_collection(collection_supplier: Supplier[C]) -> Collector[Any, C, C]:
     def _accumulate(container: C, element: Any) -> None:
         container.add(element)
 
-    return Collector(_supply, _accumulate)
+    def _combine(a: C, b):
+        # C is only guaranteed add(), not addAll()/extend() - Java's
+        # toCollection() combiner relies on Collection.addAll(), which our
+        # _SupportsAdd protocol has no counterpart for. Iterating b and
+        # add()-ing each element is the one operation available generically,
+        # and holds for every container this factory is actually used with
+        # (list, set, deque, and any other __iter__-plus-add() type).
+        for item in b:
+            a.add(item)
+        return a
+
+    return Collector(_supply, _accumulate, combiner=_combine)

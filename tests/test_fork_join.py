@@ -132,12 +132,12 @@ async def test_an_order_blind_terminal_does_not_wait_on_a_slow_batch_elsewhere()
             i += 1
 
     async def one_slow_element(n: int) -> int:
-        await asyncio.sleep(2 if n == 0 else 0.0)
+        await asyncio.sleep(0.4 if n == 0 else 0.0)
         return n
 
     result = await asyncio.wait_for(
         Stream.of(endless()).parallel().map(one_slow_element).any_match(lambda n: n == 17),
-        timeout=1,
+        timeout=0.2,
     )
 
     assert result is True

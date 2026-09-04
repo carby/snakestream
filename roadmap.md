@@ -32,90 +32,6 @@ oversight rather than a decision. Filed as five and not one batched entry: they
 share a shape only at the surface (see that change's design.md, decision 6), and
 whoever picks them up should make the batching call themselves.
 
-**Make combiners mean something**, moved here 2026-09-04 by
-`fork-join-executor-and-spliterator` (see Done) — both of them, in this order.
-`collect(supplier, accumulator, combiner)`'s parameter already ships and is
-never invoked, which README's row states, so it would have to *start* doing
-something. `Stream.reduce(identity, accumulator, combiner)` does not exist at
-all, so it would have to be *added* — and adding it inert first is the cheaper
-option this item deliberately does not take. **No longer decision-blocked**:
-the item sat in **Later** behind two prerequisites, real parallelism and
-`spliterator()`, and both are resolved (see the Later section's note). Three
-findings from the 2026-09-01 exploration that first scoped this, carried
-forward so they are not re-derived. **(a) The combiner is a declaration, not a
-parameter.** `reduce()`'s 2-arg form assumes nothing about its accumulator and
-so folds strictly in encounter order (`stream.py`'s own comment says as much);
-passing a combiner is the caller asserting associativity, and it is the only
-channel through which that can ever be said. It is also the only operation
-that can merge two *widened* accumulations — `Accumulator` is `(U, T) -> U`
-and cannot combine two `U`s — so no concurrent fold of a widened type is
-expressible without it. **(b) Java's partitioning argument now transfers,
-where it didn't before.** Java may combine on associativity alone because
-`Spliterator` splits into *contiguous* ranges. The old racing executor did not
-split, it stole: branches pulled from one shared iterator under a lock, so
-their partitions interleaved, and combining interleaved partials would have
-demanded *commutativity*, which Java does not require — a divergence in
-observable API behaviour the guiding principle would have ruled out. The
-fork-join executor's batches, dispatched via `spliterator()`, are contiguous,
-so this objection is gone: combining them on associativity alone is now
-correct in the same shape Java relies on. **(c) The `unordered()`-only
-fallback is superseded, not merely unneeded.** It was recorded as a shape
-needing neither prerequisite — partition only under `unordered()`, sound on
-associativity alone since the caller had already released encounter order —
-but it also overturned the (now-outdated) architectural claim that "each
-racing branch owns its own sink chain, so there is no single chain to fuse a
-terminal onto"; `fork-join-executor-and-spliterator`'s `stream-execution-model`
-spec delta already re-examined that claim for `value()`'s generic form and
-found the fused form still doesn't apply, for a different reason — each
-batch's chain is its own instance, torn down per batch, not one a terminal
-could share. Actually wiring the combiner up needs its own primitive in
-`execution.py` regardless of which of (a)-(c) it takes; whoever picks this up
-should re-read that delta before assuming (c)'s conclusion. See
-`openspec/changes/archive/2026-08-17-add-collect-supplier-accumulator-combiner`.
-
-**Scaffolded 2026-09-04 as `make-combiners-live`** (planning artifacts only;
-no code). Two findings from scoping it that were not visible from this entry,
-and that change the shape of the work rather than only its size.
-
-**(d) The larger payoff is not the parameter, it is a measured gap.** Work
-placed *inside* a collector gets no parallelism at all, because `_ForkJoin`
-inherits the generic `value()`: batches run the chain in worker threads, but
-`_drain()` feeds every element into one terminal sink on the main loop.
-Measured free-threaded, n=4000, 4 workers:
-
-| where the work is | sequential | parallel | speedup |
-|---|---:|---:|---:|
-| in the chain — `.map(slow).collect(to_list())` | 375.8ms | 159.1ms | **2.36x** |
-| in the collector — `grouping_by(slow_key)` | 409.6ms | 419.3ms | **0.98x** |
-| in the collector — `to_map(slow_key, cheap)` | 406.2ms | 409.1ms | **0.99x** |
-
-So making only the parameter live would leave a hand-rolled
-`collect(dict, accumulate, merge)` *faster than the library's own collector for
-the same job*, with nothing in the API to explain why.
-
-**(e) The naive scoping is backwards, and the derivation makes the real
-scoping cheap.** The obvious first cut — "add combiners to the easy
-collectors" — picks `to_list`/`to_set`/`counting`, which is exactly where
-partitioning gains nothing: their accumulators are `list.append`/`set.add`/`+1`,
-fractions of a millisecond against the figures above. The collectors worth
-partitioning are the ones carrying a *user callable*, which are the hard ones.
-They are also cheaper than they look, because a composing collector's combiner
-**derives from its downstream** — the rule `mapping()` and
-`collecting_and_then()` already use for `characteristics`, and the one Java
-uses to build `groupingBy`'s combiner. A composite over a non-combinable
-downstream declares none and degrades to today's behaviour.
-
-**One exclusion is load-bearing and easy to "fix" wrongly.** All three
-`averaging_*` decline a combiner, not just `averaging_double`: they share one
-`_averaging()` whose `_AvgBox.total` is a `float`, so `averaging_int`
-accumulates in floating point despite its integral element type, and float
-addition is not associative. This is a *stronger* reason than the one that
-already excludes the family from `UNORDERED` — that is about delivery order,
-this is about associativity. The two properties are independent, and
-`min_by`/`max_by` are the proof: they decline `UNORDERED` because tie-breaking
-must follow encounter order, yet they combine cleanly, since a left-biased
-merge over contiguous partitions preserves exactly that tie-break.
-
 ### Surfaced 2026-09-02, by the `sort-mixed-lane-by-successive-passes` read
 
 One smaller finding from the same pass over `src/`, recorded rather than
@@ -287,6 +203,119 @@ here recorded.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should be declared permanent. **Narrowed 2026-08-31: the behaviour is now documented in README's `of()` row.** That was a defect independent of this decision — the row described Java's semantics, so the divergence used by every example in the file was invisible to a reader. Documenting it does not close this item; what remains is the call on whether to keep it. Surfaced 2026-08-20 in the same code-quality read that produced the first batch of **Now** items, all since closed. |
 
 ## Done
+
+- **`make-combiners-live`** (2026-09-04) — the last of the three items the
+  free-threading sequence (`add-free-threaded-ci-leg` ->
+  `fork-join-executor-and-spliterator` -> this) was for. Both combiners are
+  live: `collect(supplier, accumulator, combiner)`'s parameter now runs under
+  `.parallel()`, and `Stream.reduce(identity, accumulator, combiner)` — Java's
+  third `reduce` overload — is added. `_ForkJoin.value()` gained a second,
+  conditional override alongside `_Sequential.value()`'s fused push: where a
+  terminal declares the new partition protocol (`sink-protocol`) and nothing
+  in the chain needs a global view, each batch accumulates into its own peer
+  container on its own thread and the peers merge into the terminal by left
+  fold in batch order (`parallel-reduction`, the new capability governing the
+  merge rule and the caller contract on `combiner`/`identity`). Fifteen
+  built-in collectors gained a combiner — leaf where the merge is associative
+  over the accumulation type (`to_list`, `to_set`, `counting`,
+  `summing_int`/`long`, `summarizing_int`/`long`, `min_by`/`max_by`,
+  `reducing`, the two-argument `to_map`, `joining`, `to_collection`), derived
+  from downstream for the four composing collectors
+  (`grouping_by`/`partitioning_by`/`mapping`/`collecting_and_then`). The
+  float-accumulating family and the three-argument `to_map` permanently
+  decline one, for reasons stated in each capability's own delta spec.
+
+  The three findings from the 2026-09-01 exploration that first scoped this
+  (recorded when the item moved to **Later**, then **Now**) resolved as
+  follows. **(a) held as reasoned**: the combiner is the caller's declaration
+  of associativity, and the only channel for it — implemented as the
+  `parallel-reduction` capability's caller-contract requirement, unchecked by
+  the library, matching Java. **(b) is now spent, not merely resolved** — kept
+  here rather than deleted so the reasoning stays findable: it argued Java's
+  associativity-alone combining now transfers because `spliterator()`'s
+  batches are contiguous where the old racing executor's stolen partitions
+  interleaved. That objection is gone and stays gone; nothing in this change
+  reopened it, and no future change should need to re-derive it — cite this
+  entry rather than re-deriving (b) from scratch. **(c)'s
+  `unordered()`-only fallback was correctly never taken**: the shipped design
+  partitions independent of `unordered()` (`parallel-reduction`'s "An
+  unordered pipeline still merges in order" requirement is the direct
+  statement of why) — the alternative (c) considered would have demanded
+  commutativity, which no caller supplying a combiner has asserted.
+
+  **(d)'s measured gap closed, from 0.98x/0.99x to 3.90x/3.89x** (task 7.1,
+  `benchmark-findings.md` in the archived change — GIL-enabled build; no
+  free-threaded leg run for this change). The ceiling sits around 4x
+  (`WORKERS`), not the triple-digit speedups the chain-only and trivial-
+  collector rows reach, because a partitioning terminal's own accumulation is
+  necessarily sequential *within* a batch (a terminal's `accept()` is not
+  safe to call concurrently) — only cross-batch, thread-level concurrency
+  applies to the classifier sitting in a collector's accumulator, where a
+  chain-side mapper also gets intra-batch `gather()` concurrency.
+
+  **(e) predicted right that the naive "easy collectors" scoping was
+  backwards, and wrong about what task 7.2 would find for them.** (e)'s claim
+  that partitioning "gains nothing" for `to_list`/`to_set`/`counting` was
+  about the accumulation work itself being trivial — true, and the composing-
+  collector derivation did make scoping the *hard* ones (the ones carrying a
+  user callable) cheap, as (e) argued. What (e) did not predict: task 7.2
+  measured the combinable path for these cheap collectors *faster* than a
+  hand-built no-combiner equivalent (`to_list()` ~19ms faster, `counting()`
+  ~9ms faster than `count()`, at `n=8192`), not merely neutral — the
+  partitioned path accumulates directly per batch with nothing buffered
+  between a batch's chain output and its peer container, where the
+  non-partitioning path still composes through `elements()`'s `AsyncGenerator`
+  layer. No collector's combiner was removed on task 7.2's "measurably costs
+  more" test; none measured a loss.
+
+  design.md's Open Question — a partition per *worker* rather than per
+  *batch* — stays open and unmeasured (task 7.4): the merge did not dominate
+  for either cheap collector measured, so there was nothing to weigh it
+  against.
+
+  A real regression was caught and fixed before this reached review, not
+  after: the first version of the partitioned batch runner pushed a batch's
+  elements through the chain *sequentially* into the peer sink, rather than
+  reusing `_run_batch_async()`'s existing per-element `gather()`. That
+  regressed a slow-mapper-declared-before-`.parallel()` benchmark by ~4x
+  (`test_parallel.py::test_parallel_applies_to_ops_declared_before_it`, 8
+  elements at 0.1s each: 0.1s expected under batched concurrency, 0.4s
+  measured under the sequential-push mistake) before `_run_partition_sync()`
+  was rewritten to race the chain first and fold only the already-transformed
+  outputs sequentially. A second, quieter one: `CollectorSink`/`ReduceSink`
+  reclassifying their own accumulator's awaitability once per **batch**
+  (`new_partition()` calling `__init__` without carrying the already-computed
+  `is_async` forward) rather than once per composition — caught by
+  `test_classification_is_not_repeated_per_element_under_fork_join` (8 calls
+  vs. 3 expected), the same `callable-dispatch` requirement the *previous*
+  archived change's near-miss violated for a different reason (a sink rebuilt
+  per element there; a sink rebuilt per batch here) — see that entry below.
+  Both fixes are load-bearing for the benchmark numbers above, not
+  independent cleanups.
+
+  Giving a built-in collector a combiner also changed observable delivery
+  order for `.parallel().unordered()` on the collectors that gained one: a
+  partitioned merge is always in batch (encounter) order regardless of
+  `unordered()` (`parallel-reduction`), so `unordered()` stopped buying back
+  race-order delivery specifically for `to_list()`/`to_map()` (no merge
+  function) `.collect()` calls — it still matters for `limit`/`skip`/
+  `distinct` running inside the batches and for an order-blind
+  short-circuiting terminal not waiting on a slow batch elsewhere. Named in
+  README's Migration entry as the one place an existing call site's *result*
+  can change — a caller-supplied **non-associative** `combiner` — not as a
+  timing-only effect. A `None`-returning, mutate-in-place `combiner` (Java's
+  `Stream.collect(Supplier, BiConsumer, BiConsumer)` convention, `list.extend`
+  being Java's own example) is not in that category: `CollectorSink.merge_from()`
+  reads a `None` result as "mutated in place" rather than as the new
+  container, so both of Java's two combiner conventions work unchanged. Caught
+  by a peer session's review before archive — the first version required a
+  returning `BinaryOperator` unconditionally, silently breaking the type this
+  library itself declares (`stream.py`'s `combiner: BiConsumer[R, R]`) and
+  Java's own dual-convention contract, the one category CLAUDE.md's guiding
+  principle treats as a defect rather than an acceptable divergence.
+
+  See `openspec/changes/archive/2026-09-05-make-combiners-live` (`design.md`,
+  `test-audit.md`, `benchmark-findings.md`).
 
 - **`fork-join-executor-and-spliterator`** (2026-09-04) — the racing executor
   is gone. `.parallel()` now decomposes the source into contiguous batches via

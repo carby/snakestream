@@ -160,6 +160,20 @@ async def _drain(elements: AsyncGenerator, terminal: TerminalSink[Any]) -> Any:
     return terminal.result()
 
 
+async def _accumulate_into(head: Sink[Any], items: list[Any], state_map: StateMap) -> None:
+    """Like _copy_into(), but over an already-materialised batch and without
+    the final end(): a partitioned terminal's peer must not be finished (its
+    container, not its result, is what gets merged - see
+    _run_partition_sync()), so the caller drives begin()/accept() only and
+    finishes the head once, after every peer has been merged into it."""
+    await head.begin(state_map)
+    if not head.cancellation_requested():
+        for item in items:
+            await head.accept(item)
+            if head.cancellation_requested():
+                break
+
+
 # --- fork/join: the parallel executor -----------------------------------
 #
 # Contiguous batches never destroy encounter order, so nothing here restores
@@ -235,6 +249,86 @@ def _run_batch_sync(chain: list[Op], items: list[Any], state_map: StateMap) -> l
     is already a plain materialised list by the time it gets here, and has
     nothing loop-bound left about it."""
     return asyncio.run(_run_batch_async(chain, items, state_map))
+
+
+def _run_partition_sync(chain: list[Op], items: list[Any], state_map: StateMap, head: TerminalSink[Any]) -> TerminalSink[Any]:
+    """asyncio.to_thread()'s callable for a partitioned batch: race the
+    chain per element exactly as _run_batch_sync() does - _run_batch_async()
+    is unchanged and reused as-is - which is what preserves the intra-batch
+    I/O concurrency fork-join's speedup on I/O-bound work depends on (a
+    sequential push through the chain here regressed a slow-mapper benchmark
+    by ~4x measured, before this shape was chosen). The batch's already-
+    transformed outputs are then folded into a fresh peer accumulation
+    sequentially: a terminal's accept() is not safe to call concurrently, but
+    accumulation itself is cheap once the chain's own work is done. Returns
+    the peer for the caller to merge, in batch order, on the main loop; the
+    peer is never finished here (see _accumulate_into())."""
+
+    async def _run() -> TerminalSink[Any]:
+        outputs = await _run_batch_async(chain, items, state_map)
+        peer = head.new_partition()
+        await _accumulate_into(peer, outputs, state_map)
+        return peer
+
+    return asyncio.run(_run())
+
+
+async def _run_partition_round(
+    chain: list[Op], round_batches: list[list[Any]], state_map: StateMap, head: TerminalSink[Any]
+) -> list[TerminalSink[Any]]:
+    """Every batch in a round, partitioned on its own thread, waited for
+    together - _run_round()'s shape, over _run_partition_sync() instead of
+    _run_batch_sync()."""
+    tasks = [
+        asyncio.create_task(asyncio.to_thread(_run_partition_sync, chain, items, state_map, head)) for items in round_batches
+    ]
+    try:
+        return await asyncio.gather(*tasks)
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+
+
+async def _fork_join_partitioned(chain: list[Op], source: AsyncGenerator, workers: int, head: TerminalSink[Any]) -> Any:
+    """Drive a partitioning terminal directly, bypassing elements(): each
+    round's batches accumulate independently, one per worker thread, and are
+    merged into `head` by left fold in batch order (design decision 2,
+    make-combiners-live) - regardless of unordered(), which the
+    parallel-reduction spec states explicitly is not license to merge out of
+    order. Contiguous, in-sequence batches are what make that sound on
+    associativity alone (proposal.md, Why)."""
+    state_map: StateMap = {}
+    for op in chain:
+        state = op.make_shared_state()
+        if state is not None:
+            state_map[op] = state
+
+    await head.begin(state_map)
+    size = _FIRST_BATCH_SIZE
+    async with maybe_aclosing(aiter(source)) as src:
+        # same pre-first-pull guard as _copy_into(): a terminal cancelled
+        # before it has merged anything (none of today's partitioning
+        # terminals short-circuit, but the protocol does not assume none
+        # ever will) must not pull even one batch. Both cancellation checks
+        # are therefore unreachable today - pragma'd rather than left to
+        # silently erode the coverage gate - and stay ready for a future
+        # short-circuiting, combiner-supplying terminal.
+        while not head.cancellation_requested():  # pragma: no branch
+            round_batches = await _pull_round(src, workers, size)
+            if not round_batches:
+                break
+            peers = await _run_partition_round(chain, round_batches, state_map, head)
+            for peer in peers:
+                await head.merge_from(peer)
+                if head.cancellation_requested():  # pragma: no cover
+                    break
+            if len(round_batches) < workers:
+                break
+            size = BATCH_SIZE
+    await head.end()
+    return head.result()
 
 
 async def _pull_round(source: AsyncIterator, workers: int, size: int) -> list[list[Any]]:
@@ -484,10 +578,31 @@ class _ForkJoin(Executor):
     def elements(self, chain: list[Op], source: AsyncGenerator, demand: OrderDemand) -> AsyncGenerator:
         return _fork_join_through(chain, source, self.workers, demand)
 
-    # value() is inherited: a batch's chain is built fresh per element
-    # (_run_element()), not shared across a single composed chain a terminal
-    # could be fused onto, so there is no single chain to fuse it with. See
-    # stream-execution-model, this change's delta.
+    async def value(self, chain: list[Op], source: AsyncGenerator, terminal: TerminalSink[Any], demand: OrderDemand) -> Any:
+        """Where the terminal partitions and nothing in the chain needs a
+        global view, accumulate each batch into its own container on its own
+        worker thread and merge them into `terminal` (_fork_join_partitioned()).
+        Otherwise fall through to the generic form unchanged - a terminal
+        that does not opt in (can_partition() False) or a chain containing an
+        op split_point() would have to see whole (sorted(), or limit/skip/
+        distinct on an ordered pipeline) gets exactly today's behaviour,
+        because a per-batch terminal cannot give such an op the global view
+        it needs (design decision 1, make-combiners-live: the protocol adds
+        a second partitioning path, it does not touch elements() or the
+        split machinery that already handles those ops).
+
+        The terminal's own OrderDemand plays no part in that check - unlike
+        elements()'s split, which inserts a reordering pass before handing
+        elements to a caller. A partitioned merge is already in encounter
+        order by construction (batches are pulled and merged in sequence,
+        design decision 2), so there is nothing for a terminal's demand to
+        buy here; only an *op* needing a global view (sorted(), or
+        limit/skip/distinct on an ordered pipeline) can force the fallback.
+        OrderDemand.NONE passed to split_point() disables its third,
+        terminal-driven clause and leaves the first two untouched."""
+        if terminal.can_partition() and split_point(chain, OrderDemand.NONE, True) is None:
+            return await _fork_join_partitioned(chain, source, self.workers, terminal)
+        return await super().value(chain, source, terminal, demand)
 
 
 SEQUENTIAL = _Sequential()

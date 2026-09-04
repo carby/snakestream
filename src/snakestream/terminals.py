@@ -4,7 +4,7 @@ from inspect import isawaitable
 from typing import Any, cast
 from collections.abc import Awaitable
 
-from snakestream.callable_dispatch import AsyncDispatch
+from snakestream.callable_dispatch import AsyncDispatch, maybe_await
 from snakestream.comparator import is_new_extremum
 from snakestream.sink import UNSET, TerminalSink, UnseededSink
 from snakestream.type import (
@@ -62,10 +62,15 @@ class ReduceSink(AsyncDispatch, UnseededSink[T]):
     in step by hand - a change to that seed rule belongs in both. See the
     collapse-terminal-collector-duplication change for the figures."""
 
-    def __init__(self, identity: Any, accumulator: Accumulator) -> None:
+    def __init__(self, identity: Any, accumulator: Accumulator, combiner: Any = None, is_async: bool | None = None) -> None:
         super().__init__()
         self._identity = identity
-        self._init_dispatch(accumulator)
+        self._combiner = combiner
+        # is_async lets new_partition() hand a peer the classification this
+        # sink already computed, rather than reclassifying the accumulator
+        # once per batch (callable-dispatch's "classified once per
+        # composition", make-combiners-live task 5.3).
+        self._init_dispatch(accumulator, is_async)
 
     def _create_container(self) -> Any:
         return self._identity
@@ -83,6 +88,30 @@ class ReduceSink(AsyncDispatch, UnseededSink[T]):
                 self._is_async = True
                 r = await r
         self._container = r
+
+    def can_partition(self) -> bool:
+        # Only the three-argument reduce(identity, accumulator, combiner)
+        # supplies a combiner; the two-argument and no-identity forms leave
+        # it None and are never partitioned (parallel-reduction spec).
+        return self._combiner is not None
+
+    def new_partition(self) -> TerminalSink[T]:
+        return ReduceSink(self._identity, self._fn, self._combiner, self._is_async)
+
+    async def merge_from(self, peer: TerminalSink[T]) -> None:
+        # Each partition starts from identity (design decision 6), so this
+        # never actually meets UNSET on either side for the combining
+        # three-argument form - the checks are the same defensive shape as
+        # accept()'s, kept for a base class shared with the no-identity form.
+        other = cast("ReduceSink[T]", peer)
+        if self._container is UNSET:  # pragma: no cover - unreachable: see below
+            self._container = other._container
+            return
+        if other._container is UNSET:  # pragma: no cover - unreachable: see below
+            return
+        combiner = self._combiner
+        assert combiner is not None  # guarded by can_partition()
+        self._container = await maybe_await(combiner, self._container, other._container)
 
 
 class MinMaxSink(AsyncDispatch, UnseededSink[T]):
