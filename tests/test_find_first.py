@@ -119,7 +119,7 @@ async def test_find_first_after_unordered_and_sorted_returns_the_smallest() -> N
     # that motivated making ordering positional - before it, unordered() was
     # pipeline-wide, sorted() could not restore encounter order, and this
     # returned an arbitrary element.
-    async def descending() -> AsyncGenerator[int, None]:
+    async def descending() -> AsyncGenerator[int]:
         for i in range(200, 0, -1):
             await asyncio.sleep(0)
             yield i
@@ -261,7 +261,7 @@ async def test_a_parallel_find_first_terminates_and_leaves_no_pending_tasks() ->
     # ever driven _release_in_order()'s cancellation path before this change -
     # find_first() was sequential and find_any() never splits - so this pins
     # that the branches are cancelled and the shared source closed
-    async def forever() -> AsyncGenerator[int, None]:
+    async def forever() -> AsyncGenerator[int]:
         i = 0
         while True:
             await asyncio.sleep(0.001)
