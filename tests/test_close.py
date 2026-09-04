@@ -1,5 +1,4 @@
 from contextlib import closing
-import sys
 
 import pytest
 
@@ -153,7 +152,6 @@ def test_close_with_multiple_raising_handlers_runs_all_and_raises_first(mocker) 
     bad_b.assert_called_once()
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason="add_note() requires 3.11+")
 def test_close_with_three_raising_handlers_notes_the_other_two(mocker) -> None:
     bad_a = mocker.Mock(side_effect=ValueError("first"))
     bad_b = mocker.Mock(side_effect=ValueError("second"))

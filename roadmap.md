@@ -1101,8 +1101,9 @@ core semantic.
 
   The objection recorded on 2026-08-18 was only ever "the CI matrix still
   targets Python 3.10", which needs a `sys.version_info >= (3, 11)` fork —
-  an objection with an expiry date, since 3.10 leaves the matrix in October
-  2026. That is not why the answer is no. Java's `AbstractPipeline.close()`
+  an objection with an expiry date, and it has now expired: 3.10 left the
+  matrix in `raise-python-floor-to-311` (2026-09-04). That is not why the
+  answer is no. Java's `AbstractPipeline.close()`
   composes handlers through `Streams.composeWithExceptions()`: it runs every
   handler, calls `addSuppressed()` on the first exception for each later one,
   and rethrows *the first*. Java never throws a composite here. So
