@@ -168,18 +168,34 @@ async def test_collect_supplier_accumulator_combiner_never_calls_combiner() -> N
 
 
 @pytest.mark.asyncio
-async def test_collect_supplier_accumulator_combiner_parallel_never_calls_combiner() -> None:
-    # given
-    combiner_calls: list = []
+async def test_collect_supplier_accumulator_combiner_parallel_invokes_combiner() -> None:
+    # make-combiners-live: under .parallel(), the fork-join executor
+    # partitions a collect() it can (task 3.1) and the combiner merges each
+    # batch's container into the next - live, where it used to be inert.
+    combiner_calls = 0
 
-    def combiner(a: list, b: list) -> None:
-        combiner_calls.append((a, b))
+    def combiner(a: list, b: list) -> list:
+        nonlocal combiner_calls
+        combiner_calls += 1
+        a.extend(b)
+        return a
 
-    # when
-    it = await Stream.of([1, 2, 3, 4, 5]).parallel().collect(list, list.append, combiner)
+    # given a source spanning several batches
+    it = await Stream.of(list(range(50))).parallel().collect(list, list.append, combiner)
     # then
-    assert sorted(it) == [1, 2, 3, 4, 5]
-    assert combiner_calls == []
+    assert sorted(it) == list(range(50))
+    assert combiner_calls > 0
+
+
+@pytest.mark.asyncio
+async def test_collect_supplier_accumulator_combiner_accepts_javas_biconsumer_convention() -> None:
+    # Java's Stream.collect(Supplier, BiConsumer, BiConsumer) declares its
+    # combiner as a mutating BiConsumer<R,R> - list.extend is Java's own
+    # documented example - unlike Collector.combiner()'s returning
+    # BinaryOperator<A>. Both conventions must work here: a combiner
+    # returning None is read as "the container was mutated in place".
+    it = await Stream.of(list(range(50))).parallel().collect(list, list.append, list.extend)
+    assert sorted(it) == list(range(50))
 
 
 def test_to_set_reports_unordered() -> None:

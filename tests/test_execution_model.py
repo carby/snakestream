@@ -11,6 +11,7 @@ from snakestream import Stream
 from snakestream.collectors import to_list
 from snakestream.exception import IllegalStateException
 from snakestream.execution import FORK_JOIN, SEQUENTIAL
+from snakestream.ordering import OrderDemand
 
 
 # --- execution mode is a value ---------------------------------------------
@@ -269,12 +270,29 @@ async def test_the_fused_override_is_indistinguishable_from_the_generic_form() -
 
 
 @pytest.mark.asyncio
-async def test_fork_join_uses_the_generic_value_unchanged() -> None:
-    # then: _ForkJoin does not override value() — a batch's chain is built
-    # fresh per element, not shared across a single chain a terminal could be
-    # fused onto
-    assert type(FORK_JOIN).value is type(SEQUENTIAL).__mro__[1].value
+async def test_fork_join_falls_through_to_the_generic_value_for_a_non_partitioning_terminal() -> None:
+    # make-combiners-live: _ForkJoin now overrides value() (task 2.1), but
+    # only a terminal whose can_partition() is True takes the new path -
+    # every other terminal, which is most of them, still drains through the
+    # untouched generic form: a batch's chain is built fresh per element, not
+    # shared across a single chain such a terminal could be fused onto.
     assert type(SEQUENTIAL).value is not type(SEQUENTIAL).__mro__[1].value
+    assert type(FORK_JOIN).value is not type(FORK_JOIN).__mro__[1].value
+
+    from snakestream.sink import TerminalSink
+
+    class _NeverPartitions(TerminalSink):
+        def _create_container(self):
+            return []
+
+        async def accept(self, element):
+            self._container.append(element)
+
+    fused = await Stream.of([1, 2, 3, 4, 5]).parallel().reduce(0, lambda a, b: a + b)
+    generic = await Stream.of([1, 2, 3, 4, 5])._evaluate(_NeverPartitions(), OrderDemand.NONE)
+
+    assert fused == 15
+    assert generic == [1, 2, 3, 4, 5]
 
 
 # --- source acceptance does not depend on execution mode --------------------

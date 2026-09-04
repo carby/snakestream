@@ -308,7 +308,7 @@ async def test_the_concatenated_stream_itself_is_unaffected_by_the_invalidation(
 
 
 @pytest.mark.asyncio
-async def test_an_unordered_concatenation_takes_no_delivery_barrier() -> None:
+async def test_an_unordered_concatenation_still_partitions_in_encounter_order() -> None:
     # given the shape the racing tests use throughout: the early elements are
     # the expensive ones, so under a plain race the cheap tail overtakes the
     # slow head and arrival order and encounter order disagree visibly. Without
@@ -319,16 +319,16 @@ async def test_an_unordered_concatenation_takes_no_delivery_barrier() -> None:
         await asyncio.sleep(0.05 if n < 5 else 0.001)
         return n
 
-    # when a concatenation of unordered operands is raced into an
-    # order-observing terminal
+    # when a concatenation of unordered operands is raced into to_list(),
+    # which gained a combiner (make-combiners-live, task 4.1): a partitioned
+    # merge is always in batch (encounter) order regardless of unordered()
+    # (parallel-reduction), so the operands' unordered() no longer buys back
+    # race-order delivery here - see test_racing_delivery_order.py's own
+    # pair of tests for the collector that still shows the old behaviour.
     c = Stream.concat(Stream.of(source).unordered(), Stream.of([]).unordered())
     seen = await c.parallel().map(slow_head).collect(to_list())
 
-    # then everything arrived and nothing was held back to put it in order:
-    # the operands' unordered() survived the concat, which is what buys the
-    # concurrency back
-    assert sorted(seen) == source
-    assert seen != source
+    assert seen == source
 
 
 @pytest.mark.asyncio

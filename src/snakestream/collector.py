@@ -12,7 +12,7 @@ from typing import Any, cast
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
 
 from snakestream.execution import maybe_aclosing
-from snakestream.callable_dispatch import AsyncDispatch
+from snakestream.callable_dispatch import AsyncDispatch, maybe_await
 from snakestream.ordering import OrderDemand
 from snakestream.sink import TerminalSink
 from snakestream.type import (
@@ -31,12 +31,14 @@ class Characteristics(Enum):
 
     `IDENTITY_FINISH` is left out because it is already observable as
     `Collector.finisher is None` - defining it too would give one fact two
-    statements that can disagree. `CONCURRENT` describes accumulating into
-    one shared container from independently reduced partitions; snakestream
-    has no execution mode that produces independent partitions (`combiner` is
-    accepted for signature parity and never invoked), so nothing could read
-    it. Real partitioned execution belongs to the roadmap's Later, and that is
-    where `CONCURRENT` belongs too.
+    statements that can disagree. `CONCURRENT` describes accumulating
+    *concurrently* into one **shared** container - every collecting thread
+    mutating the same instance rather than merging independent ones - which
+    is a different shape from `parallel-reduction`'s partitions-then-merge:
+    those accumulate into separate containers with no sharing at all, so
+    `CONCURRENT` would assert something not true of them. Nothing reads it,
+    and adding it would be parity theatre (design.md, make-combiners-live,
+    Non-Goals) rather than the completion of a partial implementation.
 
     `UNORDERED` is a declaration a collector makes about itself - that any two
     orderings of the same elements collect to an equal result - rather than an
@@ -75,17 +77,15 @@ _NO_CHARACTERISTICS: frozenset[Characteristics] = frozenset()
 class Collector[T, A, R]:
     """Java-style `Collector<T,A,R>`: `supplier()` creates a fresh
     accumulation container, `accumulator(container, element)` mutates it per
-    element - its return value is ignored - and `finisher(container)`
-    converts the finished container to the result (the container itself, if
-    `finisher` is omitted). `combiner` is accepted for signature parity with
-    Java and never invoked: a collection always folds over one composed
-    stream, sequential or parallel, with no independently accumulated
-    partitions to merge - the same posture `Stream.collect(supplier,
-    accumulator, combiner)` already has. `Stream.reduce()` is *not* a
-    precedent: it has two overloads and no combiner at all, and growing one
-    is sequenced behind real parallelism and spliterator() rather than added
-    inert, so that both combiners start meaning something at once (roadmap
-    **Later**).
+    element - its return value is ignored - `finisher(container)` converts
+    the finished container to the result (the container itself, if
+    `finisher` is omitted), and `combiner(container, container)` merges two
+    partial accumulations into one, left-biased, when the parallel executor
+    partitions the collection across its batches (`parallel-reduction`
+    capability). A collector supplying no `combiner` is never partitioned -
+    it always folds over one composed stream, sequential or parallel, into a
+    single container, exactly as every collector did before this protocol
+    existed.
 
     Every part may be sync or async. A `Collector` holds these four callables
     plus one immutable datum, `characteristics`: a `frozenset` of
@@ -135,10 +135,15 @@ class CollectorSink(AsyncDispatch, TerminalSink[T]):
     supplier-made container instead, since this sink - like the Collector -
     is shared across collections."""
 
-    def __init__(self, collector: Collector[Any, Any, Any]) -> None:
+    def __init__(self, collector: Collector[Any, Any, Any], is_async: bool | None = None) -> None:
         super().__init__()
         self._collector = collector
-        self._init_dispatch(collector.accumulator)
+        # is_async lets new_partition() hand a peer the classification this
+        # sink already computed, rather than reclassifying the accumulator
+        # once per batch - callable-dispatch's "classified once per
+        # composition" (make-combiners-live task 5.3) applies to a
+        # partitioned terminal's peers too, not only to the head.
+        self._init_dispatch(collector.accumulator, is_async)
 
     def _create_container(self) -> Any:
         return self._collector.supplier()
@@ -156,6 +161,30 @@ class CollectorSink(AsyncDispatch, TerminalSink[T]):
     def _finish(self, container: Any) -> Any:
         finisher = self._collector.finisher
         return container if finisher is None else finisher(container)
+
+    def can_partition(self) -> bool:
+        return self._collector.combiner is not None
+
+    def new_partition(self) -> TerminalSink[T]:
+        return CollectorSink(self._collector, self._is_async)
+
+    async def merge_from(self, peer: TerminalSink[T]) -> None:
+        # Java has two conventions on the two surfaces that reach this: a
+        # Collector's own combiner() is a BinaryOperator<A> (returns the
+        # merged value), but Stream.collect(supplier, accumulator,
+        # combiner)'s combiner is a BiConsumer<R,R> (mutates its first
+        # argument, return ignored - e.g. List::addAll). The 3-arg collect()
+        # overload builds a plain Collector(supplier, accumulator, combiner)
+        # and drives it through this same sink, so both conventions have to
+        # work here. A `None` result is read as "mutated container in place"
+        # rather than as the new container: an accumulation container is
+        # never legitimately None, so there is no real value this could
+        # otherwise mean.
+        combiner = self._collector.combiner
+        assert combiner is not None  # guarded by can_partition()
+        merged = await maybe_await(combiner, self._container, cast("CollectorSink[T]", peer)._container)
+        if merged is not None:
+            self._container = merged
 
 
 class StreamingCollector:

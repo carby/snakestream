@@ -114,13 +114,13 @@ async def test_find_any_remains_the_unordered_alternative() -> None:
             i += 1
 
     async def one_slow_element(n: int) -> int:
-        await asyncio.sleep(5 if n == 0 else 0.0)
+        await asyncio.sleep(0.5 if n == 0 else 0.0)
         return n
 
     # when
     it = await asyncio.wait_for(
         Stream.of(endless()).parallel().map(one_slow_element).find_any(),
-        timeout=2,
+        timeout=0.2,
     )
 
     # then: find_any() returned without waiting on element 0's batch

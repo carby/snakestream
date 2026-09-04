@@ -60,11 +60,11 @@ _drain(elements, terminal)              -> value            any generator into a
 _fork_join_through(chain, src, workers, demand, ordered_in)
                                        -> AsyncGenerator   contiguous batches, each on its own thread
 
-SEQUENTIAL.elements = _stream_through      SEQUENTIAL.value = _feed_through  (override)
-FORK_JOIN.elements  = _fork_join_through   FORK_JOIN.value  = inherited generic
+SEQUENTIAL.elements = _stream_through      SEQUENTIAL.value = _feed_through       (override: fused push)
+FORK_JOIN.elements  = _fork_join_through   FORK_JOIN.value  = _fork_join_partitioned or inherited generic
 ```
 
-`Executor.value()`'s generic default is `_drain(self.elements(...), terminal)`, which `_ForkJoin` uses unchanged — each batch builds and tears down its own sink chain on its own OS thread, so there is no single, long-lived chain a terminal could be fused onto (fusing would need the terminal to accumulate correctly across concurrently-running batches, which is exactly the `Collector` combiner this library does not yet drive). `_Sequential.value()` overrides it with the fused push purely on measurement: composing and then draining costs +125% per element on `count()`. That override is the one asymmetry in the protocol; its docstring carries the figures.
+`Executor.value()`'s generic default is `_drain(self.elements(...), terminal)`. `_Sequential.value()` overrides it with the fused push purely on measurement: composing and then draining costs +125% per element on `count()`. `_ForkJoin.value()` has a second override, conditional rather than unconditional: where the terminal declares `can_partition()` True (the partition protocol below) and `split_point()` finds nothing in the chain needing a global view, it runs `_fork_join_partitioned()` instead of the generic form — each batch accumulates into its own peer container on its own OS thread (`_run_partition_sync()`, which races the batch's elements exactly as `_run_batch_sync()` does before folding the already-transformed outputs into the peer sequentially) and the peers are merged into the terminal by left fold in batch order. Every other terminal — `can_partition()` False, or a chain `sorted()`/`limit`/`skip`/`distinct` forces through the generic path — is unaffected: each batch still builds and tears down its own sink chain with no single, long-lived chain such a terminal could be fused onto.
 
 `.parallel()` decomposes the source with `spliterator()` (`Spliterator[T]`, `stream.py`/`spliterator.py`) rather than racing `asyncio` tasks over a shared generator on one thread. `_fork_join_through()` pulls up to `WORKERS` contiguous batches at a time — `_pull_round()`, the one place a round touches the shared source, so there is no cross-coroutine contention on it to guard against — and dispatches each batch's chain onto its own OS thread via `asyncio.to_thread(_run_batch_sync, ...)`. Contiguous batches never scramble encounter order the way the old racing branches did, so there is no merge to restore it at: batch order already *is* encounter order, since batches are pulled in sequence. `WORKERS` (renamed from `PROCESSES`, since it now names threads rather than a process-pool design that was never built) defaults to 4; a batch's own elements still race each other concurrently within the batch (`_run_batch_async()`, one `_run_element()` task per item on the worker's own event loop), which is where the I/O concurrency the old racing executor bought is preserved rather than lost.
 
@@ -175,8 +175,22 @@ callable, so it is neither invoked nor awaited) mirroring Java's
 `CollectorSink` built from it. `Characteristics` ships one member,
 `UNORDERED`, declared by `to_set()` and derived by `mapping()`/
 `collecting_and_then()` from their downstream. `collect()` reads it to decide
-whether the racing executor owes the collector a reorder barrier. The two halves
-live in two modules, on Java's own naming:
+whether the fork-join executor owes the collector a reorder barrier before
+delivery (`split_point()`, via the collector's `demand()`) — a question
+independent of whether the collector's `combiner` partitions the collection
+in the first place; a collector may declare either without the other
+(`parallel-reduction`). `combiner` is live: `CollectorSink.can_partition()`
+reports whether `collector.combiner` is set, and where it is (and the chain
+needs no global view) `_ForkJoin.value()`'s partitioned override merges each
+batch's independently accumulated container via it, left fold in batch
+order, rather than folding every element into one shared container. A
+collector supplying no `combiner` is never partitioned, and behaves exactly
+as every collector did before this protocol existed. Fifteen of the ~20
+factories below gained a leaf or downstream-derived combiner; the float-
+accumulating family (`summing_double`, `summarizing_double`, all three
+`averaging_*`) and the three-argument `to_map()` permanently decline one —
+see each factory's own docstring and `collectors.py`'s module docstring for
+which and why. The two halves live in two modules, on Java's own naming:
 `collector.py` holds the *protocol* (`Collector`, `CollectorSink`,
 `StreamingCollector`, `to_generator`), and `collectors.py` holds the ~20
 *factories* (`to_list()`, `to_set()`, `counting()`, `grouping_by()`, ...).

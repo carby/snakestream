@@ -37,6 +37,8 @@ The determination SHALL be made by classifying the callable — recognizing both
 
 Under the fork-join executor, a call site invoked once per element runs inside a sink built fresh per element (`execution._run_element`), not once per composition — classifying there, per sink, would reclassify on every element despite the sink being rebuilt, which is what this requirement forbids. Such a call site SHALL instead classify once on the `Op` that owns the callable — at construction, since the callable is fixed for the `Op`'s lifetime — and every sink built from it, whatever executor and however many times it is rebuilt, SHALL reuse that determination rather than recomputing it. `Op` instances are themselves already reused across every composition (`pipeline-composition`), so classifying once there satisfies "at most once per composition" with room to spare rather than exactly.
 
+A partitioning terminal sink (`sink-protocol`'s partition protocol) is rebuilt once per **batch**, via `new_partition()`, rather than once per composition either. Its own user-supplied callable — a `Collector`'s `accumulator`, or a three-argument `reduce()`'s — is classified once, on the sink `new_partition()` was called on, and `new_partition()` SHALL hand each peer that same determination rather than letting the peer's own construction reclassify the callable. This is the same principle applied to a second kind of per-batch reconstruction, not a new rule: an `Op`'s sinks reuse the `Op`'s classification, and a partitioning terminal's peers reuse the terminal's.
+
 #### Scenario: Classification is not repeated per element
 - **WHEN** a stream operation invokes the same user-supplied callable across many elements of one composition
 - **THEN** the awaitability of the callable's results is determined at most once for that composition, not once per element
@@ -52,6 +54,10 @@ Under the fork-join executor, a call site invoked once per element runs inside a
 #### Scenario: Each parallel branch classifies independently
 - **WHEN** a `.parallel()` composition dispatches a callable's chain across more than one batch, each batch building its own sink
 - **THEN** every batch's sink for that callable carries the same awaitability determination — not because each batch classifies independently and happens to agree, but because every batch's sink reads the one determination already classified on the shared `Op` it was linked from
+
+#### Scenario: A partitioning terminal's accumulator is classified once, not once per batch
+- **WHEN** a `Collector` supplying a `combiner` collects a `.parallel()` stream spanning more than one batch, so its `CollectorSink` is partitioned into one peer per batch
+- **THEN** the accumulator's awaitability is determined once, and every peer's `new_partition()`-built sink reuses that determination rather than reclassifying the accumulator
 
 ### Requirement: Classification state is per callable
 

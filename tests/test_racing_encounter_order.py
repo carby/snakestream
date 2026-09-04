@@ -362,7 +362,7 @@ async def test_closing_while_a_branch_is_blocked_on_the_window_does_not_hang() -
             i += 1
 
     async def one_slow_element(n: int) -> int:
-        await asyncio.sleep(5 if n == 0 else 0.0)
+        await asyncio.sleep(0.5 if n == 0 else 0.0)
         return n
 
     before = len(asyncio.all_tasks())

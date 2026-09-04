@@ -57,24 +57,26 @@ terminal-driving operation SHALL be the one used by every other terminal
 operation.
 
 The terminal-driving operation SHALL have a single generic implementation —
-driving the element-producing operation's output into the terminal — which the
-fork-join executor uses unchanged. The sequential executor MAY override it with
-a fused implementation that pushes source elements through the chain straight
-into the terminal with nothing buffered on the way; that override SHALL be a
-performance specialization only, producing results indistinguishable from the
-generic implementation.
+driving the element-producing operation's output into the terminal. The
+sequential executor MAY override it with a fused implementation that pushes
+source elements through the chain straight into the terminal with nothing
+buffered on the way; that override SHALL be a performance specialization
+only, producing results indistinguishable from the generic implementation.
 
-The fork-join executor's use of the generic form is not only a measurement
-result, as it is for the sequential executor: each batch builds and runs its
-own sink chain on its own OS thread, torn down once the batch finishes, so
-there is no single, long-lived chain instance a terminal could be fused onto
-the way the sequential executor fuses onto its one chain. Fusing the terminal
-into fork-join's per-batch chains would require the terminal sink itself to
-accumulate correctly across concurrently-running batches — exactly the
-`Collector` combiner this library does not yet drive (see `collector.py`'s
-`combiner`, unused pending a future change) — so the generic
-compose-then-drain form remains the only option here, not merely the cheaper
-one.
+The fork-join executor SHALL use the generic form for a terminal sink that
+does not opt into the partition protocol (`sink-protocol`), or for one that
+does but whose chain contains an op needing a global view (`sorted()`, or
+`limit`/`skip`/`distinct` on an ordered pipeline) — each batch there still
+builds and runs its own sink chain on its own OS thread, torn down once the
+batch finishes, so there is no single, long-lived chain instance such a
+terminal could be fused onto. For a terminal that opts in and whose chain
+needs no global view, the fork-join executor SHALL instead accumulate each
+batch into its own peer container on its own thread and merge the peers into
+the terminal in batch order (`parallel-reduction`) — the override the
+`Collector` combiner and the three-argument `reduce()`'s combiner drive, now
+that both are live. This is the second executor-level override alongside the
+sequential executor's fused form, not a third executor and not a change to
+which two operations the protocol exposes.
 
 An executor's element-producing operation MAY internally run different parts of
 the chain differently — for instance running batches concurrently upstream of
@@ -83,7 +85,10 @@ ordered pass and running everything after it concurrently again, or reordering
 only the delivery of a chain that ran concurrently end to end (see the
 `racing-encounter-order` capability). Such an internal split SHALL NOT
 constitute a third executor, SHALL NOT be selectable or observable as a mode,
-and SHALL leave `is_parallel()` reporting the executor the stream carries.
+and SHALL leave `is_parallel()` reporting the executor the stream carries. The
+terminal-driving operation's own partitioned override is likewise not a third
+executor, for the same reason: it is not selectable, and `is_parallel()`
+still reports the executor the stream carries.
 
 #### Scenario: Both executors produce the same elements
 - **WHEN** the same chain over the same source is composed to a generator under
@@ -113,6 +118,14 @@ and SHALL leave `is_parallel()` reporting the executor the stream carries.
   collected by an order-observing terminal, so that delivery is reordered
 - **THEN** `is_parallel()` still reports `True`, and there are still exactly two
   executor values in the package
+
+#### Scenario: A non-partitioning terminal still drives through the generic form
+- **WHEN** a terminal whose `can_partition()` is `False` is driven under the fork-join executor
+- **THEN** it drives through the generic compose-then-drain form, exactly as before this requirement changed
+
+#### Scenario: A partitioning override is not a third executor
+- **WHEN** a `Collector` supplying a `combiner` is driven under the fork-join executor via its partitioned override
+- **THEN** `is_parallel()` still reports `True`, and there are still exactly two executor values in the package
 
 ### Requirement: A terminal follows the stream's executor and declares what it observes
 

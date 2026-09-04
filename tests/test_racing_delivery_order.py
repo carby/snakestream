@@ -107,7 +107,12 @@ async def test_to_array_delivers_in_encounter_order() -> None:
 @pytest.mark.asyncio
 async def test_the_three_argument_collect_delivers_in_encounter_order() -> None:
     # given an arbitrary container and accumulator, which nothing declares
-    # order-independent
+    # order-independent - and now a combiner that is live under .parallel().
+    # list.extend is Java's own documented example of this combiner - a
+    # BiConsumer<R,R> that mutates its first argument and returns None,
+    # matching Stream.collect(Supplier, BiConsumer, BiConsumer) exactly
+    # (Collector.combiner() is the other convention, a returning
+    # BinaryOperator<A> - see CollectorSink.merge_from()).
     res = await Stream.of(SOURCE).parallel().map(_slow_head).collect(list, list.append, list.extend)
     # then
     assert res == SOURCE
@@ -166,13 +171,13 @@ async def test_an_order_blind_terminal_holds_nothing_back() -> None:
             i += 1
 
     async def one_slow_element(n: int) -> int:
-        await asyncio.sleep(5 if n == 0 else 0.0)
+        await asyncio.sleep(0.5 if n == 0 else 0.0)
         return n
 
     # when an order-blind short-circuiting terminal is asked
     res = await asyncio.wait_for(
         Stream.of(endless()).parallel().map(one_slow_element).any_match(lambda n: n == 20),
-        timeout=2,
+        timeout=0.2,
     )
 
     # then it answered without waiting on element 0, which is what declaring
@@ -271,20 +276,25 @@ async def test_partitioning_by_into_a_set_collects_correctly_under_racing() -> N
 
 
 @pytest.mark.asyncio
-async def test_to_map_without_a_merge_function_skips_the_barrier() -> None:
-    # given the dict-building collector, whose result does betray arrival order
-    # even though its declaration promises only equality: a dict's key
-    # iteration order follows insertion, so unlike to_set() this one can be
-    # verified by observation rather than by asserting the declaration alone
+async def test_to_map_without_a_merge_function_delivers_in_encounter_order() -> None:
+    # given the dict-building collector: UNORDERED is still declared (any two
+    # orderings of the same elements collect to an equal dict), but
+    # make-combiners-live also gave this form a combiner (task 4.1, the
+    # two-argument to_map partitions - design decision 5), and a combiner is
+    # merged in batch order regardless of that declaration or of unordered()
+    # (parallel-reduction: "An unordered pipeline still merges in order").
+    # This collector is no longer a case where UNORDERED's own declaration
+    # translates into race-order delivery, because partitioning now decides
+    # delivery order here, not the reorder barrier that UNORDERED used to
+    # buy back.
     assert Characteristics.UNORDERED in to_map(lambda n: n, lambda n: n * n).characteristics
 
     # when
     res = await Stream.of(SOURCE).parallel().map(_slow_head).collect(to_map(lambda n: n, lambda n: n * n))
 
-    # then every pair is there, and the keys arrived in the race's order
+    # then every pair is there, and now in encounter order too
     assert res == {n: n * n for n in SOURCE}
-    assert list(res) != SOURCE
-    assert sorted(res) == SOURCE
+    assert list(res) == SOURCE
 
 
 @pytest.mark.asyncio
@@ -358,10 +368,30 @@ async def test_a_declaring_collector_is_unaffected_under_sequential() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unordered_removes_the_delivery_barrier() -> None:
-    # when the caller declares the pipeline unordered
+async def test_unordered_no_longer_helps_a_collector_that_partitions() -> None:
+    # make-combiners-live: to_list() gained a combiner (task 4.1), so
+    # .collect(to_list()) now takes the partitioned path whenever nothing in
+    # the chain needs a global view - and a partitioned merge is always in
+    # batch (encounter) order, unaffected by unordered() (parallel-reduction:
+    # "An unordered pipeline still merges in order"). unordered() still
+    # matters for other things under FORK_JOIN (limit/skip/distinct running
+    # inside the batches, an order-blind terminal not waiting on a slow
+    # batch elsewhere), but skipping to_list()'s own delivery order stopped
+    # being one of them the moment it became combinable.
     res = await Stream.of(SOURCE).parallel().unordered().map(_slow_head).collect(to_list())
-    # then the elements are all there and the order is the race's
+    assert res == SOURCE
+
+
+@pytest.mark.asyncio
+async def test_unordered_still_helps_a_collector_with_no_combiner() -> None:
+    # the case the test above used to be: a collector with no combiner never
+    # partitions (parallel-reduction), so it still drains through elements(),
+    # and unordered() still buys back the race's completion order there. Built
+    # directly rather than via the three-argument collect(), which always
+    # supplies a combiner.
+    no_combiner = Collector(list, list.append)
+
+    res = await Stream.of(SOURCE).parallel().unordered().map(_slow_head).collect(no_combiner)
     assert sorted(res) == SOURCE
     assert res != SOURCE
 
