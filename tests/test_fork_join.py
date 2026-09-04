@@ -64,15 +64,21 @@ async def test_parallel_flat_map_preserves_order_under_uneven_latency() -> None:
 async def test_in_flight_elements_are_bounded_by_workers_times_batch_size() -> None:
     in_flight = 0
     max_in_flight = 0
-    lock = asyncio.Lock()
+    # a plain threading.Lock, not asyncio.Lock: each batch runs its own
+    # asyncio.run() on its own OS thread, so this counter is genuinely
+    # shared across event loops - asyncio.Lock only binds to (and then
+    # rejects any other) loop once actually contended, which an
+    # increment/decrement this short rarely triggers, making that misuse
+    # a flaky pass rather than a reliable one
+    lock = threading.Lock()
 
     async def track(x: int) -> int:
         nonlocal in_flight, max_in_flight
-        async with lock:
+        with lock:
             in_flight += 1
             max_in_flight = max(max_in_flight, in_flight)
         await asyncio.sleep(0.01)
-        async with lock:
+        with lock:
             in_flight -= 1
         return x
 
