@@ -1,13 +1,11 @@
 from enum import Enum, auto
 from inspect import Parameter, signature
-from typing import Any, TypeVar, cast, overload
+from typing import Any, cast, overload
 from collections.abc import Callable
 
 from snakestream.callable_dispatch import is_async_callable
 from snakestream.exception import ComparatorContractException, StreamBuildException
 from snakestream.type import Comparator, KeyExtractor, KeyExtractorComparator
-
-T = TypeVar("T")
 
 # Named once so construction-time rejection (comparing()/then_comparing()) and
 # the comparator-segment wrapper's raising path (sort.py, Decision 3) name the
@@ -72,7 +70,7 @@ def _is_comparator_arity(fn: Callable) -> bool:
     extractor, the meaning such a callable already carries today."""
     try:
         params = signature(fn).parameters.values()
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return False
     count = 0
     for p in params:
@@ -83,7 +81,7 @@ def _is_comparator_arity(fn: Callable) -> bool:
     return count == _COMPARATOR_ARITY
 
 
-def _segment_is_async(payload: "KeyExtractor | KeyExtractorComparator") -> bool:
+def _segment_is_async(payload: KeyExtractor | KeyExtractorComparator) -> bool:
     """Whether a segment's payload contributes an await - Decision 1/6. A
     comparator segment's comparator is always sync (rejected otherwise at
     construction); only its optional extractor can be async. A bare
@@ -229,8 +227,8 @@ class KeyComparator:
         self._any_async = any(self._is_async)
 
     def then_comparing(
-        self, other: "KeyExtractor | KeyComparator | Comparator", key_comparator: "Comparator | None" = None
-    ) -> "KeyComparator":
+        self, other: KeyExtractor | KeyComparator | Comparator, key_comparator: Comparator | None = None
+    ) -> KeyComparator:
         """Append a tie-break ordering, matching Java's
         `Comparator.thenComparing`. `other` may be a bare key extractor,
         contributing one ascending segment; another `KeyComparator`, whose
@@ -260,7 +258,7 @@ class KeyComparator:
             return KeyComparator((*self.segments, ((None, comparator), False)), self.nulls)
         return KeyComparator((*self.segments, (cast("KeyExtractor", other), False)), self.nulls)
 
-    def reversed(self) -> "KeyComparator":
+    def reversed(self) -> KeyComparator:
         """Negate the whole ordering, matching Java's `Comparator.reversed`.
 
         Flips every segment's direction rather than wrapping __call__'s
@@ -315,7 +313,7 @@ class KeyComparator:
         return 0
 
 
-def comparing(key_extractor: KeyExtractor, key_comparator: "Comparator | None" = None) -> KeyComparator:
+def comparing(key_extractor: KeyExtractor, key_comparator: Comparator | None = None) -> KeyComparator:
     """Build a Comparator that orders by an extracted key, matching Java's
     `Comparator.comparing(keyExtractor)`. `key_comparator`, if given, orders
     the extracted keys rather than their natural ordering, matching Java's
@@ -396,7 +394,7 @@ class _NullsComparator:
         return await cast("Any", self._comparator)(a, b)
 
 
-def _nulls_tolerant(comparator: "KeyComparator | Comparator[Any] | None", placement: NullPlacement) -> Any:
+def _nulls_tolerant(comparator: KeyComparator | Comparator[Any] | None, placement: NullPlacement) -> Any:
     if comparator is None:
         return KeyComparator(((_constant_key, False),), placement)
     if isinstance(comparator, KeyComparator):
@@ -413,10 +411,10 @@ def nulls_first(comparator: None = None) -> KeyComparator: ...  # pragma: no cov
 
 
 @overload
-def nulls_first(comparator: "Comparator[T]") -> "Comparator[T]": ...  # pragma: no cover
+def nulls_first[T](comparator: Comparator[T]) -> Comparator[T]: ...  # pragma: no cover
 
 
-def nulls_first(comparator: "KeyComparator | Comparator[Any] | None" = None) -> Any:
+def nulls_first(comparator: KeyComparator | Comparator[Any] | None = None) -> Any:
     """Build a Comparator that orders `None` before every non-`None` value,
     matching Java's `Comparator.nullsFirst`. `comparator` orders two non-`None`
     values; when omitted, every non-`None` value is equivalent to every other,
@@ -448,10 +446,10 @@ def nulls_last(comparator: None = None) -> KeyComparator: ...  # pragma: no cove
 
 
 @overload
-def nulls_last(comparator: "Comparator[T]") -> "Comparator[T]": ...  # pragma: no cover
+def nulls_last[T](comparator: Comparator[T]) -> Comparator[T]: ...  # pragma: no cover
 
 
-def nulls_last(comparator: "KeyComparator | Comparator[Any] | None" = None) -> Any:
+def nulls_last(comparator: KeyComparator | Comparator[Any] | None = None) -> Any:
     """Build a Comparator that orders `None` after every non-`None` value,
     matching Java's `Comparator.nullsLast`. See `nulls_first`, whose rules -
     including the null-key tolerance Java has no direct route to - all apply
