@@ -1,6 +1,6 @@
 ## Purpose
 
-Defines the contract for `Stream.for_each_ordered(consumer)`, an ordered variant of `for_each()` that invokes the consumer in the stream's encounter order, even under `RACING` execution whose racing-branch execution model does not otherwise preserve order. Mirrors Java's `Stream.forEachOrdered()`, including the javadoc's "if the stream has a defined encounter order" caveat: a pipeline whose queued operations have cleared the ordering characteristic (see `stream-ordering`) has none, so there the guarantee is released and no delivery barrier is engaged — the same split Java's `ForEachOps` makes between `ForEachOrderedTask` and `ForEachTask`. Both cases run under the stream's own executor: the ordered one takes the racing executor's delivery barrier rather than forfeiting the concurrency the caller asked for, so every operation still races and only the invocation of the consumer is ordered. The guarantee therefore covers the consumer and nothing queued upstream of it.
+Defines the contract for `Stream.for_each_ordered(consumer)`, an ordered variant of `for_each()` that invokes the consumer in the stream's encounter order, even under the fork-join executor whose concurrent-batch execution model does not otherwise preserve order. Mirrors Java's `Stream.forEachOrdered()`, including the javadoc's "if the stream has a defined encounter order" caveat: a pipeline whose queued operations have cleared the ordering characteristic (see `stream-ordering`) has none, so there the guarantee is released and no delivery barrier is engaged — the same split Java's `ForEachOps` makes between `ForEachOrderedTask` and `ForEachTask`. Both cases run under the stream's own executor: the ordered one takes the fork-join executor's delivery barrier rather than forfeiting the concurrency the caller asked for, so every operation still runs concurrently and only the invocation of the consumer is ordered. The guarantee therefore covers the consumer and nothing queued upstream of it.
 
 ## Requirements
 
@@ -17,18 +17,18 @@ Defines the contract for `Stream.for_each_ordered(consumer)`, an ordered variant
 
 ### Requirement: for_each_ordered() preserves encounter order under RACING execution
 `Stream.for_each_ordered(consumer)`, when called on an **ordered** stream whose
-executor is `RACING` (i.e. `.parallel()` was the last mode switch before this
-call), SHALL invoke `consumer` in the stream's encounter order, even though
-`RACING`'s branch-racing execution does not itself preserve order and
-`for_each()` on the same stream makes no such guarantee. A stream is ordered
-for this purpose unless the pipeline's queued operations have cleared the
-ordering characteristic; see the `stream-ordering` capability.
+executor is the fork-join executor (i.e. `.parallel()` was the last mode switch
+before this call), SHALL invoke `consumer` in the stream's encounter order,
+even though fork-join's concurrent-batch execution does not itself preserve
+order and `for_each()` on the same stream makes no such guarantee. A stream is
+ordered for this purpose unless the pipeline's queued operations have cleared
+the ordering characteristic; see the `stream-ordering` capability.
 
-It SHALL obtain that order from the racing executor's delivery barrier — by
+It SHALL obtain that order from the fork-join executor's delivery barrier — by
 declaring that it observes encounter order, as every other order-observing
 terminal does — and SHALL NOT obtain it by driving the chain under the
 sequential executor. Every operation in the chain SHALL therefore still run
-across all branches concurrently; only the handing of finished elements to
+across all batches concurrently; only the handing of finished elements to
 `consumer` is ordered. See the `racing-encounter-order` capability, whose
 "Restoring order for delivery SHALL NOT serialize the chain" requirement
 governs this call as it governs `collect(to_list())`.
@@ -59,7 +59,7 @@ fallback to sequential traversal.
 
 ### Requirement: for_each_ordered() is released from the encounter-order guarantee on an unordered pipeline
 `Stream.for_each_ordered(consumer)` SHALL, when the pipeline's ordering
-characteristic is unordered, invoke `consumer` without engaging the racing
+characteristic is unordered, invoke `consumer` without engaging the fork-join
 executor's delivery barrier — making it equivalent to `for_each()` for such a
 pipeline, and forfeiting no concurrency the caller has asked for.
 
@@ -83,7 +83,7 @@ awaited if it returns an awaitable, in both the ordered and unordered cases.
   steps complete out of encounter order (e.g. a `.map()` with per-element
   variable delay), and `.for_each_ordered(consumer)` is awaited
 - **THEN** the consumer is invoked once per element, and the call is permitted
-  to run its branches concurrently rather than pulling strictly in encounter
+  to run its batches concurrently rather than pulling strictly in encounter
   order
 
 #### Scenario: Every element is still delivered exactly once when unordered

@@ -23,7 +23,7 @@ therefore inherit that capability's contract in full: composition of the queued
 chain without pulling any element, the caller driving iteration, the
 non-destructive composition that leaves the stream instance usable afterwards,
 and the declaration that the order elements arrive in is observable — so an
-ordered stream under the racing executor yields in encounter order through
+ordered stream under the fork-join executor yields in encounter order through
 `async for` exactly as it does through `iterator()`.
 
 No requirement of the `stream-iterator` capability is altered by this. The two

@@ -1,22 +1,27 @@
-"""How a composed chain actually runs. Four primitives do the work:
-_stream_through() (push in, pull out, lazily), _race_through() (N branches
-racing one shared source), _feed_through() (fused push straight to a
-terminal, nothing buffered) and _drain() (any generator into a terminal).
-_race_through() has a second gear: where encounter order has to be restored, it
-splits the chain, races everything upstream of the split and reorders at the
-merge — see ordering.py's split_point() and this module's _release_in_order().
-Two things ask for it. An operation whose answer depends on an element's
-position splits at its own index, and only that operation runs in the ordered
-pass; everything after it races again. A terminal that can tell what order
-elements reach it in splits at the end of the chain, so every operation still
-races and only delivery is reordered.
-Both of racing's merges - the plain one and the reorder barrier - drive their
-branches through _racing_branches(), which owns the in-flight anext() per
-branch and its teardown. It is scaffolding around the primitives rather than a
-fifth one: it decides nothing about what a pipeline produces, only that a merge
-arms and tears down its branch tasks the same way whichever loop is consuming
-them.
-Two Executor values sit on top: _Sequential.elements() and _Racing.elements()
+"""How a composed chain actually runs.
+
+Two shapes drive a chain into elements or a terminal: _stream_through() (push
+in, pull out, lazily — one worker, one sink chain) and _feed_through() (fused
+push straight into a terminal, nothing buffered between the last sink and it).
+_drain() closes the loop the other way, accumulating an already-composed
+generator into a terminal sink.
+
+_fork_join_through() is where parallel execution actually happens: a
+Spliterator-decomposed source, run batch by batch, each batch's chain on its
+own worker thread via asyncio.to_thread(). Contiguous batches never scramble
+encounter order the way the old racing executor's branches did, so there is no
+merge to restore it at — split_point() (ordering.py) still finds the one place
+a stateful op (sorted/distinct/limit/skip) needs a global view rather than a
+batch's worth, and the chain still splits there, but what runs at the split is
+a single ordinary pass over the concatenated batch output, not a reorder
+buffer. See design.md (fork-join-executor-and-spliterator) for the two
+declines this shape supports without one: round-level dispatch stays ordered
+(_fork_join_ordered_batches) only when something downstream needs it, and
+drops to a completion-ordered sliding window (_fork_join_unordered_batches)
+otherwise, so an order-blind short-circuiting terminal is never held back by
+an unrelated slow batch elsewhere in the same round.
+
+Two Executor values sit on top: _Sequential.elements() and _ForkJoin.elements()
 each pick a primitive; _Sequential.value() is the one asymmetry in the
 protocol, overriding the generic _drain(elements(...), terminal) with
 _feed_through() because composing-then-draining measured far more
@@ -28,68 +33,29 @@ import asyncio
 from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
 from typing import Any, ClassVar
-from collections.abc import AsyncGenerator, AsyncIterator, Iterator
+from collections.abc import AsyncGenerator, AsyncIterator
 
 from snakestream.ordering import OrderDemand, is_ordered, split_point
 from snakestream.sink import GeneratorBridgeSink, Op, Sink, TerminalSink
+from snakestream.spliterator import BATCH_SIZE, batch
 from snakestream.type import Aiter, StateMap, T
 
 
-# How many branches the racing executor fans a chain out across. Bound into
-# RACING below at import time, which is where it was always effectively bound:
-# the old _parallel() took it as a default argument value.
-PROCESSES: int = 4
-
-# How far ahead of the last released group one branch may pull, in source
-# elements, when the racing executor is honouring encounter order. Ordering
-# means holding a finished element until every earlier one has been released,
-# and without a bound one slow first element draws the whole source into
-# memory; this is the analogue of the leaf partitioning that bounds Java's
-# fork-join, which the one-shared-source design here otherwise lacks.
-#
-# Per worker, not a bare number, because the curve knees at the worker count
-# and so it is the ratio that governs (Python 3.14.5, 4 workers, 400 elements,
-# one 50ms element at the head among 1ms ones, best of 5, drained through
-# .distinct(); the axis is the window expressed in multiples of the worker
-# count, which is how it was measured):
-#
-#   W/worker:  0.25   0.5     1      2      4      8     16     32
-#             630ms  330ms  193ms  193ms  178ms  188ms  165ms  152ms
-#
-# The knee is at 1.0 -- one slot per worker. Below it the branches starve
-# waiting on the merge and the pipeline serialises (0.25/worker is 4x the cost
-# of 1/worker). Past it the curve is a slow 20% tail down to an effectively
-# unbounded window, which is the wrong 20% to buy: the same number bounds the
-# over-pull upstream of a short-circuiting op, so 32/worker would run
-# .peek(fn).limit(3)'s fn up to 128 times to gain 15% on a pipeline that drains
-# in full. 4 sits past the knee, holding at most four groups per branch.
-#
-# Not exported, and spec'd that way rather than argued for here: the
-# racing-encounter-order capability requires that no public name read or set
-# this bound, and gives a caller unordered() and sequential() as the levers
-# instead. That requirement is what makes retuning this a measurement rather
-# than a compatibility question.
-_IN_FLIGHT_PER_WORKER: int = 4
-
-
-def _in_flight(workers: int) -> int:
-    """The in-flight bound for a race across `workers` branches: elements
-    pulled from the shared source but not yet released by the merge. 16 at the
-    default worker count, so that is how many groups a default racing pipeline
-    holds resident at most.
-
-    A function rather than a derived constant so the derivation has one site,
-    which is the seam the bound's tests read and the one a test shrinking the
-    window to a single slot replaces."""
-    return _IN_FLIGHT_PER_WORKER * workers
+# How many worker threads the fork-join executor fans a chain's batches out
+# across. Bound into FORK_JOIN below at import time. Named WORKERS, not
+# PROCESSES: the old name was kept against the possibility that real
+# parallelism would arrive as a process pool - it arrived as threads, so the
+# name is now simply wrong (design.md, fork-join-executor-and-spliterator,
+# decision 4). Renamed rather than aliased: anything still importing
+# PROCESSES from here breaks loudly.
+WORKERS: int = 4
 
 
 async def _maybe_aclose(thing: AsyncIterator) -> None:
     """Close an async source, if it is one of the closeable ones — some
     accepted sources (e.g. a bare async iterator implementing only __anext__)
-    have no aclose(). Split out of maybe_aclosing() below so that _guarded(),
-    which has to close under a lock it cannot hold across a context manager's
-    exit, still asks the same question in the same words."""
+    have no aclose(). Split out of maybe_aclosing() below so every closer asks
+    the same question in the same words."""
     # getattr rather than hasattr so the widened annotation still type-checks;
     # narrowing to isinstance(thing, AsyncGenerator) would type-check too but
     # would stop closing a duck-typed closeable that is not a full generator.
@@ -108,53 +74,6 @@ async def maybe_aclosing(thing: Aiter) -> AsyncIterator[Aiter]:
         yield thing
     finally:
         await _maybe_aclose(thing)
-
-
-@asynccontextmanager
-async def _racing_branches(branches: list[AsyncGenerator]) -> AsyncIterator[dict[asyncio.Task[Any], int]]:
-    """The branch-task lifecycle both racing merges share: one in-flight
-    anext() per branch, armed on the way in and torn down on the way out.
-
-    What it yields is the merge's whole working set - the in-flight anext()
-    per branch, keyed by task so a completed one maps back to its branch in
-    O(1). It doubles as the waitlist and as the "any branch still running"
-    test, so nothing in a caller's loop is scanned or rebuilt per element. A
-    branch that raised StopAsyncIteration is simply not re-armed, which is
-    what drains the dict to empty. Callers re-arm through it directly; only
-    the arming and the teardown live here, because only those are identical
-    between them - _race_through() yields a completed result as it stands and
-    _release_in_order() buffers it by source index, and that difference is
-    the whole of what each loop is for.
-
-    The finally is load-bearing for the same reason maybe_aclosing()'s is,
-    one function up: a merge is abandoned far more often than it is drained.
-    Every short-circuiting terminal leaves through it - find_any(), the
-    *_match family, a limit() that filled - and so does any branch that
-    raised. A task left uncancelled there leaks, and one cancelled but never
-    gathered leaves its exception unretrieved.
-
-    Closing the branches is part of the teardown on *both* paths, which is
-    the one behaviour this extraction settles rather than preserves. It was
-    the barrier's alone before, on a reason that names the window: a branch
-    parked on a full window has a finally of its own to run - the shared
-    source's close - and cancelling its in-flight anext() does not reach a
-    branch that has no anext() outstanding. That reason does not extend to
-    the unwindowed path, but nothing established the converse either, and
-    closing is the conservative direction: aclose() on an exhausted or
-    already-closing async generator is a no-op, so a branch cannot be closed
-    twice. racing-encounter-order requires the shared source be closed
-    exactly as it is without a barrier, and it is now one mechanism that
-    makes that true rather than two that happen to agree."""
-    in_flight: dict[asyncio.Task[Any], int] = {asyncio.create_task(anext(branch)): idx for idx, branch in enumerate(branches)}
-    try:
-        yield in_flight
-    finally:
-        leftover = list(in_flight)
-        for task in leftover:
-            task.cancel()
-        await asyncio.gather(*leftover, return_exceptions=True)
-        for branch in branches:
-            await branch.aclose()
 
 
 def _wrap_sink(intermediaries: list[Op], terminal: Sink[Any]) -> Sink[Any]:
@@ -179,101 +98,6 @@ async def _copy_into(head: Sink[Any], src: AsyncGenerator, state_map: StateMap) 
             if head.cancellation_requested():
                 break
     await head.end()
-
-
-class _Window:
-    """The bounded read-ahead shared between _guarded() and the reorder merge.
-
-    Three counters, each with one job. `assigned` is the next source index to
-    hand out. `released` is the reorder cursor `_releasable()` walks: the first
-    index the merge has not yet released. `outstanding` is occupancy: the
-    number of slots claimed by `take()` and not yet returned by `release_one()`
-    or `give_back()`. Occupancy cannot be derived from the other two, because a
-    slot is claimed by `take()` before an index is assigned -- see design.md
-    Decision 2 in take-window-slots-atomically.
-
-    `size` is fixed at construction, from _in_flight() and the branch count, so
-    a pipeline runs to completion under the bound it started with -- reading it
-    per pull would let a rebind take effect part-way through a race, which is a
-    state no requirement describes and nothing needs."""
-
-    __slots__ = ("assigned", "event", "outstanding", "released", "size")
-
-    def __init__(self, size: int) -> None:
-        self.assigned = 0
-        self.released = 0
-        self.outstanding = 0
-        self.size = size
-        self.event = asyncio.Event()
-
-    def take(self) -> bool:
-        """Atomically claim a slot if one is free. Atomic because the body
-        contains no `await`, so nothing can run between the check and the
-        increment -- the same reason `_LimitSink.accept()`'s reserve-before-push
-        is atomic."""
-        if self.outstanding >= self.size:
-            return False
-        self.outstanding += 1
-        return True
-
-    def give_back(self) -> None:
-        """Return a slot claimed by take() that will produce no group -- the
-        mirror of the claim, not of release_one(): it advances no cursor."""
-        self.outstanding -= 1
-        self.event.set()
-
-    def release_one(self) -> None:
-        self.released += 1
-        self.outstanding -= 1
-        self.event.set()
-
-
-async def _guarded(source: AsyncIterator, lock: asyncio.Lock, window: _Window | None = None) -> AsyncGenerator:
-    """One branch's view of a source shared with other branches: every pull and
-    the final close happen under the shared lock. The source is already an
-    iterator (_race_through() calls aiter() once for all branches) and is only
-    closed if it is closeable, so this accepts every source the sequential path
-    does — not just the async generators _normalize() builds.
-
-    With a window, each element is handed on as `(index, element)` and the
-    window's bound on in-flight elements is enforced here. Both belong here for
-    the same reason: this is the last point at which pull order still *is*
-    encounter order, and it is already the only place a pull happens, so
-    bounding it costs no new synchronisation point. The slot is claimed before
-    the pull, which makes the bound conservative rather than exact: it counts a
-    pull about to happen as well as every element pulled and not released.
-    Without a window — every pipeline that needs no ordering barrier — neither
-    runs and the loop is what it always was."""
-    try:
-        while True:
-            if window is None:
-                async with lock:
-                    try:
-                        item = await anext(source)
-                    except StopAsyncIteration:
-                        return
-                yield item
-                continue
-            # wait *outside* the lock: holding it here would stall every
-            # other branch's pull, including the one holding the group the
-            # merge is waiting for, which is the deadlock this avoids
-            while not window.take():
-                window.event.clear()
-                await window.event.wait()
-            async with lock:
-                try:
-                    item = await anext(source)
-                except StopAsyncIteration:
-                    # no group will ever release this slot, so return it now
-                    # rather than shrink the window for the rest of the run
-                    window.give_back()
-                    return
-                index = window.assigned
-                window.assigned += 1
-            yield index, item
-    finally:
-        async with lock:
-            await _maybe_aclose(source)
 
 
 # --- the execution primitives -------------------------------------------
@@ -317,270 +141,6 @@ async def _stream_through(
             bridge.buffer.clear()
 
 
-async def _group_through(
-    chain: list[Op],
-    source: AsyncGenerator,
-    state_map: StateMap,
-) -> AsyncGenerator[tuple[int | None, list[Any]]]:
-    """_stream_through()'s group-yielding twin, for a branch upstream of an
-    ordering barrier: instead of yielding elements one at a time it yields
-    `(index, outputs)` — everything the chain emitted in response to the source
-    element carrying that index.
-
-    Grouping rather than tagging is what keeps every sink in the chain
-    untouched. The head chain does not preserve one output per input — filter
-    drops, flat_map multiplies — so a per-element tag has no answer for either,
-    while the group always does: encounter order for this chain's output is
-    exactly "every output of group 0, then group 1, ...". The bridge's buffer
-    is already flushed once per accept(), and that flush point *is* the group.
-
-    A group is yielded even when it is empty, because the merge advances on
-    consecutive indices and a dropped element must not leave a hole. Whatever
-    end() emits is yielded last under index None, ordered after every real
-    group — a buffering head op flushing at end() has no source position, and
-    the end of the stream is where its output belongs."""
-    bridge: GeneratorBridgeSink = GeneratorBridgeSink()
-    head = _wrap_sink(chain, bridge)
-    async with maybe_aclosing(source) as src:
-        await head.begin(state_map)
-        # same pre-first-pull guard as _copy_into(), which carries the reasoning
-        if not head.cancellation_requested():
-            async for index, item in src:
-                await head.accept(item)
-                outputs = bridge.buffer.copy()
-                bridge.buffer.clear()
-                yield index, outputs
-                if head.cancellation_requested():
-                    break
-        await head.end()
-        if bridge.buffer:
-            yield None, bridge.buffer.copy()
-            bridge.buffer.clear()
-
-
-def _releasable(pending: dict[int, list[Any]], window: _Window) -> Iterator[Any]:
-    """Everything the merge can let go of now: the outputs of every group from
-    the first unreleased index up to the first gap, with the window widened by
-    one per group. Sync, because deciding what is releasable involves no
-    awaiting — only the yielding of it does, and that is the caller's."""
-    while window.released in pending:
-        yield from pending.pop(window.released)
-        window.release_one()
-
-
-async def _release_in_order(
-    branches: list[AsyncGenerator],
-    window: _Window,
-) -> AsyncGenerator:
-    """The reorder barrier: the same FIRST_COMPLETED merge _race_through() runs,
-    with a buffer in front of the yield. Groups land in whatever order the
-    branches finish them; this holds each one until every earlier index has
-    gone out, so what leaves is the head chain's output in encounter order.
-
-    Releasing is also what unblocks the source: every index released widens the
-    read-ahead window by one, which is the only thing that ever does."""
-    pending: dict[int, list[Any]] = {}
-    # what the branches emitted from end(), which sorts after every real group
-    trailing: list[list[Any]] = []
-
-    async with _racing_branches(branches) as in_flight:
-        while in_flight:
-            done, _ = await asyncio.wait(in_flight, return_when=asyncio.FIRST_COMPLETED)
-
-            for task in done:
-                branch = in_flight.pop(task)
-                try:
-                    index, outputs = task.result()
-                except StopAsyncIteration:
-                    continue
-                in_flight[asyncio.create_task(anext(branches[branch]))] = branch
-                if index is None:
-                    trailing.append(outputs)
-                    continue
-                pending[index] = outputs
-                for out in _releasable(pending, window):
-                    yield out
-        for outputs in trailing:
-            for out in outputs:
-                yield out
-
-
-async def _run_ordered_tail(
-    tail: list[Op],
-    ordered: AsyncGenerator,
-    state_map: StateMap,
-    workers: int,
-    demand: OrderDemand,
-) -> AsyncGenerator:
-    """Everything from the barrier onward, over the reordered stream.
-
-    The barrier op alone runs in a single ordered pass — it is the one op in
-    the tail that asked to see the whole stream in order — and everything after
-    it races afresh. That the suffix may be order-blind is no longer an
-    objection: an order-observing terminal gets its own barrier when the
-    resumed race splits at len(), so `.limit(n).map(fetch)` gets its
-    concurrency back without scrambling what the caller receives. This replaced
-    an earlier rule that resumed only at an explicit unordered(), which cost
-    the caller every drop of concurrency downstream of a barrier.
-
-    `ordered_in` for the resumed race is the fold across the barrier op itself:
-    sorted() SETs, limit/skip/distinct PRESERVE what the barrier restored, and
-    the reordered stream arriving here is ordered by construction.
-
-    A tail of fewer than two ops has nothing left to race — an empty one is the
-    delivery-barrier case, where the reordered stream *is* the answer."""
-    barrier, rest = tail[:1], tail[1:]
-    if not rest:
-        async for out in _stream_through(barrier, ordered, state_map):
-            yield out
-        return
-    async for out in _race_through(
-        rest,
-        _stream_through(barrier, ordered, state_map),
-        workers,
-        demand,
-        is_ordered(barrier),
-    ):
-        yield out
-
-
-async def _race_through(
-    chain: list[Op],
-    source: AsyncGenerator,
-    workers: int,
-    demand: OrderDemand,
-    ordered_in: bool = True,
-) -> AsyncGenerator:
-    """The same chain, run by `workers` branches racing over one shared source.
-    Elements are yielded as branches finish them, so encounter order is not
-    preserved — unless something needs it (see split_point()), in which case
-    the chain is split there: the head races as ever, _release_in_order()
-    restores encounter order at the merge, and _run_ordered_tail() takes the
-    rest.
-
-    Two things can need it, and the split expresses both. An *operation* that
-    reads position splits at its own index. The *terminal* splits at len(chain)
-    when its `demand` says it can tell — every op still races and only delivery
-    is reordered.
-
-    `ordered_in` is the pipeline's ordering characteristic entering this chain,
-    True for a whole pipeline and carried across the split for a resumed tail.
-
-    There is still one executor; the split is internal and nothing outside this
-    function knows of it.
-
-    What the delivery barrier costs, and what the tail rule buys (Python
-    3.14.5, 4 workers, best of 5 / 3):
-
-      collect(to_list()) over 20,000 elements, map(x + 1) — no per-element wait,
-      so this is the machinery's own cost and nothing else:
-
-        racing, ordered delivery      10.01 us/element
-        racing, unordered()            7.51 us/element   1.33x cheaper
-        racing, count() (order-blind)  7.57 us/element   pays nothing, as spec'd
-
-      the same chain over 40 elements at 10ms each — the shape racing exists
-      for, where the branches have something to overlap:
-
-        racing, ordered delivery      105.5 ms
-        racing, unordered()           106.9 ms
-        sequential                    420.0 ms
-
-      that second shape says less than it appears to. Every element costs the
-      same 10ms, so elements complete in the order they were pulled and the
-      reorder buffer never holds one back: the barrier is free by construction
-      there, not by measurement, and a uniform-latency benchmark cannot detect
-      what it costs. Under *tail* latency it does cost something, by filling the
-      in-flight window behind a straggler while the branches idle (200
-      elements, 90% at 2ms and 10% at 50ms, 4 workers, ideal ~424 ms):
-
-        racing, ordered delivery      545.5 ms
-        racing, order-blind collector 487.2 ms   1.12x
-
-      so the +33% on the cheap chain is charged only where per-element work is
-      too cheap to race in the first place — but the barrier is not free on work
-      worth racing either, once the latencies are skewed, as real IO's are. That
-      is why the order-blind collectors declare UNORDERED (roadmap question 4,
-      closed 2026-08-31) rather than leaving the mark to buy nothing.
-      unordered() remains the lever, and remains measurably one.
-
-      Where the ordered path's cost actually sits, if anyone sets out to
-      cheapen it (2026-08-28, taken while pricing the rejected alternative in
-      order-min-max-tie-breaks; 20,000 elements, map(x + 1), 4 workers, Python
-      3.14.5, best of 5, all three draining into the same counting sink):
-
-        baseline (unordered)   7.32 us/element  _stream_through + plain merge
-        tagged, unmerged       8.03 us/element  _group_through  + plain merge      +9.7%
-        reorder barrier        8.71 us/element  _group_through  + _release_in_order +19%
-
-      Two roughly equal halves, not one: tagging costs 0.71 us/element and
-      reordering 0.68. _group_through() is the harder to remove -- the chain
-      drops and multiplies, so a per-element tag has no answer and the group is
-      the invariant. It is also a whole-path number, paying off for every
-      order-observing terminal at once, which is why order-min-max-tie-breaks
-      declined to spend it on two.
-
-      One shape is worth recording so it is not re-investigated: an *empty*
-      chain under .parallel(). Spinning four branches and a shared source up to
-      deliver a source nothing transforms costs far more than one ordered pass
-      (200 elements, best of 5, us per call):
-
-        find_first()             9.5 seq    132.7 par
-        collect(to_list())      78.2 seq   2045.4 par
-        count()                    -       1455.9 par
-
-      count() declares OrderDemand.NONE, takes no split and engages no barrier,
-      and still pays almost all of it -- so this is the branch-setup cost of
-      racing itself, not the reorder barrier, and it has been there since
-      delivery ordering landed. A fast path keyed on the barrier would fix
-      nothing. The shape is a caller asking to parallelise a pipeline with
-      nothing in it to parallelise.
-
-      .parallel().limit(8).map(50ms), which the old resume rule ran in a single
-      ordered pass because the suffix read no position:
-
-        before  403.4 ms   (8 x 50ms, serial)
-        after   101.7 ms   (4 branches, at the floor)"""
-    state_map: StateMap = {}
-    for op in chain:
-        state = op.make_shared_state()
-        if state is not None:
-            state_map[op] = state
-    lock = asyncio.Lock()
-    # aiter() once, here, and not inside _guarded(): _guarded() runs once per
-    # branch, so a source whose __aiter__ hands back a fresh iterator each call
-    # would give every branch its own copy and yield the elements `workers`
-    # times over. One iterator, shared under the lock, is what racing means.
-    shared = aiter(source)
-
-    split = split_point(chain, demand, ordered_in)
-    if split is not None:
-        # race the head, restore encounter order at the merge, hand the rest
-        # to the tail. One state map for the whole chain either way: head ops
-        # share theirs across branches, tail ops are built once and so share
-        # it with nobody, which comes to the same thing.
-        window = _Window(_in_flight(workers))
-        head = [_group_through(chain[:split], _guarded(shared, lock, window), state_map) for _ in range(workers)]
-        async for out in _run_ordered_tail(chain[split:], _release_in_order(head, window), state_map, workers, demand):
-            yield out
-        return
-
-    branches = [_stream_through(chain, _guarded(shared, lock), state_map) for _ in range(workers)]
-
-    async with _racing_branches(branches) as in_flight:
-        while in_flight:
-            done, _ = await asyncio.wait(in_flight, return_when=asyncio.FIRST_COMPLETED)
-
-            for task in done:
-                branch = in_flight.pop(task)
-                try:
-                    result = task.result()
-                except StopAsyncIteration:
-                    continue
-                in_flight[asyncio.create_task(anext(branches[branch]))] = branch
-                yield result
-
-
 async def _feed_through(chain: list[Op], source: AsyncGenerator, terminal: TerminalSink[Any]) -> Any:
     """Push source -> head -> terminal in a single ordered pass, with nothing
     buffered on the way: the last intermediate sink pushes straight into the
@@ -598,6 +158,263 @@ async def _drain(elements: AsyncGenerator, terminal: TerminalSink[Any]) -> Any:
     async with maybe_aclosing(elements) as src:
         await _copy_into(terminal, src, {})
     return terminal.result()
+
+
+# --- fork/join: the parallel executor -----------------------------------
+#
+# Contiguous batches never destroy encounter order, so nothing here restores
+# it — there was no reorder barrier under RACING for this to be an analogue
+# of, RACING itself no longer exists. What split_point() still finds is a
+# different problem entirely: a stateful op (sorted/distinct/limit/skip) that
+# needs a *global* view no per-batch chain can give it. See design.md
+# (fork-join-executor-and-spliterator) for both halves of the argument.
+
+# A short-circuiting terminal (limit(), find_any(), a `.limit()` barrier
+# downstream) should not have to wait out a full BATCH_SIZE-per-worker pull
+# just to discover it already has enough. The first round pulls this many
+# per worker instead - 4, one per worker (design.md decision 1's "made
+# concrete" addendum): _pull_round() already multiplies by `workers` once,
+# so a first-round size meant as the round's *total* would double-count it
+# (this was 16, meant as a total but read as per-worker, giving 64 rather
+# than 16 - caught by test_racing_encounter_order.py's own read-ahead
+# assertions). Later rounds grow to spliterator.BATCH_SIZE, the single
+# steady-state bound task 2.3 (fork-join-executor-and-spliterator) asks for.
+# A starting point, not a measurement — task 7.2 is where this gets one.
+_FIRST_BATCH_SIZE = 4
+
+
+async def _run_element(chain: list[Op], item: Any, state_map: StateMap) -> list[Any]:
+    """One batch element's whole chain, pushed through a sink built fresh for
+    it alone. Called under gather() so every element in a batch races
+    concurrently on the worker's own event loop — this is where the I/O
+    concurrency RACING bought is preserved, not lost, under fork/join.
+
+    A fresh bridge per element rather than one shared across the batch is
+    what makes that safe: gather() only orders its *return values*, not the
+    order in which its coroutines run or complete, so a bridge shared across
+    concurrently-accepting elements would accumulate in completion order.
+    One bridge per element sidesteps the question entirely — each element's
+    outputs are already isolated before gather() reassembles them by
+    argument order, the same property that makes _run_batch_async()'s
+    flatten below encounter-order-correct through flat_map's multiplication
+    and filter's drops alike."""
+    bridge = GeneratorBridgeSink()
+    head = _wrap_sink(chain, bridge)
+    await head.begin(state_map)
+    if not head.cancellation_requested():
+        await head.accept(item)
+    await head.end()
+    return bridge.buffer
+
+
+async def _run_batch_async(chain: list[Op], items: list[Any], state_map: StateMap) -> list[Any]:
+    """One worker's batch: every element raced via _run_element(), flattened
+    back into encounter order — "every output of element 0, then element 1,
+    ..." — exactly `_group_through()`'s old grouping invariant, reused here
+    because the reason it existed hasn't changed: a chain's output count
+    per input isn't 1:1 (filter drops, flat_map multiplies).
+
+    On a first exception, every sibling task in this batch is cancelled and
+    then awaited with return_exceptions=True before re-raising - so nothing
+    is left with an unretrieved exception, and the original exception (with
+    its own traceback) is what propagates, not a wrapper."""
+    tasks = [asyncio.create_task(_run_element(chain, item, state_map)) for item in items]
+    try:
+        results = await asyncio.gather(*tasks)
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+    return [out for outputs in results for out in outputs]
+
+
+def _run_batch_sync(chain: list[Op], items: list[Any], state_map: StateMap) -> list[Any]:
+    """asyncio.to_thread()'s callable — a fresh event loop for this batch
+    alone, since the shared upstream source can't cross threads but a batch
+    is already a plain materialised list by the time it gets here, and has
+    nothing loop-bound left about it."""
+    return asyncio.run(_run_batch_async(chain, items, state_map))
+
+
+async def _pull_round(source: AsyncIterator, workers: int, size: int) -> list[list[Any]]:
+    """Up to `workers` contiguous batches of at most `size` elements each,
+    pulled in sequence on this coroutine alone — the one place a fork-join
+    round touches the shared source, so there is nothing here for the two
+    asyncio.Lock sites RACING needed to guard against: no other coroutine
+    ever pulls from `source` concurrently with this one."""
+    round_batches = []
+    for _ in range(workers):
+        items = await batch(source, size)
+        if not items:
+            break
+        round_batches.append(items)
+    return round_batches
+
+
+async def _run_round(chain: list[Op], round_batches: list[list[Any]], state_map: StateMap) -> list[list[Any]]:
+    """Every batch in a round, on its own thread via _run_batch_sync(), waited
+    for together. On a first exception, every sibling task is cancelled and
+    then awaited with return_exceptions=True before re-raising, so nothing is
+    left with an unretrieved exception and the original exception (with its
+    own traceback) is what propagates - not one this function wraps."""
+    tasks = [asyncio.create_task(asyncio.to_thread(_run_batch_sync, chain, items, state_map)) for items in round_batches]
+    try:
+        return await asyncio.gather(*tasks)
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+
+
+async def _fork_join_ordered_batches(src: AsyncIterator, chain: list[Op], workers: int, state_map: StateMap) -> AsyncGenerator:
+    """One round of up to `workers` contiguous batches at a time —
+    _pull_round(), then _run_round() — yielded in batch order once the whole
+    round has returned. Batch order is encounter order for free: batches are
+    contiguous and pulled in sequence, so there is no merge to get wrong and
+    nothing to reorder afterwards. Used whenever something downstream —
+    an op needing a global view, or a terminal demanding it — needs that
+    order; see _fork_join_batches()."""
+    size = _FIRST_BATCH_SIZE
+    while True:
+        round_batches = await _pull_round(src, workers, size)
+        if not round_batches:
+            return
+
+        results = await _run_round(chain, round_batches, state_map)
+        for outputs in results:
+            for out in outputs:
+                yield out
+
+        if len(round_batches) < workers:
+            return
+        # deliberately the same BATCH_SIZE Spliterator.try_split() uses, not
+        # a separate constant chosen for this read-ahead bound specifically
+        # (design.md decision 1: one number for both, over splitting it) -
+        # steady-state in-flight is therefore workers * BATCH_SIZE, e.g.
+        # 4096 at the defaults, against the old window's 16. Every reason
+        # that window existed - memory held resident, latency behind a
+        # straggler, wasted upstream invocations under a short-circuiting
+        # terminal - still applies at this size; task 7.2 is where it gets
+        # measured and, if warranted, a bound of its own.
+        size = BATCH_SIZE
+
+
+async def _fork_join_unordered_batches(
+    src: AsyncIterator, chain: list[Op], workers: int, state_map: StateMap
+) -> AsyncGenerator:
+    """The order-blind twin of _fork_join_ordered_batches(): up to `workers`
+    batches in flight at once, each refilled the moment an earlier one
+    completes, with results yielded as soon as *any* batch returns rather
+    than held for its round. This is what an order-blind, short-circuiting
+    terminal (any_match(), find_any(), count(), for_each()) needs and the
+    ordered form cannot give it: waiting out a whole round means waiting on
+    every batch's slowest element, including ones a short-circuiting
+    terminal was never going to look at. Nothing here restores order — it
+    was never asked for — so this costs no index tag, window or release
+    buffer; it is a sliding window of in-flight batches, not a merge."""
+    in_flight: dict[asyncio.Task[list[Any]], None] = {}
+    exhausted = False
+    size = _FIRST_BATCH_SIZE
+
+    async def _fill() -> None:
+        nonlocal exhausted
+        while not exhausted and len(in_flight) < workers:
+            items = await batch(src, size)
+            if not items:
+                exhausted = True
+                return
+            task = asyncio.create_task(asyncio.to_thread(_run_batch_sync, chain, items, state_map))
+            in_flight[task] = None
+
+    try:
+        await _fill()
+        while in_flight:
+            done, _ = await asyncio.wait(in_flight, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                del in_flight[task]
+                for out in task.result():
+                    yield out
+            size = BATCH_SIZE
+            await _fill()
+    except BaseException:
+        for task in in_flight:
+            task.cancel()
+        await asyncio.gather(*in_flight, return_exceptions=True)
+        raise
+
+
+async def _fork_join_batches(chain: list[Op], source: AsyncGenerator, workers: int, ordered: bool) -> AsyncGenerator:
+    """The fork-join primitive proper, dispatching to the ordered or
+    order-blind form. One state map for the whole call either way, built once
+    here and shared into every batch regardless of which round or window slot
+    it lands in — the same requirement RACING's state_map met, now honoured by
+    ops.py's threading.Lock-guarded containers instead of asyncio's
+    single-event-loop cooperative scheduling (see design.md, decision 8).
+
+    aiter(source) once, here — not inside batch() — for the same reason
+    _race_through() called it exactly once on `shared`: source may be a bare
+    AsyncIterable whose __aiter__() returns a fresh iterator each call rather
+    than self (stream-execution-model's source-acceptance requirement covers
+    exactly this shape), and anext() requires an iterator, not merely an
+    iterable. One conversion up front, reused by every batch() pull."""
+    state_map: StateMap = {}
+    for op in chain:
+        state = op.make_shared_state()
+        if state is not None:
+            state_map[op] = state
+
+    async with maybe_aclosing(aiter(source)) as src:
+        through = _fork_join_ordered_batches if ordered else _fork_join_unordered_batches
+        async for out in through(src, chain, workers, state_map):
+            yield out
+
+
+async def _fork_join_through(
+    chain: list[Op],
+    source: AsyncGenerator,
+    workers: int,
+    demand: OrderDemand,
+    ordered_in: bool = True,
+) -> AsyncGenerator:
+    """The same chain, run by `workers` workers over contiguous batches of one
+    shared source. split_point() is reused unmodified (design.md decision 3):
+    it still finds the one op that needs a global view rather than a batch's
+    worth, and the chain still splits there — but there is no reorder barrier
+    to run afterwards, because fork/join's batches never scramble order in
+    the first place. The barrier op runs a single ordinary pass over the
+    concatenated, already-ordered batch output, and everything after it
+    resumes fork/join afresh, exactly as _run_ordered_tail() resumed
+    _race_through() for the ops downstream of RACING's barrier.
+
+    `ordered_in` carries the pipeline's ordering characteristic across a
+    resumed tail, the same seed is_ordered() and split_point() need it for
+    under RACING.
+
+    split is None means nothing downstream needs order at all — no op, no
+    terminal — so the whole chain runs order-blind (_fork_join_unordered_
+    batches, via _fork_join_batches(..., ordered=False)): an order-blind,
+    short-circuiting terminal gets results as batches complete rather than
+    waiting out a round behind an unrelated slow element."""
+    split = split_point(chain, demand, ordered_in)
+    if split is None:
+        async for out in _fork_join_batches(chain, source, workers, ordered=False):
+            yield out
+        return
+
+    head, tail = chain[:split], chain[split:]
+    # an empty head means the barrier is the chain's first op: nothing to
+    # fork/join yet, so skip straight to the single ordered pass rather than
+    # dispatching pure passthrough batches to worker threads for no reason
+    ordered = _fork_join_batches(head, source, workers, ordered=True) if head else source
+    barrier, rest = tail[:1], tail[1:]
+    if not rest:
+        async for out in _stream_through(barrier, ordered):
+            yield out
+        return
+    async for out in _fork_join_through(rest, _stream_through(barrier, ordered), workers, demand, is_ordered(barrier)):
+        yield out
 
 
 # --- the executors ------------------------------------------------------
@@ -628,7 +445,7 @@ class Executor(ABC):
 
     async def value(self, chain: list[Op], source: AsyncGenerator, terminal: TerminalSink[Any], demand: OrderDemand) -> Any:
         """The general form: compose, then _drain into the terminal. Correct for
-        any executor; _Racing uses it unchanged."""
+        any executor; _ForkJoin uses it unchanged."""
         return await _drain(self.elements(chain, source, demand), terminal)
 
 
@@ -656,7 +473,7 @@ class _Sequential(Executor):
         return await _feed_through(chain, source, terminal)
 
 
-class _Racing(Executor):
+class _ForkJoin(Executor):
     is_parallel = True
 
     __slots__ = ("workers",)
@@ -665,12 +482,13 @@ class _Racing(Executor):
         self.workers = workers
 
     def elements(self, chain: list[Op], source: AsyncGenerator, demand: OrderDemand) -> AsyncGenerator:
-        return _race_through(chain, source, self.workers, demand)
+        return _fork_join_through(chain, source, self.workers, demand)
 
-    # value() is inherited: each racing branch owns its own sink chain, so
-    # there is no single chain to fuse a terminal onto. The general form is
-    # the only form available here, which is why it is the base.
+    # value() is inherited: a batch's chain is built fresh per element
+    # (_run_element()), not shared across a single composed chain a terminal
+    # could be fused onto, so there is no single chain to fuse it with. See
+    # stream-execution-model, this change's delta.
 
 
 SEQUENTIAL = _Sequential()
-RACING = _Racing(PROCESSES)
+FORK_JOIN = _ForkJoin(WORKERS)

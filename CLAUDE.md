@@ -54,33 +54,41 @@ This means:
 Execution mode is a **value, not a type**. There is no `ParallelStream` class. `execution.py` holds two executors and the primitives they are built from:
 
 ```
-_stream_through(chain, src)          -> AsyncGenerator   one worker, elements out lazily
-_group_through(chain, src, state)    -> AsyncGenerator   one worker, (index, outputs) per source element
-_race_through(chain, src, workers, ordered)
-                                    -> AsyncGenerator   N branches racing one shared source
-_feed_through(chain, src, terminal)  -> value            fused push, nothing buffered
-_drain(elements, terminal)           -> value            any generator into a terminal
+_stream_through(chain, src)             -> AsyncGenerator   one worker, elements out lazily
+_feed_through(chain, src, terminal)     -> value            fused push, nothing buffered
+_drain(elements, terminal)              -> value            any generator into a terminal
+_fork_join_through(chain, src, workers, demand, ordered_in)
+                                       -> AsyncGenerator   contiguous batches, each on its own thread
 
 SEQUENTIAL.elements = _stream_through      SEQUENTIAL.value = _feed_through  (override)
-RACING.elements     = _race_through        RACING.value     = inherited generic
+FORK_JOIN.elements  = _fork_join_through   FORK_JOIN.value  = inherited generic
 ```
 
-`Executor.value()`'s generic default is `_drain(self.elements(...), terminal)`, which `_Racing` uses unchanged — each racing branch owns its own sink chain, so there is no single chain to fuse a terminal onto. `_Sequential.value()` overrides it with the fused push purely on measurement: composing and then draining costs +125% per element on `count()`. That override is the one asymmetry in the protocol; its docstring carries the figures.
+`Executor.value()`'s generic default is `_drain(self.elements(...), terminal)`, which `_ForkJoin` uses unchanged — each batch builds and tears down its own sink chain on its own OS thread, so there is no single, long-lived chain a terminal could be fused onto (fusing would need the terminal to accumulate correctly across concurrently-running batches, which is exactly the `Collector` combiner this library does not yet drive). `_Sequential.value()` overrides it with the fused push purely on measurement: composing and then draining costs +125% per element on `count()`. That override is the one asymmetry in the protocol; its docstring carries the figures.
+
+`.parallel()` decomposes the source with `spliterator()` (`Spliterator[T]`, `stream.py`/`spliterator.py`) rather than racing `asyncio` tasks over a shared generator on one thread. `_fork_join_through()` pulls up to `WORKERS` contiguous batches at a time — `_pull_round()`, the one place a round touches the shared source, so there is no cross-coroutine contention on it to guard against — and dispatches each batch's chain onto its own OS thread via `asyncio.to_thread(_run_batch_sync, ...)`. Contiguous batches never scramble encounter order the way the old racing branches did, so there is no merge to restore it at: batch order already *is* encounter order, since batches are pulled in sequence. `WORKERS` (renamed from `PROCESSES`, since it now names threads rather than a process-pool design that was never built) defaults to 4; a batch's own elements still race each other concurrently within the batch (`_run_batch_async()`, one `_run_element()` task per item on the worker's own event loop), which is where the I/O concurrency the old racing executor bought is preserved rather than lost.
+
+Whether "on its own OS thread" means real CPU parallelism depends on the interpreter build: GIL-bound on the standard build (only one thread runs Python bytecode at a time, confirmed at ~1.0x), genuinely parallel on the free-threaded build (3.14t, PEP 779; ~2x measured, but only once the source spans enough batches to spread across workers — a small source can land entirely in one worker's batch and see no benefit). Cheap, non-blocking callables pay a new cost on either build — a real `asyncio.to_thread` dispatch per batch rather than one more cooperatively-scheduled `asyncio` task — which scales with the number of batch dispatches (roughly `source size / BATCH_SIZE` at steady state), not with worker count alone, which is why `.sequential()` remains the documented remedy for a pipeline where `.parallel()` was never buying anything (see README's Migration entry, design.md's Risks, and `benchmark-findings.md`, all in `fork-join-executor-and-spliterator`).
 
 A stream consults its executor in exactly two places: `iterator()` (`self._executor.elements(...)`) and `_evaluate()` (`self._executor.value(...)`). Both operations carry the consumer's `OrderDemand` declaration alongside the chain and the source — a second axis, orthogonal to which executor the stream carries, and the input to the delivery barrier described below. No terminal names an executor for itself any more. A terminal that needs encounter order says so as a *demand* — `OrderDemand`, the value it passes alongside the chain — and the executor it runs under is always the stream's. `find_first()` is the one terminal whose demand is unconditional (`ALWAYS`), which is why it has one implementation rather than a per-mode pair; `for_each_ordered()`'s is conditional (`IF_ORDERED`) like every other order-observing terminal's. Both used to name `SEQUENTIAL` and both stopped, because naming it forfeited the caller's mode to express an ordering demand, and went a step further than Java: `ForEachOrderedTask` is itself a fork-join task, and `FindTask` scans leftmost *across* branches rather than dropping to a sequential traversal.
 
 `Stream._is_ordered()`, the private wrapper around `ordering.py`'s `is_ordered()` fold, has one caller left: `Stream.concat()`, which uses it to decide whether the concatenation inherits `unordered()`. It is deliberately not public: Java exposes only `isParallel()` and keeps `ORDERED` in the package-private `StreamOpFlag`.
 
-`.parallel()` / `.sequential()` each derive with no op and their target executor — `_derive()` with its `op` argument omitted and `executor` set to `RACING`/`SEQUENTIAL` — giving a new stream over the **same source and same chain**, differing only in its executor, with the receiver consumed. `sequential()`'s docstring carries the rules both obey and `parallel()` points at it. They deliberately do **not** compose — that is what makes them position-independent, matching Java, where `parallel()` sets a flag on the source stage. The last mode switch before a terminal governs the whole pipeline.
+`.parallel()` / `.sequential()` each derive with no op and their target executor — `_derive()` with its `op` argument omitted and `executor` set to `FORK_JOIN`/`SEQUENTIAL` — giving a new stream over the **same source and same chain**, differing only in its executor, with the receiver consumed. `sequential()`'s docstring carries the rules both obey and `parallel()` points at it. They deliberately do **not** compose — that is what makes them position-independent, matching Java, where `parallel()` sets a flag on the source stage. The last mode switch before a terminal governs the whole pipeline.
 
 ### The ordering barrier
 
-Racing destroys encounter order at the `FIRST_COMPLETED` merge. Two things want
-it back, and one mechanism gives it to both: `_race_through()` has a second gear,
-and whether it engages is a property of the chain plus the consumer, not of the
-executor. The whole encounter-order model behind this section — `Ordering`,
+Fork/join's batches are contiguous and pulled in sequence, so — unlike the old
+racing executor's `FIRST_COMPLETED` merge — there is nothing that scrambles
+encounter order to begin with. What still needs a barrier is an op whose
+answer depends on an element's *position* (`sorted`, `limit`, `skip`,
+`distinct`): it needs to see the whole stream, not one batch's worth, so the
+chain still has to split around it. The whole encounter-order model — `Ordering`,
 `OrderDemand`, `is_ordered()` and `split_point()` — lives in one file,
-`ordering.py`; `sink.py` and `execution.py` each import from it what they need.
+`ordering.py`; `sink.py` and `execution.py` each import from it what they need,
+and `split_point()` itself is unchanged from the racing executor (design.md,
+`fork-join-executor-and-spliterator`, decision 3) — only what runs at the split
+is different.
 
 `ordering.py`'s `split_point(chain, demand, ordered_in)` returns where order
 has to be restored. Three clauses, first hit wins, and the third is the first
@@ -95,55 +103,64 @@ two again one level up — `Ordering.SET` is to `OrderDemand.ALWAYS` what
 - `len(chain)`, when the **terminal** demands it — unconditionally
   (`ALWAYS`, `find_first()` alone), or conditionally (`IF_ORDERED`) with the
   pipeline ordered at the end of the chain. A split at the end means every op
-  still races and only delivery is reordered, which is Java's shape and costs no
-  per-element concurrency.
+  still runs concurrently and only delivery is reordered, which is Java's shape
+  and costs no per-element concurrency.
 
-When there is no split — every pipeline the caller declared `unordered()` before
-the relevant point, and every order-blind terminal — `_race_through()` runs
-exactly the code it always did, at the same per-element cost.
+When there is no split — every pipeline the caller declared `unordered()`
+before the relevant point, and every order-blind terminal — `_fork_join_through()`
+dispatches through `_fork_join_batches(..., ordered=False)`, which drops to
+`_fork_join_unordered_batches()`: a sliding window of up to `WORKERS` batches
+in flight, each refilled the moment an earlier one completes and yielded as
+soon as *any* batch returns, rather than held for its round. This is what an
+order-blind, short-circuiting terminal (`any_match()`, `find_any()`) needs and
+the ordered form cannot give it — waiting out a whole round means waiting on
+every batch's slowest element, including ones the terminal was never going to
+look at.
 
-When there is one, the chain splits there. The head races across branches as
-ever, but over `_guarded(shared, lock, window)`, which tags each element with
-the source index it assigns under the lock — the last point at which pull order
-still *is* encounter order. Each branch runs `_group_through()` rather than
-`_stream_through()`, yielding `(index, outputs)`: everything the head emitted for
-one source element, since a head chain does not preserve one output per input
-(`filter` drops, `flat_map` multiplies) and the group is the invariant a
-per-element tag is not. `_release_in_order()` holds arriving groups until every
-earlier index has gone out, and `_run_ordered_tail()` takes the rest: the
-barrier op alone runs in one ordered pass, and **everything after it races**,
-re-entering `_race_through()` with `ordered_in` carrying the ordering
-characteristic across the split. So `.limit(n).map(fetch)` races the `map`, and
-an order-observing terminal downstream of it gets its own delivery barrier from
-the resumed race. `is_ordered(chain, upto, initial)`'s `initial` seed exists for
-exactly that re-entry: a suffix's ordering was decided by ops no longer in the
-list.
+When there is one, the chain splits there. The head runs through
+`_fork_join_batches(head, source, workers, ordered=True)`, which dispatches
+`_fork_join_ordered_batches()`: one round of up to `WORKERS` contiguous
+batches at a time — `_pull_round()`, then `_run_round()` (each batch's chain
+on its own thread via `asyncio.to_thread`) — yielded in batch order once the
+whole round has returned. Batch order is encounter order for free, so there is
+no merge to get wrong and nothing to reorder afterwards, unlike the old
+racing executor's per-element index tag and release buffer. The barrier op
+then runs a single ordinary pass (`_stream_through`) over that
+already-ordered, concatenated batch output, and **everything after it resumes
+fork/join afresh** — `_fork_join_through()` re-entering itself with
+`ordered_in` carrying the ordering characteristic across the split, the same
+seed `is_ordered()` and `split_point()` need for a resumed suffix. So
+`.limit(n).map(fetch)` still runs `map` across batches, and an
+order-observing terminal downstream of it gets its own delivery barrier from
+the resumed dispatch.
 
 Which terminals observe order is declared at each terminal's own call site, as
 a bool passed to `_evaluate()` and on through `Executor.value()`/`elements()`.
 `count()`, `for_each()`, `find_any()`, `max`/`min` and the `*_match` family
-declare `NONE` and pay nothing; `reduce()`, `to_array()`, the three-argument
+declare `NONE` and pay nothing (in the general case — see below for the one
+bounded exception); `reduce()`, `to_array()`, the three-argument
 `collect()`, `for_each_ordered()` and `iterator()` declare `IF_ORDERED`;
 `collect(collector)` reads the collector's `Characteristics.UNORDERED` to pick
 between those two. `find_first()` declares `ALWAYS`, alone: its demand survives
-`unordered()`, which is coherent because the barrier can always restore
-encounter order — `_guarded()` assigns the source index under the lock, and
-`unordered()` clears the requirement to honour it, never the ability.
+`unordered()`, which is coherent because contiguous batches always let order be
+restored — `unordered()` clears the requirement to honour it, never the ability.
 
-Read-ahead is bounded by `_in_flight(workers)` — `_IN_FLIGHT_PER_WORKER` slots
-per branch, 16 at the default worker count — fixed on the `_Window` at
-construction and enforced in `_guarded()` where the index is assigned, the only
-place a pull happens, so the bound costs no new synchronisation point. It scales
-with the branch count rather than being a bare number because the tuning curve
-knees at one slot per worker, so the ratio is what governs. The value is
-deliberately private and spec'd that way: it bounds three things at once —
-buffer memory, latency behind a straggler, and how many elements a chain
-callable runs on under a short-circuiting terminal — and the lever a caller is
-given for all three is `unordered()`, not a number. A branch waits *outside* the
-lock and re-checks after acquiring it; waiting while holding it would stall the
-very branch the merge is waiting for. Head-of-line blocking remains, as it
-must; `unordered()` is the escape hatch, and is what makes it a real
-performance lever rather than a semantic footnote.
+Read-ahead has no bespoke bound any more — no `_Window`, no per-branch slot
+count. The steady-state in-flight amount is `WORKERS * BATCH_SIZE` (the same
+`BATCH_SIZE` `Spliterator.try_split()` uses — one number for both, deliberately,
+per design.md decision 1 — 4096 at the defaults, against the old window's 16),
+with the first round smaller (`_FIRST_BATCH_SIZE`, 4 per worker) so a
+short-circuiting terminal doesn't over-pull on its very first round. Every
+reason the old window existed — memory held resident, latency behind a
+straggler, wasted upstream invocations under a short-circuiting terminal —
+still applies at this size, and the lever a caller is given for all three
+remains `unordered()`, not a number. One bounded exception is new and
+accepted rather than fixed: an order-blind, short-circuiting terminal may
+still be delayed by a slow, unrelated element sharing its own batch with the
+one that would have satisfied it, bounded by that batch's size — never by an
+earlier one, and never unboundedly (design.md decision 10; see
+`racing-encounter-order`'s "Read-ahead under an ordered racing pipeline is
+bounded" requirement for the accepted-and-bounded framing this extends).
 
 The split is internal. It is not a third executor, is not selectable, and
 `is_parallel()` still reports the executor the stream carries.

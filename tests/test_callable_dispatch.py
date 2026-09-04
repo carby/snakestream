@@ -259,6 +259,43 @@ async def test_map_classification_does_not_leak_across_compositions() -> None:
     assert second == [8, 10, 12]
 
 
+@pytest.mark.asyncio
+async def test_classification_is_not_repeated_per_element_under_fork_join(monkeypatch) -> None:
+    # Regression test for a real bug caught by cross-session review after this
+    # change's own audit gate missed it: execution._run_element() builds a
+    # fresh sink per element, so FilterOp/MapOp/PeekOp's sinks classifying
+    # their own callable in AsyncDispatch._init_dispatch() reclassified once
+    # per element rather than once per composition - measured at 1001 calls
+    # for 500 elements through map+filter, against 3 sequentially. Fixed by
+    # classifying once on the Op (ops.py's _SinglePureCallableOp) instead.
+    calls = 0
+    real = is_async_callable
+
+    def counting(fn):
+        nonlocal calls
+        calls += 1
+        return real(fn)
+
+    monkeypatch.setattr("snakestream.ops.is_async_callable", counting)
+    monkeypatch.setattr("snakestream.callable_dispatch.is_async_callable", counting)
+
+    values = list(range(500))
+
+    calls = 0
+    sequential = await Stream.of(values).map(_sync_double).filter(lambda x: True).collect(to_list())
+    sequential_calls = calls
+
+    calls = 0
+    parallel = await Stream.of(values).parallel().map(_sync_double).filter(lambda x: True).collect(to_list())
+    parallel_calls = calls
+
+    assert sorted(parallel) == sorted(sequential)
+    assert parallel_calls == sequential_calls, (
+        f"fork-join reclassified per element or per sink ({parallel_calls} calls) "
+        f"instead of once per composition ({sequential_calls} calls)"
+    )
+
+
 # --- 5.4 ParallelStream coverage ---
 
 

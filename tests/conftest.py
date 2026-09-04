@@ -64,9 +64,9 @@ async def async_int_to_letter(int_2_letter):
 # source to show it, hence conftest rather than four copies.
 #
 # One slow element at position 0, everything else cheap. Not the slow *head* of
-# tests/test_racing_encounter_order.py: with PROCESSES branches, a slow head is
-# pulled by all of them at t=0 and still finishes before the tail, so it puts no
-# reordering pressure on element 0 specifically. With a single slow element the
+# tests/test_racing_encounter_order.py: with WORKERS-many batches in flight, a
+# slow head still finishes before the tail, so it puts no reordering pressure
+# on element 0 specifically. With a single slow element the
 # whole tail - TIED_LATE included - drains past it while it is still sleeping,
 # so under a plain race the later of the two tied records is seen first and only
 # the barrier makes the earlier one win.

@@ -5,7 +5,7 @@ import pytest
 from collections.abc import AsyncGenerator
 
 from snakestream import Stream
-from snakestream.execution import PROCESSES, _in_flight
+from snakestream.execution import WORKERS, _FIRST_BATCH_SIZE
 
 
 async def _slower_for_earlier(x: int) -> int:
@@ -96,20 +96,35 @@ async def test_find_first_on_unordered_parallel_stream_still_finds_the_first() -
 
 @pytest.mark.asyncio
 async def test_find_any_remains_the_unordered_alternative() -> None:
-    # given
-    seen = set()
+    # given an unbounded source whose first element is far slower than the
+    # rest. A round-based assertion (e.g. "fewer than N elements visited")
+    # would pass even under fully-ordered dispatch, since a short-circuiting
+    # terminal already stops after round 1 either way - it does not by
+    # itself demonstrate order-blindness. Timing does: element 0 sits in the
+    # first batch fork-join-executor-and-spliterator dispatches, and only an
+    # order-blind terminal can return from a *different*, faster batch
+    # without waiting for that one (design.md decision 10; see also
+    # test_an_order_blind_terminal_holds_nothing_back, whose slow-batch
+    # exception this shape deliberately avoids by not requiring a specific
+    # element)
+    async def endless():
+        i = 0
+        while True:
+            yield i
+            i += 1
 
-    async def track_and_delay(n: int) -> int:
-        seen.add(n)
-        return await _delay_by_position(n)
+    async def one_slow_element(n: int) -> int:
+        await asyncio.sleep(5 if n == 0 else 0.0)
+        return n
 
     # when
-    it = await Stream.of(values).parallel().map(track_and_delay).find_any()
+    it = await asyncio.wait_for(
+        Stream.of(endless()).parallel().map(one_slow_element).find_any(),
+        timeout=2,
+    )
 
-    # then: find_any() still returns without a strictly ordered pull through
-    # the whole source - not every element was necessarily visited
-    assert it in values
-    assert len(seen) < len(values)
+    # then: find_any() returned without waiting on element 0's batch
+    assert it != 0
 
 
 @pytest.mark.asyncio
@@ -216,8 +231,9 @@ async def test_find_first_no_longer_overrides_unordered_for_a_positional_op() ->
 
 @pytest.mark.asyncio
 async def test_a_parallel_find_first_may_process_more_than_one_element() -> None:
-    # given a head element slower than the ones behind it, so the branches keep
-    # pulling while index 0 is outstanding - the shape that fills the window
+    # given a head element slower than the ones behind it, so the batches
+    # sharing find_first()'s barrier keep pulling while index 0 is outstanding
+    # - the shape that fills the first round
     calls: list[int] = []
 
     async def timed(x: int) -> int:
@@ -229,11 +245,12 @@ async def test_a_parallel_find_first_may_process_more_than_one_element() -> None
     it = await Stream.of(_SOURCE).parallel().map(timed).find_first()
 
     # then the right answer, and more than one element processed to get it -
-    # bounded by the in-flight window. Asserted as invariants, never as the
-    # measured figure: the count sits between PROCESSES and _in_flight(PROCESSES)
-    # depending on how the branches interleave, which a loaded machine moves
+    # bounded by the first round's read-ahead. Asserted as invariants, never
+    # as the measured figure: the count sits between WORKERS and
+    # WORKERS * _FIRST_BATCH_SIZE depending on how the batches interleave,
+    # which a loaded machine moves
     assert it == 0
-    assert 1 < len(calls) <= _in_flight(PROCESSES)
+    assert 1 < len(calls) <= WORKERS * _FIRST_BATCH_SIZE
 
 
 @pytest.mark.asyncio

@@ -72,10 +72,10 @@ class Op(ABC):
     take unchanged:
 
     make_shared_state() returns one fresh instance of the state this op's sinks
-    share when several chains are built from the same op list (see
-    RACING), or None for a stateless op. None means "no shared state",
-    so an op that does need state returns a container — a set, a list, a
-    counter object — never None.
+    share when several chains are built from the same op list (see the
+    parallel executor, execution.py), or None for a stateless op. None means
+    "no shared state", so an op that does need state returns a container — a
+    set, a list, a counter object — never None.
 
     ordering declares what this op does to encounter order. PRESERVE is right
     for every op that neither reorders nor imposes an order — filter, map,
@@ -133,19 +133,20 @@ class StatelessOp(_ArgsOp):
     """An Op that holds the arguments it was constructed with and hands them to
     its sink class, in that order, after the downstream.
 
-    Stateless here means no *shared* state — nothing that has to cross
-    RACING's racing branches. A sink may still buffer locally: `sorted`
-    holds the whole stream in its sink and is still a StatelessOp, because that
-    buffer belongs to one sink and is never shared with another."""
+    Stateless here means no *shared* state — nothing that has to cross the
+    parallel executor's concurrently-running batches. A sink may still buffer
+    locally: `sorted` holds the whole stream in its sink and is still a
+    StatelessOp, because that buffer belongs to one sink and is never shared
+    with another."""
 
     def link(self, downstream: Sink[Any]) -> Sink[Any]:
         return self._sink_cls(downstream, *self._args)
 
 
 class StatefulOp(_ArgsOp):
-    """An Op whose sinks share state across the chains built from it (see
-    RACING). Like StatelessOp, but link() passes the op itself as the
-    sink's second argument, so the sink can key the state map by it.
+    """An Op whose sinks share state across the chains built from it (see the
+    parallel executor). Like StatelessOp, but link() passes the op itself as
+    the sink's second argument, so the sink can key the state map by it.
 
     A subclass sets _sink_cls and overrides make_shared_state() to declare what
     that state is — the only place that shape is stated, since StatefulSink
@@ -258,7 +259,8 @@ class GeneratorBridgeSink(TerminalSink[T]):
     calling a drain() that hands back a fresh list - that ran once per element,
     on the hot path. Clearing after the yields is safe because nothing can push
     into a bridge whose driving loop is suspended: that loop is the only thing
-    driving accept(), and each RACING branch has its own bridge."""
+    driving accept(), and each batch's per-element chain has its own bridge
+    (execution.py's _run_element())."""
 
     def __init__(self) -> None:
         super().__init__()

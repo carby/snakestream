@@ -146,8 +146,9 @@ arrive in: a duplicate key is a property of the element multiset.
 *Which* colliding key is named MAY differ between orderings when the elements
 contain two or more distinct collisions, and callers SHALL NOT rely on a
 particular one. Under `SEQUENTIAL` the key named is the first collision in
-encounter order; under `RACING` the `UNORDERED` declaration skips the delivery
-barrier, so a later collision may be reached first and named instead.
+encounter order; under the fork-join executor the `UNORDERED` declaration
+skips the delivery barrier, so a later collision may be reached first and
+named instead.
 
 #### Scenario: a duplicate key raises under either executor
 - **WHEN** elements containing a duplicate key are collected with

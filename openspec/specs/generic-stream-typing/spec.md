@@ -12,7 +12,7 @@ Static typing guarantee that the element type flowing through a `Stream` pipelin
 - **THEN** `ty` infers its element type as `int`, not `Unknown`
 
 #### Scenario: A RACING stream inherits the element type
-- **WHEN** a `Stream[T]` is switched to `RACING` execution via `.parallel()`
+- **WHEN** a `Stream[T]` is switched to the fork-join executor via `.parallel()`
 - **THEN** the result is generic over the same element type — still `Stream[T]`, since execution mode is a value rather than a class, and the retired parallel-stream class was never exported so no published name changes
 
 ### Requirement: Type-changing intermediate operations update the element type

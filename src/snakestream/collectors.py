@@ -500,8 +500,9 @@ def to_map(
     #
     # The mark costs one thing, on the failure path. *Whether* a duplicate key
     # raises is a property of the multiset and does not change; which colliding
-    # key IllegalStateException names can, under RACING, once two or more
-    # distinct collisions are in play and no barrier orders their arrival.
+    # key IllegalStateException names can, under the parallel executor, once
+    # two or more distinct collisions are in play and nothing orders their
+    # arrival.
     return Collector(_supply, _accumulate, finisher=_finish, characteristics=_ORDER_BLIND if merge_function is None else ())
 
 

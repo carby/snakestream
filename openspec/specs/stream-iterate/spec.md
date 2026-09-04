@@ -89,7 +89,7 @@ consistent with "Awaitability is classified once per composition" in the
 
 The stream returned by `Stream.iterate()` SHALL support the full intermediate
 and terminal operation surface, including with an async `nxt`, and SHALL be
-usable under a racing executor via `.parallel()`. Because the sequence is
+usable under the fork-join executor via `.parallel()`. Because the sequence is
 infinite, a terminal operation SHALL only be reached through a
 short-circuiting operation such as `limit()` or a short-circuiting terminal.
 

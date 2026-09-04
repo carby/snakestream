@@ -10,7 +10,7 @@ import pytest
 from snakestream import Stream
 from snakestream.collectors import to_list
 from snakestream.exception import IllegalStateException
-from snakestream.execution import RACING, SEQUENTIAL
+from snakestream.execution import FORK_JOIN, SEQUENTIAL
 
 
 # --- execution mode is a value ---------------------------------------------
@@ -269,10 +269,11 @@ async def test_the_fused_override_is_indistinguishable_from_the_generic_form() -
 
 
 @pytest.mark.asyncio
-async def test_racing_uses_the_generic_value_unchanged() -> None:
-    # then: _Racing does not override value() — each branch owns its own sink
-    # chain, so there is no single chain to fuse a terminal onto
-    assert type(RACING).value is type(SEQUENTIAL).__mro__[1].value
+async def test_fork_join_uses_the_generic_value_unchanged() -> None:
+    # then: _ForkJoin does not override value() — a batch's chain is built
+    # fresh per element, not shared across a single chain a terminal could be
+    # fused onto
+    assert type(FORK_JOIN).value is type(SEQUENTIAL).__mro__[1].value
     assert type(SEQUENTIAL).value is not type(SEQUENTIAL).__mro__[1].value
 
 
@@ -328,9 +329,13 @@ async def test_racing_over_a_source_whose_aiter_returns_a_separate_iterator() ->
     racing = await Stream(_SeparateIterAsyncIterable(5)).parallel().collect(to_list())
 
     # then: the exact multiset, not merely the absence of an AttributeError.
-    # aiter() called once per branch instead of once per consumption would
-    # give every branch its own iterator and yield each element PROCESSES
-    # times over, which an existence-only assertion would happily pass.
+    # aiter() called once per pull instead of once for the whole run would
+    # give the source a fresh iterator on every pull and yield elements
+    # more than once, which an existence-only assertion would happily pass.
+    # (This particular chain has no intermediate ops, so it degenerates to
+    # a single sequential pass rather than exercising fork/join's batching -
+    # see test_fork_join.py's own version of this scenario, over a chain
+    # with a real op, for the one that does.)
     assert sorted(racing) == [0, 1, 2, 3, 4]
     assert len(racing) == 5
 

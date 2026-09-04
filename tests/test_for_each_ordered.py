@@ -36,8 +36,8 @@ async def test_for_each_ordered_async_consumer() -> None:
 # A jumbled (non-ascending) source, so "encounter order" is visibly distinct
 # from "sorted by value" - the guarantee under test is about position in the
 # source, not value magnitude. Earlier positions get a longer processing
-# delay than later ones, giving ParallelStream's racing branches real
-# reordering pressure on the queued .map() step.
+# delay than later ones, giving fork/join's batches real reordering pressure
+# on the queued .map() step.
 values = [4, 1, 7, 2, 8, 3, 6, 5]
 delay_by_position = {value: (len(values) - position) * 0.02 for position, value in enumerate(values)}
 
@@ -122,11 +122,11 @@ async def test_for_each_ordered_on_unordered_parallel_stream_does_not_deliver_in
 
 @pytest.mark.asyncio
 async def test_sorted_after_unordered_restores_the_for_each_ordered_guarantee() -> None:
-    # given the positional delay queued *before* the sort, so the racing
-    # branches really do split the source between them. Without it a sort that
-    # had stopped restoring the characteristic would still be indistinguishable
-    # here: the pipeline would run unordered under RACING with no barrier, and
-    # this would only catch it if the branches had each sorted a subset
+    # given the positional delay queued *before* the sort, so the batches
+    # really do split the source between them. Without it a sort that had
+    # stopped restoring the characteristic would still be indistinguishable
+    # here: the pipeline would run unordered with no barrier, and this would
+    # only catch it if each batch had sorted its own subset
     seen: list[int] = []
 
     # when
@@ -147,10 +147,11 @@ async def test_sorted_after_unordered_restores_the_for_each_ordered_guarantee() 
 # --- the ordered guarantee does not serialize the chain --------------------
 #
 # The guarantee used to be bought by naming SEQUENTIAL, which forfeited every
-# drop of concurrency the caller asked for. It is now the racing executor's
-# delivery barrier, so the chain still races and only the handing over to the
-# consumer is ordered. These pin that difference: without them, a regression to
-# the single-flight drive would leave the whole suite green.
+# drop of concurrency the caller asked for. It is now delivered for free by
+# fork/join's contiguous batching, so the chain still runs in parallel and
+# only the handing over to the consumer is ordered. These pin that
+# difference: without them, a regression to the single-flight drive would
+# leave the whole suite green.
 
 
 @pytest.mark.asyncio

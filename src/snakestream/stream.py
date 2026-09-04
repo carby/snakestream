@@ -3,13 +3,13 @@ from __future__ import annotations
 from copy import copy
 from inspect import isawaitable, iscoroutinefunction
 from typing import TYPE_CHECKING, Any, cast, overload
-from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Coroutine, Iterable
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Coroutine, Iterable, Sized
 
 from snakestream.callable_dispatch import is_async_callable
 from snakestream.collector import Collector, CollectorSink, StreamingCollector
 from snakestream.collectors import to_list
 from snakestream.exception import IllegalStateException, StreamBuildException
-from snakestream.execution import RACING, SEQUENTIAL, Executor
+from snakestream.execution import FORK_JOIN, SEQUENTIAL, Executor
 from snakestream.ops import (
     DistinctOp,
     FilterOp,
@@ -23,6 +23,7 @@ from snakestream.ops import (
 )
 from snakestream.ordering import OrderDemand, is_ordered
 from snakestream.sink import UNSET, Op, TerminalSink
+from snakestream.spliterator import Spliterator
 from snakestream.terminals import (
     CountSink,
     FindSink,
@@ -86,7 +87,8 @@ def _accept(source: Any) -> AsyncGenerator | None:
     # one question, not two: AsyncGenerator is a subclass of AsyncIterable, so
     # the narrower check could never be the deciding one. Everything accepted
     # here is passed through untouched, so the consuming side must not assume
-    # more than __aiter__ (see execution._guarded).
+    # more than __aiter__ (see execution._fork_join_batches(), which calls
+    # aiter() itself for exactly this reason rather than assuming __anext__).
     if isinstance(source, AsyncIterable):
         return source
     return None
@@ -99,8 +101,36 @@ async def _concat(a: AsyncGenerator, b: AsyncGenerator) -> AsyncGenerator:
         yield j
 
 
+def _estimate_size(source: Any) -> int | None:
+    """spliterator()'s size hint, read off the *raw* source at construction
+    time - before _normalize() erases it into an AsyncGenerator - by walking
+    the same branches _normalize() does. An async source is never sized here
+    (matches _accept()); the scalar set spreads into exactly one element,
+    same as _normalize()'s first branch; a Sized Iterable reports its length;
+    everything else - a generator, a bare __next__ iterator, or a genuinely
+    bare object - is unknown or, for the final scalar-object branch, one."""
+    if _accept(source) is not None:
+        return None
+    if isinstance(source, (dict, str, bytes, bytearray, memoryview)):
+        return 1
+    if isinstance(source, Iterable):
+        return len(source) if isinstance(source, Sized) else None
+    if hasattr(source, "__next__"):
+        return None
+    return 1
+
+
+# Ops after which the element count is no longer the source's: filtering,
+# flat-mapping and deduplication are data-dependent, and limit/skip change it
+# by an amount spliterator() would have to special-case rather than read off.
+# Map/Peek/Sorted/Unordered preserve cardinality, so their presence leaves a
+# known size hint intact.
+_CARDINALITY_CHANGING_OPS = (FilterOp, FlatMapOp, DistinctOp, LimitOp, SkipOp)
+
+
 class Stream[T]:
     def __init__(self, source: Any, close_handlers: list[CloseHandler] | None = None) -> None:
+        self._size_hint: int | None = _estimate_size(source)
         self._source: AsyncGenerator[T] = _accept(source) or _normalize(source)
         self._chain: list[Op] = []
         self._close_handlers: list[CloseHandler] = [] if close_handlers is None else close_handlers
@@ -285,13 +315,17 @@ class Stream[T]:
         return self._derive(executor=SEQUENTIAL)
 
     def parallel(self) -> Stream[T]:
-        """This pipeline under RACING; see sequential(), which carries the rules
-        both mode switches obey.
+        """This pipeline under FORK_JOIN; see sequential(), which carries the
+        rules both mode switches obey.
 
-        An ordered pipeline still delivers in encounter order: every op races
-        and only the handing over is reordered. unordered() opts out of that
-        and of the barrier an order-sensitive op needs; see its docstring."""
-        return self._derive(executor=RACING)
+        Elements run in contiguous batches, one per worker thread, so an
+        ordered pipeline still delivers in encounter order for free - there
+        is no reorder barrier because fork/join's batches never scramble it
+        in the first place. unordered() still matters for a stateful op
+        (limit/skip/distinct): it decides whether that op needs the single
+        global-view pass split_point() finds, or can run inside the batches
+        themselves; see its docstring."""
+        return self._derive(executor=FORK_JOIN)
 
     def iterator(self) -> AsyncGenerator[T]:
         self._check_not_consumed()
@@ -301,6 +335,23 @@ class Stream[T]:
         # inherit the answer.
         return self._executor.elements(self._chain, self._source, OrderDemand.IF_ORDERED)
 
+    def spliterator(self) -> Spliterator[T]:
+        """Composes like iterator() - same non-destructive contract, same
+        elements-producing operation - and wraps the result in a Spliterator
+        rather than handing it back raw.
+
+        The size hint is the constructor's estimate, read off the original
+        source before normalization erased it, unless a cardinality-changing
+        op (filter/flat_map/distinct/limit/skip) sits in the chain - at that
+        point the exact count is data-dependent and reporting it would be a
+        guess, which estimate_size() is specified not to do."""
+        self._check_not_consumed()
+        size = self._size_hint
+        if size is not None and any(isinstance(op, _CARDINALITY_CHANGING_OPS) for op in self._chain):
+            size = None
+        elements = self._executor.elements(self._chain, self._source, OrderDemand.IF_ORDERED)
+        return Spliterator(elements, ordered=self._is_ordered(), size=size)
+
     def unordered(self) -> Stream[T]:
         """Queues an op that clears encounter order for everything after it,
         and nothing else - see UnorderedOp, which links to no sink at all.
@@ -308,11 +359,13 @@ class Stream[T]:
         pipeline stage for the same reason, the deliberate opposite of its
         parallel(), which sets a flag on the source stage so as *not* to be.
 
-        Under RACING this is the performance lever, and it is the primary way
-        to buy concurrency back. An ordered racing pipeline holds a finished
-        element until every earlier one has been released - for an operation
-        that reads position, and for delivery to a terminal that observes
-        order. Clearing the characteristic removes both."""
+        Under FORK_JOIN this decides whether a stateful op (limit/skip/
+        distinct) can run inside the parallel batches, sharing a locked
+        counter or set across them, or has to run as split_point()'s single
+        global-view pass instead. There is no delivery barrier to buy back
+        any more - fork/join's contiguous batches preserve encounter order
+        unconditionally - so this is narrower than it was under RACING, but
+        it is still the lever for that one class of op."""
         return self._derive(UnorderedOp())
 
     def _is_ordered(self) -> bool:
@@ -398,7 +451,7 @@ class Stream[T]:
         # operand raises at call time rather than at the first pull.
         new_stream = _concat(a.iterator(), b.iterator())
         concatenated = Stream(new_stream, a._close_handlers + b._close_handlers)
-        concatenated._executor = RACING if a.is_parallel() or b.is_parallel() else SEQUENTIAL
+        concatenated._executor = FORK_JOIN if a.is_parallel() or b.is_parallel() else SEQUENTIAL
         if not (a._is_ordered() and b._is_ordered()):
             concatenated = concatenated.unordered()
         a._consumed = b._consumed = True

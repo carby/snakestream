@@ -1,13 +1,14 @@
-"""The reorder barrier: what limit/skip/distinct/sorted select under the racing
-executor when the pipeline is ordered at their position, what they select when
-it is not, and what the bounded read-ahead that makes the first possible costs.
+"""split_point() and what limit/skip/distinct/sorted select under the
+fork-join executor when the pipeline is ordered at their position, what they
+select when it is not, and the bounded read-ahead and cancellation properties
+that come with batching.
 
 The setup every behavioural test here shares is a source whose *early*
-elements are the expensive ones. That is what separates the two paths: under a
-plain race the cheap tail overtakes the slow head and an order-sensitive op
-decides on arrival order, which is not encounter order. Sleep values are the
-same shape as tests/test_unordered.py's - long enough to be decisive on a
-loaded machine, short enough that the file stays quick.
+elements are the expensive ones. That is what separates the two paths: an
+order-sensitive op at an unordered position selects by real concurrent
+arrival among the batches sharing its state, which is not encounter order.
+Sleep values are the same shape as tests/test_unordered.py's - long enough to
+be decisive on a loaded machine, short enough that the file stays quick.
 """
 
 import asyncio
@@ -16,27 +17,12 @@ import pytest
 
 from snakestream import Stream
 from snakestream.collectors import to_list
-from snakestream import execution
-from snakestream.execution import (
-    PROCESSES,
-    _group_through,
-    _guarded,
-    _in_flight,
-    _release_in_order,
-    _Window,
-)
 from snakestream.ops import DistinctOp, LimitOp, SkipOp, SortedOp
 from snakestream.ordering import OrderDemand, split_point
-from snakestream.sink import IntermediateSink, StatelessOp
 
 
 def _asc(a: int, b: int) -> int:
     return a - b
-
-
-async def _agen(n: int):
-    for i in range(n):
-        yield i
 
 
 SLOW_HEAD = 5
@@ -339,7 +325,7 @@ async def test_a_sort_re_imposes_the_requirement_for_what_follows() -> None:
 
 @pytest.mark.asyncio
 async def test_an_order_sensitive_op_queued_before_parallel_is_still_honoured() -> None:
-    # when .parallel() is declared last, so the whole chain runs under RACING
+    # when .parallel() is declared last, so the whole chain runs in parallel
     res = await Stream.of(SOURCE).map(_slow_head).limit(SLOW_HEAD).parallel().collect(to_list())
     # then
     assert res == [0, 1, 2, 3, 4]
@@ -363,33 +349,6 @@ async def test_a_barrier_is_not_a_third_mode() -> None:
 
 
 # --- bounded read-ahead -----------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_a_slow_first_element_does_not_draw_the_whole_source_in() -> None:
-    # given a source far longer than the window whose first element's upstream
-    # work is far slower than every other element's
-    pulled: list[int] = []
-
-    async def counting():
-        for i in range(400):
-            pulled.append(i)
-            yield i
-
-    async def one_slow_element(n: int) -> int:
-        await asyncio.sleep(0.2 if n == 0 else 0.0)
-        return n
-
-    # when the first element is taken
-    agen = Stream.of(counting()).parallel().map(one_slow_element).distinct().iterator()
-    first = await anext(agen)
-    pulled_before_first_release = len(pulled)
-    await agen.aclose()
-
-    # then the read-ahead stayed inside the window rather than growing with
-    # the source
-    assert first == 0
-    assert pulled_before_first_release <= _in_flight(PROCESSES)
 
 
 @pytest.mark.asyncio
@@ -417,55 +376,6 @@ async def test_closing_while_a_branch_is_blocked_on_the_window_does_not_hang() -
     await asyncio.wait_for(agen.aclose(), timeout=2)
     await asyncio.sleep(0)
     assert len(asyncio.all_tasks()) == before
-
-
-@pytest.mark.asyncio
-async def test_a_wider_race_is_given_a_wider_window() -> None:
-    # given a race across more branches than the default worker count, over a
-    # source whose head element is far slower than the rest, so the branches
-    # fill the window behind it. No public path reaches a non-default worker
-    # count - PROCESSES is bound into RACING at import - so the executor is
-    # swapped directly, the way the primitives are driven elsewhere in this file
-    pulled: list[int] = []
-
-    async def counting():
-        for i in range(400):
-            pulled.append(i)
-            yield i
-
-    async def one_slow_element(n: int) -> int:
-        await asyncio.sleep(0.3 if n == 0 else 0.0)
-        return n
-
-    wide = 2 * PROCESSES
-
-    # when the first element is taken
-    stream = Stream.of(counting()).parallel().map(one_slow_element)
-    stream._executor = execution._Racing(wide)
-    agen = stream.iterator()
-    first = await anext(agen)
-    pulled_before_first_release = len(pulled)
-    await agen.aclose()
-
-    # then the wider race got the wider window rather than the same one divided
-    # further. Asserted against the derivation at both counts, never a measured
-    # figure: the point is which bound applies, not where the branches landed
-    assert first == 0
-    assert pulled_before_first_release <= _in_flight(wide)
-    assert pulled_before_first_release > _in_flight(PROCESSES)
-
-
-@pytest.mark.asyncio
-async def test_over_pull_upstream_of_an_ordered_limit_is_bounded() -> None:
-    # given far more source than the limit needs
-    seen: list[int] = []
-
-    # when
-    res = await Stream.of(list(range(400))).parallel().peek(seen.append).limit(3).collect(to_list())
-
-    # then the selection is exact and the over-pull is not unbounded
-    assert res == [0, 1, 2]
-    assert 3 <= len(seen) <= _in_flight(PROCESSES)
 
 
 # --- cancellation across the barrier ----------------------------------------
@@ -528,10 +438,9 @@ async def test_a_barrier_does_not_change_how_the_shared_source_is_closed() -> No
     res = await Stream.of(ordered).parallel().limit(4).collect(to_list())
     await Stream.of(unordered).parallel().unordered().limit(4).collect(to_list())
 
-    # then the selection is the ordered one, and closing is untouched: every
-    # branch's _guarded() closes the shared source on its way out, which is
-    # what the racing executor has always done and what the barrier leaves
-    # alone. An async generator - the shape source normalization builds - runs
+    # then the selection is the ordered one, and closing is untouched: the
+    # shared source is closed exactly once regardless of whether a barrier
+    # ran. An async generator - the shape source normalization builds - runs
     # its finally once regardless; see the generator form below.
     assert res == [0, 1, 2, 3]
     assert ordered.closes == unordered.closes
@@ -629,48 +538,6 @@ async def test_an_error_upstream_of_a_barrier_propagates_rather_than_hanging() -
         )
 
 
-# --- the merge's less-travelled paths ---------------------------------------
-
-
-class _EmitOnEndSink(IntermediateSink):
-    """Buffers everything and flushes at end() - the shape _SortedSink has, and
-    the one that produces a group with no source position."""
-
-    def __init__(self, downstream) -> None:
-        super().__init__(downstream)
-        self._buffer: list = []
-
-    async def accept(self, element) -> None:
-        self._buffer.append(element)
-
-    async def end(self) -> None:
-        for item in self._buffer:
-            await self.downstream.accept(item)
-        await super().end()
-
-
-class _EmitOnEndOp(StatelessOp):
-    _sink_cls = _EmitOnEndSink
-
-
-@pytest.mark.asyncio
-async def test_a_head_op_that_emits_at_end_is_ordered_after_every_real_group() -> None:
-    # given a head chain whose output arrives at end(), with no source index to
-    # sort by. No shipped op does this upstream of a barrier - sorted() is
-    # always a split point and so is never in the head - so this drives the two
-    # primitives directly, the way tests/test_sink.py drives a sink
-    lock = asyncio.Lock()
-    window = _Window(_in_flight(PROCESSES))
-    source = _guarded(aiter(_agen(6)), lock, window)
-    branches = [_group_through([_EmitOnEndOp()], source, {})]
-
-    # when
-    res = [out async for out in _release_in_order(branches, window)]
-
-    # then nothing was lost, and it came out after every real group would have
-    assert res == list(range(6))
-
-
 @pytest.mark.asyncio
 async def test_a_cancelling_head_op_stops_its_branch_without_stalling_the_merge() -> None:
     # given a limit at an unordered position - so it stays in the raced head
@@ -681,29 +548,6 @@ async def test_a_cancelling_head_op_stops_its_branch_without_stalling_the_merge(
     # saw every element the limit admitted
     assert len(res) == 6
     assert res == sorted(res)
-
-
-@pytest.mark.asyncio
-async def test_branches_contending_for_the_last_window_slot_still_pull_in_order(monkeypatch) -> None:
-    # given a window of one, so the slot a branch waited for is routinely gone
-    # again by the time it holds the lock - and a source that really suspends
-    # mid-pull, which is what lets another branch get in between one branch's
-    # "not full" check and its assignment. Patching the derivation rather than
-    # a constant: it is the single site the size comes from, and no worker
-    # count yields a window of one through it
-    monkeypatch.setattr(execution, "_in_flight", lambda workers: 1)
-
-    async def slow_source():
-        for i in range(60):
-            await asyncio.sleep(0)
-            yield i
-
-    # when
-    res = await Stream.of(slow_source()).parallel().map(lambda x: x).distinct().collect(to_list())
-
-    # then the contention resolved into encounter order rather than a lost or
-    # duplicated element
-    assert res == list(range(60))
 
 
 @pytest.mark.asyncio
