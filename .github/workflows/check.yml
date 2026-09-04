@@ -23,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.14"]
+        python-version: ["3.14", "3.14t"]
 
     steps:
     - name: Check out the repo
@@ -46,13 +46,19 @@ jobs:
     - name: Test with pytest
       run: uv run pytest
 
+    # ty, pip-audit and the coverage threshold don't vary by interpreter
+    # build (GIL-enabled vs free-threaded), so with two legs they'd be
+    # redundant on the second; run them once, on the GIL-enabled leg.
     - name: Type check with ty
+      if: matrix.python-version == '3.14'
       run: uv run ty check src
 
     - name: Audit dependencies for vulnerabilities
+      if: matrix.python-version == '3.14'
       run: uv run --with pip-audit pip-audit
 
     - name: Enforce coverage threshold
+      if: matrix.python-version == '3.14'
       run: uv run pytest --cov-fail-under=98
 
   install_smoke_test:
