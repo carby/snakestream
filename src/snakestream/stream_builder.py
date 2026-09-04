@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-from typing import Generic
-
 from snakestream.stream import Stream
-from snakestream.type import T
 
 
-class StreamBuilder(Generic[T]):
+class StreamBuilder[T]:
     def __init__(self) -> None:
         self._elements: list[T] = []
 

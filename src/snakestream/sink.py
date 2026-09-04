@@ -13,7 +13,7 @@ import re
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, ClassVar, Generic
+from typing import Any, ClassVar
 from collections.abc import Callable
 
 from snakestream.callable_dispatch import maybe_await
@@ -46,7 +46,7 @@ class Box:
     value: Any = None
 
 
-class Sink(ABC, Generic[T]):
+class Sink[T](ABC):
     """Push-based op protocol: begin(state_map) / accept(element) / end(),
     plus a synchronous cancellation_requested() query."""
 

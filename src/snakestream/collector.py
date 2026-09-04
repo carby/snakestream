@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from enum import Enum, auto
 from inspect import isawaitable
-from typing import Any, Generic, cast
+from typing import Any, cast
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
 
 from snakestream.execution import maybe_aclosing
@@ -16,8 +16,6 @@ from snakestream.callable_dispatch import AsyncDispatch
 from snakestream.ordering import OrderDemand
 from snakestream.sink import TerminalSink
 from snakestream.type import (
-    A,
-    R,
     T,
     BiConsumer,
     Combiner,
@@ -74,7 +72,7 @@ class Characteristics(Enum):
 _NO_CHARACTERISTICS: frozenset[Characteristics] = frozenset()
 
 
-class Collector(Generic[T, A, R]):
+class Collector[T, A, R]:
     """Java-style `Collector<T,A,R>`: `supplier()` creates a fresh
     accumulation container, `accumulator(container, element)` mutates it per
     element - its return value is ignored - and `finisher(container)`
