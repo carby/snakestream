@@ -73,6 +73,49 @@ could share. Actually wiring the combiner up needs its own primitive in
 should re-read that delta before assuming (c)'s conclusion. See
 `openspec/changes/archive/2026-08-17-add-collect-supplier-accumulator-combiner`.
 
+**Scaffolded 2026-09-04 as `make-combiners-live`** (planning artifacts only;
+no code). Two findings from scoping it that were not visible from this entry,
+and that change the shape of the work rather than only its size.
+
+**(d) The larger payoff is not the parameter, it is a measured gap.** Work
+placed *inside* a collector gets no parallelism at all, because `_ForkJoin`
+inherits the generic `value()`: batches run the chain in worker threads, but
+`_drain()` feeds every element into one terminal sink on the main loop.
+Measured free-threaded, n=4000, 4 workers:
+
+| where the work is | sequential | parallel | speedup |
+|---|---:|---:|---:|
+| in the chain — `.map(slow).collect(to_list())` | 375.8ms | 159.1ms | **2.36x** |
+| in the collector — `grouping_by(slow_key)` | 409.6ms | 419.3ms | **0.98x** |
+| in the collector — `to_map(slow_key, cheap)` | 406.2ms | 409.1ms | **0.99x** |
+
+So making only the parameter live would leave a hand-rolled
+`collect(dict, accumulate, merge)` *faster than the library's own collector for
+the same job*, with nothing in the API to explain why.
+
+**(e) The naive scoping is backwards, and the derivation makes the real
+scoping cheap.** The obvious first cut — "add combiners to the easy
+collectors" — picks `to_list`/`to_set`/`counting`, which is exactly where
+partitioning gains nothing: their accumulators are `list.append`/`set.add`/`+1`,
+fractions of a millisecond against the figures above. The collectors worth
+partitioning are the ones carrying a *user callable*, which are the hard ones.
+They are also cheaper than they look, because a composing collector's combiner
+**derives from its downstream** — the rule `mapping()` and
+`collecting_and_then()` already use for `characteristics`, and the one Java
+uses to build `groupingBy`'s combiner. A composite over a non-combinable
+downstream declares none and degrades to today's behaviour.
+
+**One exclusion is load-bearing and easy to "fix" wrongly.** All three
+`averaging_*` decline a combiner, not just `averaging_double`: they share one
+`_averaging()` whose `_AvgBox.total` is a `float`, so `averaging_int`
+accumulates in floating point despite its integral element type, and float
+addition is not associative. This is a *stronger* reason than the one that
+already excludes the family from `UNORDERED` — that is about delivery order,
+this is about associativity. The two properties are independent, and
+`min_by`/`max_by` are the proof: they decline `UNORDERED` because tie-breaking
+must follow encounter order, yet they combine cleanly, since a left-biased
+merge over contiguous partitions preserves exactly that tie-break.
+
 ### Surfaced 2026-09-02, by the `sort-mixed-lane-by-successive-passes` read
 
 One smaller finding from the same pass over `src/`, recorded rather than
@@ -244,6 +287,127 @@ here recorded.
 | **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should be declared permanent. **Narrowed 2026-08-31: the behaviour is now documented in README's `of()` row.** That was a defect independent of this decision — the row described Java's semantics, so the divergence used by every example in the file was invisible to a reader. Documenting it does not close this item; what remains is the call on whether to keep it. Surfaced 2026-08-20 in the same code-quality read that produced the first batch of **Now** items, all since closed. |
 
 ## Done
+
+- **`fork-join-executor-and-spliterator`** (2026-09-04) — the racing executor
+  is gone. `.parallel()` now decomposes the source into contiguous batches via
+  a public `Spliterator`, runs each batch's chain in a worker thread on that
+  thread's own event loop, and concatenates in batch order. `execution.py`
+  goes **676 -> 494 lines**: `_Window`, `_guarded()`, `_group_through()`,
+  `_releasable()`, `_release_in_order()`, `_run_ordered_tail()`,
+  `_racing_branches()`, `_race_through()`, `_IN_FLIGHT_PER_WORKER` and
+  `_in_flight()` are all deleted, because contiguous batches never destroy
+  encounter order and so nothing has to restore it. Three properties replace
+  the whole apparatus, each free: `asyncio.gather()` preserves argument order
+  (intra-batch), batches are contiguous and consumed in order (inter-batch),
+  and batch size bounds in-flight work. `split_point()` survives — a stateful
+  op still cannot run independently per batch — but the barrier it drives is
+  now an ordered pass over batches that already arrive in order.
+
+  Measured against `a872f25` on the same harness, medians of 3-5 in-process
+  trials (`benchmark-findings.md` in the archived change carries the full
+  table):
+
+  | shape | old | new |
+  |---|---:|---:|
+  | async I/O, `.parallel()` | 3.82x | **54.00x** |
+  | CPU-bound, free-threaded | — | **~2x** |
+  | CPU-bound, GIL build | 0.93x | 0.95x |
+  | cheap sync mapper | 0.05x | 0.05x |
+
+  **`unordered()` narrowed, and the narrowing is not a Java-parity break.**
+  Delivery-order relaxation survives but is now batch-granular rather than
+  per-element, and an order-blind terminal can be delayed by its own batch's
+  slowest element. Java's `BaseStream.unordered()` is documented as "may
+  return itself" — a permission to disregard encounter order, never a promise
+  to scramble it — so preserving order is conformant. What changed is a
+  performance property, not a semantic one, and the README migration entry
+  says so in that order.
+
+  **The near-miss worth recording, and it corrects the entry below.** The
+  first implementation rebuilt a sink chain per element in `_run_element()`,
+  which made `is_async_callable()` run **once per element** instead of once
+  per composition — 1001 calls against 3, on a 500-element two-callable
+  pipeline — violating `callable-dispatch`'s "Awaitability is classified once
+  per composition" with no delta written. Caught in review before archive;
+  fixed by classifying once on the `Op` at construction and passing the result
+  through `link()`. Worth ~18ms of an ~88ms cheap-mapper regression at n=8192.
+
+  The entry below (2026-09-03) concluded that the only way to reintroduce this
+  class of failure is "to allocate the state somewhere else deliberately,
+  which is a redesign and not a slip". The redesign duly happened, and the
+  reasoning was **incomplete in a specific way**: it reasoned about *where the
+  state lives* and not about *how long the sink lives*. `AsyncDispatch` did
+  put the state on the sink instance exactly as designed; what broke the
+  guarantee was the sink's lifetime shrinking from one-per-composition to
+  one-per-element. No site-level check — including the AST skeleton check that
+  entry declined — would have seen it, so the decline still stands. What does
+  not stand is the confidence that a redesign could not do this quietly.
+
+  **The gate's blind spot, which is the transferable lesson.** The change's
+  test audit (`test-audit.md`, 125 tests classified) asked one question: *does
+  this test map to a requirement that survives?* It never asked the inverse —
+  *which specs might the new implementation violate?* — and `callable-dispatch`
+  was never in the blast radius because nothing in it mentions racing. Any
+  future change that replaces a mechanism should run both sweeps; the combiner
+  change carries the inverse sweep as its own task section.
+
+  **Deferred, not resolved:** the `racing-encounter-order` capability keeps a
+  directory name describing a retired mechanism, and `test_racing_*.py` keep
+  theirs, because the openspec workflow forbids renaming a capability and
+  emptying it into a new one would leave two half-specs. A known wart with an
+  honest fix — a rename once the requirements settle — not an oversight.
+
+- **`add-free-threaded-ci-leg`** (2026-09-04) — CI gains a `3.14t` leg on
+  `code_check`, and the audit that made it safe to build on. Three properties
+  verified and promoted from observation to spec requirement: no module-level
+  mutable state anywhere in `src/`, every `ClassVar` an immutable declaration,
+  and per-composition dispatch state that cannot leak. The suite passed on the
+  free-threaded build **unmodified**, which is what made the sequence's premise
+  credible before anything depended on it.
+
+  `install_smoke_test` deliberately did **not** get the leg. The first draft
+  said it should, reasoning that wheel tags differ and a dependency might ship
+  no free-threaded wheel; both were checked and neither holds — `uv build
+  --wheel` produces `py3-none-any` and `project.dependencies` is empty, so the
+  leg would install a byte-identical artifact twice.
+
+  The obligation it handed forward, and the reason it went first:
+  `execution.py`'s two `asyncio.Lock` sites were correct only because one event
+  loop owned every branch, and `asyncio.Lock` does not synchronise across
+  threads. Fork/join discharged it with `threading.Lock`-guarded containers in
+  `ops.py`.
+
+- **The Python floor sequence: 3.10 -> 3.14** (2026-09-04) — four changes,
+  `raise-python-floor-to-311` through `-314`, one minor version each. Split
+  rather than batched on reviewability: each unlocks a *different* lint family
+  and the last two rewrite annotations across most of `src/`, so batched, the
+  one behavioural deletion would have been invisible among ~40 mechanical
+  rewrites.
+
+  | step | what it deleted |
+  |---|---|
+  | 3.11 | the `sys.version_info` fork in `close()`; a `PERF203` suppression ruff stops raising on 3.11+ |
+  | 3.12 | PEP 695 — `class Stream[T]`, `type` aliases; unquoted `FlatMapper` via the lazy RHS |
+  | 3.13 | PEP 696 — 14 `AsyncGenerator[T, None]` -> `AsyncGenerator[T]` |
+  | 3.14 | PEP 649 — 17 quoted annotations unquoted, 13 in `comparator.py` |
+
+  **The point was never the versions.** Free-threading (PEP 779) is officially
+  supported only on 3.14, and it is the substrate the two changes above stand
+  on. Recorded because the sequence reads as housekeeping and was not.
+
+  Two typing features were checked against the code and **declined**, so the
+  questions are not re-opened. **PEP 681 (`dataclass_transform`)** has no
+  possible site: it exists for a library shipping its own dataclass-like
+  decorator, and this package ships none. **PEP 646 (variadic generics)** has
+  one candidate — `sort.py`'s multi-key column tuple — and it earns nothing:
+  the key types are erased deliberately (`KeyExtractor` returns `Any`), the
+  tuple's element types change mid-flight (`_tolerant_column()` rewrites keys
+  into `(present, key)` pairs), and segment identity is decided at runtime by
+  signature inspection, which no checker can follow. **PEP 696 defaults on
+  `Collector[T, A, R]`** were declined too: `A` is `Any` at 28 of 45 annotation
+  sites and is the parameter that wants a default, but PEP 696 defaults must be
+  trailing, so only `R` can take one — and reaching `A` would mean reordering a
+  public generic, a silent type-level break.
 
 - **The per-element dispatch dance, re-examined and declined a fourth time**
   (2026-09-03) — no change directory, which is why it is recorded here. The
