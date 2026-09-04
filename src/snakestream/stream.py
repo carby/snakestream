@@ -101,7 +101,7 @@ async def _concat(a: AsyncGenerator, b: AsyncGenerator) -> AsyncGenerator:
 
 class Stream[T]:
     def __init__(self, source: Any, close_handlers: list[CloseHandler] | None = None) -> None:
-        self._source: AsyncGenerator[T, None] = _accept(source) or _normalize(source)
+        self._source: AsyncGenerator[T] = _accept(source) or _normalize(source)
         self._chain: list[Op] = []
         self._close_handlers: list[CloseHandler] = [] if close_handlers is None else close_handlers
         self._consumed: bool = False
@@ -124,7 +124,7 @@ class Stream[T]:
     # calling stream[0], receiving a Stream, and looping forever. Anyone adding
     # it must add __iter__ raising in the same change, never after.
 
-    def __aiter__(self) -> AsyncGenerator[T, None]:
+    def __aiter__(self) -> AsyncGenerator[T]:
         """`async for element in stream`, equivalent to iterating iterator().
 
         Delegates rather than reimplements, so the stream-iterator capability
@@ -293,7 +293,7 @@ class Stream[T]:
         and of the barrier an order-sensitive op needs; see its docstring."""
         return self._derive(executor=RACING)
 
-    def iterator(self) -> AsyncGenerator[T, None]:
+    def iterator(self) -> AsyncGenerator[T]:
         self._check_not_consumed()
         # hands raw elements to the caller, so the order they arrive in is
         # definitionally observable - there is no way for this one to say no.
@@ -412,7 +412,7 @@ class Stream[T]:
 
     @staticmethod
     def iterate(seed: T, nxt: Mapper[T, T]) -> Stream[T]:
-        async def _make_iterator(seed: T, nxt: Mapper[T, T]) -> AsyncGenerator[T, None]:
+        async def _make_iterator(seed: T, nxt: Mapper[T, T]) -> AsyncGenerator[T]:
             is_async = is_async_callable(nxt)
             checked = False
             yield seed
@@ -466,7 +466,7 @@ class Stream[T]:
     def collect(self, collector: Collector[T, Any, R]) -> Coroutine[Any, Any, R]: ...
 
     @overload
-    def collect(self, collector: StreamingCollector) -> AsyncGenerator[Any, None]: ...
+    def collect(self, collector: StreamingCollector) -> AsyncGenerator[Any]: ...
 
     @overload
     def collect(

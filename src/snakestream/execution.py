@@ -289,7 +289,7 @@ async def _stream_through(
     chain: list[Op],
     source: AsyncGenerator,
     state_map: StateMap | None = None,
-) -> AsyncGenerator[T, None]:
+) -> AsyncGenerator[T]:
     """Push the chain, pull the results: one worker, elements out lazily.
     Java's StreamSpliterators.WrappingSpliterator adapts push to pull the same
     way, buffering what the sink emits until the caller asks for it."""
@@ -321,7 +321,7 @@ async def _group_through(
     chain: list[Op],
     source: AsyncGenerator,
     state_map: StateMap,
-) -> AsyncGenerator[tuple[int | None, list[Any]], None]:
+) -> AsyncGenerator[tuple[int | None, list[Any]]]:
     """_stream_through()'s group-yielding twin, for a branch upstream of an
     ordering barrier: instead of yielding elements one at a time it yields
     `(index, outputs)` — everything the chain emitted in response to the source

@@ -168,14 +168,14 @@ class StreamingCollector:
 
     __slots__ = ("_fn",)
 
-    def __init__(self, fn: Callable[[AsyncGenerator[Any, None]], AsyncGenerator[Any, None]]) -> None:
+    def __init__(self, fn: Callable[[AsyncGenerator[Any]], AsyncGenerator[Any]]) -> None:
         self._fn = fn
 
-    def __call__(self, composition: AsyncGenerator[Any, None]) -> AsyncGenerator[Any, None]:
+    def __call__(self, composition: AsyncGenerator[Any]) -> AsyncGenerator[Any]:
         return self._fn(composition)
 
 
-async def _stream(composition: AsyncGenerator) -> AsyncGenerator[Any, None]:
+async def _stream(composition: AsyncGenerator) -> AsyncGenerator[Any]:
     # maybe_aclosing, not aclosing: to_generator() also accepts a plain
     # AsyncIterable with no aclose() (a custom __anext__-only iterator)
     async with maybe_aclosing(composition) as src:
