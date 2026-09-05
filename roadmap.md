@@ -23,49 +23,42 @@ claimed — the bucket is a pool, not a commitment. What decides an item's bucke
 is what stands between it and someone starting: nothing (**Now**), a person
 (**Next**), or a decision nobody has made yet (**Later**).
 
-### Queued changes
+### Re-verified 2026-09-05, formerly a **Later** row
 
-**Java 8 parity gaps**, queued by `enumerate-java-8-parity-gaps`
-(2026-08-31) — the audit that found README's parity tables could not express
-*absence* at all, so a Java method nobody had written a row for read as an
-oversight rather than a decision. Filed as five and not one batched entry: they
-share a shape only at the surface (see that change's design.md, decision 6), and
-whoever picks them up should make the batching call themselves.
+**1. Bound speculation separately from read-ahead.** One counter served three
+concerns — memory held by the reorder buffer, latency behind a straggler, and
+how many elements a chain callable runs on under a short-circuiting terminal.
+Filed in **Later**, then marked *"Moot as of `fork-join-executor-and-spliterator`
+(2026-09-04)"*. **That verdict was wrong and is withdrawn.** Half the row died
+with the racing executor; the other half is live, and moved here because
+nothing about it is decision-blocked any more — the real-parallelism call it
+was parked behind is resolved, and what remains is a benchmark against an
+existing harness.
 
-### Surfaced 2026-09-02, by the `sort-mixed-lane-by-successive-passes` read
+*Dead half:* the row's own worked example, `.peek(fn).find_first()`.
+`find_first()` demands `ALWAYS`, so it splits at the chain end, runs ordered,
+and is answered by round one — bounded at `WORKERS * _FIRST_BATCH_SIZE` = 16
+chain invocations, which is what the old window gave, now by a number that
+means only that.
 
-One smaller finding from the same pass over `src/`, recorded rather than
-scaffolded because the sort item was the one worth taking first. Not claimed.
-**Ranked as listed.** Checked against **Done** before being filed here: it is
-not a re-proposal of anything in the rejection log.
+*Live half:* the same waste under an **order-blind** short-circuiting terminal.
+`execution.py:432` sets `size = BATCH_SIZE` after the first *completed batch*,
+not after a full round, so `.peek(fn).any_match(p)` that is not satisfied inside
+the first 16 elements escalates straight to `WORKERS * BATCH_SIZE` ≈ 4096
+elements in flight, every one running the whole chain. The old racing window's
+total was 16. CLAUDE.md already concedes the concern "still applies at this
+size"; this row is where that concession is actionable. `unordered()`, the
+documented lever, does not help — the order-blind path is the one that
+escalates fastest.
 
-**1. `_guarded()` re-asks a question decided at composition, once per pull.**
-**Moot as of `fork-join-executor-and-spliterator` (2026-09-04, see Done):**
-`_guarded()` and `race_through()` are both deleted — the racing executor they
-belonged to no longer exists, replaced by the fork-join executor built on
-`spliterator()`. Left here rather than deleted outright so a reader does not
-wonder whether the finding was ever recorded.
-
-`if window is None` is checked on every element, guarding two nearly-disjoint
-loop bodies inside one `while True`, with only the `finally` genuinely shared.
-The answer never changes for the life of the generator: `race_through()` passes
-a window exactly on the split path and never on the other, so the branch is
-settled before the first pull. It is the flag-argument shape, and splitting it
-into two generators would let each show one concern — the windowed one carrying
-the slot protocol and the index assignment, the plain one being what it was
-before delivery ordering landed.
-
-*The gate, and the honest objection.* This is a per-element path, so the `+10%`
-threshold applies — but in the favourable direction for once, since the branch
-is removed rather than added, which puts it in the same family as
-`sort-mixed-lane-by-successive-passes` rather than in the family of the
-rejections. The objection is real and should be priced before starting: it
-*duplicates* the shared-lock pull and the `finally` close, and unifying exactly
-that kind of scaffolding is what `extract-racing-task-lifecycle` (**Done**,
-2026-09-02) set out to do. That change's own reasoning is the precedent to read
-first — it kept arming and teardown shared while leaving the two merge loops
-apart, on the grounds that only the identical parts belong together. The same
-test applied here is what decides this item, and it may well decide against it.
+*Not analysed further here, deliberately.* The verdict is alive-or-dead only;
+the sizing question (should the escalation hold a smaller step longer under a
+short-circuiting consumer?) is open work, not a conclusion. One thing worth
+knowing before starting: `fork-join-executor-and-spliterator` task 7.2 already
+settled the **growth rule** — a Java-style +4-per-round increment measured 10x
+more dispatches and ~2x worse wall time than the shipped one-step 4 -> 1024
+jump — but never measured the first-round value `4` itself, which
+`execution.py:196` still describes as "a starting point, not a measurement".
 
 ### Surfaced 2026-09-03, by the `extract-encounter-order-model` move
 
@@ -165,17 +158,24 @@ needs an explicit call before it can start — on a core semantic, on a trade-of
 nobody has agreed to take, or on a divergence from Java. Being big or unscoped
 is not what puts something here; being *undecided* is.
 
-**Parked 2026-08-31, from the `implement-python-data-model` exploration:
-`async with` on `Stream`.** That change implements the *synchronous* context
-manager (`__enter__`/`__exit__`) and deliberately stops there. `CloseHandler`
-is a plain no-arg sync callable and `close()` invokes handlers without awaiting,
-so `with` is the honest protocol for the close-handler contract as it stands.
-Adding `__aenter__`/`__aexit__` would be a claim that a handler may be
-awaitable — a change to the `stream-close-handling` capability, not to the two
-methods. It belongs here rather than in **Now** because it needs the same kind
-of buy-in the rest of this section does: `close()` becoming awaitable, or
-growing an async twin, changes a contract every subclassed resource wrapper
-depends on. Nothing blocks it; nothing yet demands it either.
+**Three items, numbered below.** 1. `async with` on `Stream`. 2. Java 9
+additions. 3. `Stream.of()`'s arity-dependent semantics. They are in two
+shapes — one prose entry and a two-row table — because the table's "why later"
+column is what a reader compares across rows, and item 1's reasoning does not
+fit a cell. The numbering is the index; the shapes are not a ranking.
+
+**1. `async with` on `Stream`.** Parked 2026-08-31, from the
+`implement-python-data-model` exploration. That change implements the
+*synchronous* context manager (`__enter__`/`__exit__`) and deliberately stops
+there. `CloseHandler` is a plain no-arg sync callable and `close()` invokes
+handlers without awaiting, so `with` is the honest protocol for the
+close-handler contract as it stands. Adding `__aenter__`/`__aexit__` would be
+a claim that a handler may be awaitable — a change to the
+`stream-close-handling` capability, not to the two methods. It belongs here
+rather than in **Now** because it needs the same kind of buy-in the rest of
+this section does: `close()` becoming awaitable, or growing an async twin,
+changes a contract every subclassed resource wrapper depends on. Nothing
+blocks it; nothing yet demands it either.
 
 Bigger, structural — needs explicit buy-in before starting since it changes a
 core semantic.
@@ -192,17 +192,134 @@ asked for it now that threads deliver the real thing on the free-threaded
 build; if it resurfaces, it is a fresh decision, not a continuation of this
 row, so it is not re-filed here speculatively. The combiner item is no longer
 sequenced behind a decision — `spliterator()`'s contiguous decomposition,
-its load-bearing prerequisite, is shipped — so it moved to **Now**, see
-**Queued changes**; that entry carries the (a)/(b)/(c) findings the old row
-here recorded.
+its load-bearing prerequisite, is shipped — so it moved to **Now**, was taken
+as `make-combiners-live`, and is in **Done** (2026-09-04); the **Queued
+changes** block this sentence used to point at was retired on 2026-09-05 with
+the rest of the Java 8 queue. That entry carries the (a)/(b)/(c) findings the
+old row here recorded.
 
 | Item | Why later |
 |---|---|
-| **Java 9 `Stream` additions** — `takeWhile(predicate)`, `dropWhile(predicate)`, `Stream.ofNullable(t)`, and the 3-arg `iterate(seed, hasNext, next)` overload (distinct from the already-implemented 2-arg `iterate(seed, next)`). | **No longer sequencing-blocked, and arguably no longer a *Later* item.** README gates Java 9 on "some sort of feature parity with Java 8"; `enumerate-java-8-parity-gaps` (2026-08-31, **Done**) met that gate and enumerated the remainder as five non-structural gaps, now queued in **Now**. `spliterator()` is shipped and `collect()`'s combiner moved to **Now** (2026-09-04, `fork-join-executor-and-spliterator`) — the last of the Java 8 work genuinely blocked on the resolved real-parallelism row above — so nothing structural blocks Java 9 either any more. What keeps it here is that it is unstarted and unscoped, not that anything blocks it; it competes with the queued items on merit. |
-| **Bound speculation separately from read-ahead** — one counter serves memory held by the reorder buffer, latency behind a straggler, and how many elements a chain callable runs on under a short-circuiting terminal, and under the third it bounds the wrong thing: `.peek(fn).find_first()` fills the whole window behind an outstanding index 0 and throws away everything but the winner. | **Moot as of `fork-join-executor-and-spliterator` (2026-09-04, see Done).** The read-ahead window this row is about — `_guarded()`'s slot protocol under `race_through()` — is deleted along with the racing executor; fork-join bounds `find_first()`'s over-processing by the first round's batch size instead (`stream-find-first`'s "may invoke a chain's callables more than once" requirement, restated for the new mechanism). Left here rather than deleted outright, on the same reasoning as the `_guarded()` finding above. |
-| **`Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should be declared permanent. **Narrowed 2026-08-31: the behaviour is now documented in README's `of()` row.** That was a defect independent of this decision — the row described Java's semantics, so the divergence used by every example in the file was invisible to a reader. Documenting it does not close this item; what remains is the call on whether to keep it. Surfaced 2026-08-20 in the same code-quality read that produced the first batch of **Now** items, all since closed. |
+| **2. Java 9 additions** — six, not four. `Stream`: `takeWhile(predicate)`, `dropWhile(predicate)`, `Stream.ofNullable(t)`, and the 3-arg `iterate(seed, hasNext, next)` overload (distinct from the already-implemented 2-arg `iterate(seed, next)`). `Collectors`: `filtering(predicate, downstream)` and `flatMapping(mapper, downstream)`, which this row omitted until 2026-09-05. | **Not gated on Java 8 any more — Java 8 is closed** (2026-09-05, see Done: zero gap rows across all three README tables). README gates Java 9 on "some sort of feature parity with Java 8" and that gate is now met outright rather than argued. What keeps this row here is the bucket's own criterion: it is **undecided**, not blocked. Nobody has called whether Java 9 becomes a tracked effort the way `Collectors` parity once was, whether only the items with independent merit get cherry-picked, or whether Java 8 is the destination and Java 9 stays opportunistic. That call is the entry ticket, and it is deliberately not made here. **Effort, for whoever makes it:** four of the six are near-free — `ofNullable` and the 3-arg `iterate` are a static and an overload widening in `stream.py`, and `filtering`/`flatMapping` are downstream-deriving collectors on `mapping()`'s exact shape (combiner and characteristics derived from the downstream). Only `takeWhile`/`dropWhile` carry design weight: both are `order_sensitive` in the sense `limit`/`skip`/`distinct` are — the answer depends on an element's *position* — so each needs an `Ordering` declaration and forces a `split_point()` in an ordered fork/join pipeline, and `takeWhile` needs `limit`'s cancellation in its sink besides. That is declaring two ops into machinery built for them, not new machinery. |
+| **3. `Stream.of()`'s arity-dependent semantics** — `Stream.of([1, 2])` spreads the single collection into two elements, while `Stream.of([1, 2], [3, 4])` yields two lists. The number of arguments changes what the arguments mean, there is no way to express a stream of exactly one list, and Java's `of(T...)` treats every argument atomically. | Decision-blocked rather than effort-blocked, which is what this bucket is for. The spreading form is not an oversight: it is the primary documented idiom, used in nearly every README example and throughout the test suite, and `Stream.iterate()` is built on it. Changing it would be a far larger break than the `str`/`bytes` and kwargs changes already in the migration log, touching essentially every call site in the docs and tests. Needs an explicit call on whether Java parity is worth that, or whether the divergence should be declared permanent. **Narrowed 2026-08-31: the behaviour is now documented in README's `of()` row.** That was a defect independent of this decision — the row described Java's semantics, so the divergence used by every example in the file was invisible to a reader. Documenting it does not close this item; what remains is the call on whether to keep it. Surfaced 2026-08-20 in the same code-quality read that produced the first batch of **Now** items, all since closed. |
 
 ## Done
+
+- **Java 8 parity is closed** (2026-09-05) — the five gaps
+  `enumerate-java-8-parity-gaps` (2026-08-31) enumerated are all shipped, and
+  the **Now** entry queueing them is retired. This is the answer, not a status
+  update: there is no Java 8 parity gap left to point at, and the tables can be
+  re-counted in a minute (below) rather than re-argued.
+
+  | gap | closed by | when |
+  |---|---|---|
+  | `reduce(identity, accumulator, combiner)` | `3be5ed1`, `make-combiners-live` | 2026-09-05 |
+  | `to_map(key_mapper, value_mapper, merge_function, map_supplier)` | `f6406fe` | 2026-09-01 |
+  | `grouping_by(classifier, map_factory, downstream)` | `f6406fe` | 2026-09-01 |
+  | `nulls_first()` / `nulls_last()` | `8cdcf31` | 2026-09-01 |
+  | `comparing(f, keyComparator)` / `thenComparing(f, keyComparator)` | `31860e6` | 2026-09-01 |
+
+  The last row closed **past** parity rather than to it: both overloads were
+  struck-through *skips* at the time of the audit, decided against, and were
+  then implemented anyway. So the five-item list was the floor, not the ceiling.
+
+  **Counted, not asserted.** Every row in README's three tables is now either
+  `x` or struck-through; none is in the third state the audit introduced for a
+  genuine gap. Machine count at `3be5ed1`: `Stream` + `BaseStream` 37 / 11 / 0,
+  `Collectors` 24 / 3 / 0 (plus the `x/-` `Characteristics` row), `Comparator`
+  6 / 6 / 0 — 67 implemented, 20 skipped, **0 gaps**. The check is mechanical
+  because `enumerate-java-8-parity-gaps` made the tables *total over Java 8's
+  surface* and gave absence its own row state; that is what turns "are we done"
+  from a judgement into a `grep`. A Java 8 method with no row remains a defect
+  in the table, so a rediscovered gap is a documentation bug to fix in place,
+  not a reopening of this entry.
+
+  **Three documents disagreed with the code for four days** — the **Now**
+  queue, the Java 9 **Later** row, and the closing paragraphs of the audit's own
+  Done entry all still described five open gaps while four of them had shipped
+  by 2026-09-01. All three are corrected here: the two live pointers are
+  rewritten outright, and the Done entry keeps its text — it is history, and
+  accurate as of its date — with dated annotations marking in place the three
+  claims later events falsified. The lesson
+  is the one the audit itself drew one level up: a list of open items written in
+  prose decays the moment an item lands, which is exactly why the *table* —
+  with a row state for absence — is the artifact that answers this question,
+  and the roadmap is not.
+
+  **Java 9 is unaffected by this and stays in Later.** Closing Java 8 removes
+  the *gate* README put in front of Java 9; it does not supply the decision
+  that row is actually waiting on. See that row for the six additions and what
+  each would cost.
+
+- **`_guarded()`'s flag argument: asked, and answered in the affirmative**
+  (closed 2026-09-05; filed 2026-09-02 by the
+  `sort-mixed-lane-by-successive-passes` read, never scaffolded). Moved here
+  from **Now**, which is a pool of work available to start, and this is not
+  work any more. It is recorded as **closed rather than moot**, because
+  "the code was deleted" undersells what happened to it.
+
+  **The split it asked for is what the replacement does.** The finding wanted
+  one thing: `if window is None`, re-asked on every element to guard two
+  nearly-disjoint loop bodies, should become two generators each showing one
+  concern. `_fork_join_batches()` (`execution.py`) asks it once per *call* —
+  `through = _fork_join_ordered_batches if ordered else
+  _fork_join_unordered_batches` — and the two bodies are separate top-level
+  generators, one carrying the round protocol and one the sliding window. The
+  branch did not survive into the per-element path in another form; it moved to
+  dispatch, which is the outcome the finding argued for.
+
+  **Its own gate was applied, and passed.** The item named an honest objection
+  against itself: splitting duplicates the shared pull and the `finally` close,
+  and `extract-racing-task-lifecycle` (**Done**, 2026-09-02) is the precedent
+  saying only the genuinely identical parts belong together. That test was run.
+  `_fork_join_batches()` keeps exactly the identical scaffolding shared — the
+  state-map build, and the single `aiter(source)` under `maybe_aclosing()` —
+  while the two loops stay apart. So the finding's stated decision procedure
+  reached the opposite of the outcome its own text predicted ("it may well
+  decide against it"), by way of a change that was not about it at all.
+
+  **What is genuinely gone:** `_guarded()` and `race_through()` are deleted
+  along with the racing executor (`fork-join-executor-and-spliterator`,
+  2026-09-04). Nine comments in `src/` still name `RACING`, and two name
+  `_race_through()` — `execution.py:451` and `:483` — a function that exists
+  nowhere in the repo. Left deliberately: both spell out the reason they invoke
+  rather than merely pointing at it, so a reader who greps and finds nothing has
+  still been told what they needed. Filed here as a known, priced residue rather
+  than as an open item.
+
+  The finding follows as originally written, with its **Now**-bucket preamble
+  kept — "Not claimed", "Ranked as listed" — since that is what it said at
+  the time; the only edit is the removal of its superseded "Moot as of" header,
+  which this entry replaces.
+
+  One smaller finding from the same pass over `src/`, recorded rather than
+  scaffolded because the sort item was the one worth taking first. Not claimed.
+  **Ranked as listed.** Checked against **Done** before being filed here: it is
+  not a re-proposal of anything in the rejection log.
+
+  **The finding, as filed 2026-09-02.** `_guarded()` re-asks a question
+  decided at composition, once per pull.
+
+  `if window is None` is checked on every element, guarding two nearly-disjoint
+  loop bodies inside one `while True`, with only the `finally` genuinely shared.
+  The answer never changes for the life of the generator: `race_through()` passes
+  a window exactly on the split path and never on the other, so the branch is
+  settled before the first pull. It is the flag-argument shape, and splitting it
+  into two generators would let each show one concern — the windowed one
+  carrying the slot protocol and the index assignment, the plain one being
+  what it was before delivery ordering landed.
+
+  *The gate, and the honest objection.* This is a per-element path, so the `+10%`
+  threshold applies — but in the favourable direction for once, since the
+  branch is removed rather than added, which puts it in the same family as
+  `sort-mixed-lane-by-successive-passes` rather than in the family of the
+  rejections. The objection is real and should be priced before starting: it
+  *duplicates* the shared-lock pull and the `finally` close, and unifying exactly
+  that kind of scaffolding is what `extract-racing-task-lifecycle` (**Done**,
+  2026-09-02) set out to do. That change's own reasoning is the precedent to read
+  first — it kept arming and teardown shared while leaving the two merge loops
+  apart, on the grounds that only the identical parts belong together. The same
+  test applied here is what decides this item, and it may well decide against it.
 
 - **`make-combiners-live`** (2026-09-04) — the last of the three items the
   free-threading sequence (`add-free-threaded-ci-leg` ->
@@ -702,8 +819,9 @@ here recorded.
   priced is a standard-library one. Do not re-propose the semaphore without new
   evidence.
 
-  *What this is not.* It is not **Later**'s "Bound speculation separately from
-  read-ahead", which changes what the bound bounds. This changes no behaviour at
+  *What this is not.* It is not the roadmap's "Bound speculation separately
+  from read-ahead" (in **Later** when this was written; **Now** since
+  2026-09-05), which changes what the bound bounds. This changes no behaviour at
   all: same value, same scaling, same fixedness for a run, `skip_specs: true`.
   The two are independent and neither blocks the other.
 
@@ -1189,6 +1307,14 @@ here recorded.
   tables are now **total over Java 8's surface**, and the five methods this
   library genuinely lacks are queued by name in **Now**. Closes question 5.
 
+  **Overtaken by events 2026-09-05: all five shipped, and the queue this entry
+  created in the Now bucket is retired.** See "Java 8 parity is closed" at the
+  top of
+  **Done** for the ledger and the count. The paragraphs below are left as
+  written and are accurate as of 2026-08-31; where one asserts something a later
+  event falsified, the annotation says so in place. Read the closing entry
+  first — nothing here is a live pointer any more.
+
   **The question's own premise was the finding.** Three places in this file
   offered "the Java-8 parity gaps README still tracks as unimplemented" as a
   refill source for **Next**, and README tracked no such set. Its tables had two
@@ -1246,12 +1372,35 @@ here recorded.
   They cannot be what Java 9 waits on without waiting forever, so that entry is
   no longer sequencing-blocked; it competes with the five on merit.
 
+  **Both of its premises expired, and the conclusion survived both.** The two
+  "genuinely blocked" items are shipped — `spliterator()` and `collect()`'s
+  combiner, by `fork-join-executor-and-spliterator` and `make-combiners-live`
+  (2026-09-04) — so the real-parallelism decision this paragraph routes around
+  no longer exists to route around; and there is nothing left for Java 9 to
+  compete with on merit, the five having shipped by 2026-09-05. The gate is
+  therefore met far more plainly than argued here: not "the blockers cannot
+  count, so the gate opens", but "there is no gap". Java 9 stays in **Later**
+  regardless, on a different reason than this one — it is undecided rather than
+  blocked. Its row carries the current reasoning.
+
   Gap 5, `nulls_first`/`nulls_last`, is the one worth building on its own
   merits: `sorted()` over a stream containing `None` raises `TypeError` out of
   Python's comparison and there is no way to say where the `None`s go. The other
   four are parity for parity's sake. The five are filed as five rather than one
   batched entry — gaps 1-3 resemble each other only at the surface, and the
   batching call belongs to whoever picks them up.
+
+  **How the batching call actually went (2026-09-05):** partly batched, and
+  along a seam this paragraph did not predict. `f6406fe` took the two
+  container-choosing collector overloads together (`to_map`'s fourth argument
+  and `grouping_by`'s three-argument form — gaps 2 and 3, which share a shape
+  after all, both being "let the caller supply the mapping"); `8cdcf31` took
+  gap 5 alone, as predicted, on its own merits; `31860e6` closed the two
+  `keyComparator` overloads that were struck-through *skips* here rather than
+  gaps at all; and gap 1, `reduce`'s combiner, waited five days for a reason
+  none of this anticipated — not its own difficulty but the executor
+  underneath it, landing in `make-combiners-live` once fork/join could give a
+  combiner something to combine.
 
   No behaviour changed: one docstring in `src/`, and `git diff -- tests/` empty
   at the end, which was the change's own tripwire.
