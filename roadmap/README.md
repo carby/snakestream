@@ -42,10 +42,9 @@ bucket.
 2. [A small source should reach more than one worker](items/spread-small-sources-across-workers.md) — filed 2026-09-06<br>  **Gate:** sequenced after ramp-batch-growth-geometrically, and verified by counting distinct worker threads — never by timing
 3. [`Box` belongs with the collector containers](items/move-box-into-collectors.md) — filed 2026-09-03
 
-### Next (2)
+### Next (1)
 
 1. [`comparator.py`'s segment-sign 2x2](items/comparator-segment-sign.md) — filed 2026-09-02<br>  **Gate:** met in advance: must not regress past +10% ns/element (sync), measured negative in all six runs and -20.3% async
-2. [`collectors.py`'s per-box dispatch state](items/collectors-per-box-dispatch.md) — filed 2026-09-02<br>  **Gate:** per-element path; write the benchmark before the refactor
 
 ### Later (5)
 
