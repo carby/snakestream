@@ -225,3 +225,21 @@ An op renders its own name for `__repr__` (`Op.__repr__` in `sink.py`, derived f
 ## Feature-parity tracking
 
 README.md tracks Java Stream API parity in detail (implemented / not-yet-implemented / intentionally-skipped methods, and a migration log of breaking renames pre-1.0). Check it before assuming a Java Stream method is or isn't implemented, and update it when adding or renaming public API surface.
+
+## Roadmap
+
+`roadmap/` holds the open queue, one file per item under `roadmap/items/` with
+`+++`-fenced TOML frontmatter (`bucket`, `rank`, `filed`, `gate`, `blocked_on`,
+and a `refs` table of openspec change ids, spec ids and source paths). The
+Now/Next/Later index in `roadmap/README.md` is **generated** — edit an item and
+run `python tools/roadmap_index.py`, never the index block itself.
+`tests/test_roadmap.py` validates the schema, the bucket entry criteria, and
+that every ref resolves against `openspec/` and the tree, so a renamed spec or a
+deleted module fails the build instead of leaving a stale pointer.
+
+`roadmap/decisions.md` is the append-only history and specifically the
+*rejection* log: several entries record work that was measured and declined
+rather than shipped, which the openspec archive does not carry because a
+rejected change often has no archive at all. Read it before proposing a cleanup.
+Closing an item means moving its prose there as a new top entry and deleting the
+item file.
