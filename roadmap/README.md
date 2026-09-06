@@ -40,18 +40,20 @@ bucket.
 
 1. [Ramp fork/join's batch growth instead of jumping to it](items/ramp-batch-growth-geometrically.md) — filed 2026-08-20<br>  **Gate:** dispatch count, not wall time — the draining case must not regress past the measured +7 dispatches on 102 at n=100000
 2. [A small source should reach more than one worker](items/spread-small-sources-across-workers.md) — filed 2026-09-06<br>  **Gate:** sequenced after ramp-batch-growth-geometrically, and verified by counting distinct worker threads — never by timing
-3. [`UNSET`, `unseeded()` and `Box` sit in `sink.py` on rejected reasoning](items/sink-sentinel-placement.md) — filed 2026-09-03
+3. [`Box` belongs with the collector containers](items/move-box-into-collectors.md) — filed 2026-09-03
 
 ### Next (2)
 
 1. [`comparator.py`'s segment-sign 2x2](items/comparator-segment-sign.md) — filed 2026-09-02<br>  **Gate:** per-element path: +10% ns/element (sync variant), per `collapse-terminal-collector-duplication`
 2. [`collectors.py`'s per-box dispatch state](items/collectors-per-box-dispatch.md) — filed 2026-09-02<br>  **Gate:** per-element path; write the benchmark before the refactor
 
-### Later (3)
+### Later (5)
 
 1. [`async with` on `Stream`](items/async-with-on-stream.md) — filed 2026-08-31<br>  **Blocked on:** whether `close()` becomes awaitable, or grows an async twin — a change to the close-handler contract every subclassed resource wrapper depends on
 2. [Java 9 additions — six, not four](items/java-9-additions.md) — filed 2026-08-20<br>  **Blocked on:** whether Java 9 becomes a tracked parity effort, gets cherry-picked for independent merit, or stays opportunistic with Java 8 as the destination
 3. [`Stream.of()`'s arity-dependent semantics](items/stream-of-arity-semantics.md) — filed 2026-08-20<br>  **Blocked on:** whether Java parity is worth breaking essentially every call site in the docs and tests, or whether the divergence is declared permanent
+4. [`UNSET` is two sentinels wearing one name](items/unset-dual-role.md) — filed 2026-09-06<br>  **Blocked on:** whether an accumulation seed and an omitted argument are the same concept here, or coincide in one place and are conflated in the rest
+5. [`UNSET` and `unseeded()` sit in `sink.py` on rejected reasoning](items/sink-sentinel-placement.md) — filed 2026-09-03<br>  **Blocked on:** whether `UNSET` stays one sentinel or becomes two — a two-symbol concern module and a one-sentinel-plus-one-rule module are different judgements
 
 <!-- END INDEX -->
 
