@@ -242,4 +242,12 @@ deleted module fails the build instead of leaving a stale pointer.
 rather than shipped, which the openspec archive does not carry because a
 rejected change often has no archive at all. Read it before proposing a cleanup.
 Closing an item means moving its prose there as a new top entry and deleting the
-item file.
+item file — but **only once the work is implemented or declined**. Scaffolding an
+item into an openspec change does not close it: a proposal and a design are
+enlightenment about what has to be done, not the doing of it, and the item stays
+in its bucket until the tasks are actually complete. What scaffolding earns is an
+edit to the item in place — split it if it turned out to be two, restate its
+`gate` as what the work still has to clear, and record what the analysis
+corrected. Fix roadmap mistakes with a follow-up commit, never by rewriting
+history; it is prose shared with concurrent sessions, and a `reset` to tidy it
+risks a peer's work for nothing.
