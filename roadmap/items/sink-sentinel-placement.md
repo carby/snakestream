@@ -2,7 +2,7 @@
 id = "sink-sentinel-placement"
 title = "`UNSET`, `unseeded()` and `Box` sit in `sink.py` on rejected reasoning"
 bucket = "now"
-rank = 2
+rank = 3
 filed = 2026-09-03
 updated = 2026-09-03
 
