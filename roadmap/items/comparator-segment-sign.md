@@ -5,39 +5,63 @@ bucket = "next"
 rank = 1
 filed = 2026-09-02
 claimed = 2026-09-02
-gate = "per-element path: +10% ns/element (sync variant), per `collapse-terminal-collector-duplication`"
+updated = 2026-09-06
+gate = "met in advance: must not regress past +10% ns/element (sync), measured negative in all six runs and -20.3% async"
 
 [refs]
-changes = ["collapse-terminal-collector-duplication", "collapse-mutable-reduction-onto-collector"]
+changes = ["merge-segment-sign-on-natural-ordering", "collapse-terminal-collector-duplication", "collapse-mutable-reduction-onto-collector"]
 specs = ["comparator-key-comparator", "comparator-contract"]
 files = ["src/snakestream/comparator.py", "src/snakestream/sort.py"]
 +++
 
 One of two duplications surfaced by the same read that produced
-`collapse-mutable-reduction-onto-collector` (scaffolded the same day, and
-deliberately not filed here — it has its own change directory). Both were
-passed over for that one because it was the only candidate whose per-element
-path is provably unchanged; each of these needs a measurement the collapse did
-not. This is the more valuable of the two.
+`collapse-mutable-reduction-onto-collector`, and deliberately left out of
+`collapse-sort-decorate-lanes` rather than overlooked, because bundling it would
+have put a measured trade-off inside a change that otherwise had none.
+
+Scaffolded 2026-09-06 as `merge-segment-sign-on-natural-ordering` — proposal and
+design written, tasks not, specs skipped. Still queue work: nothing is
+implemented.
 
 `_key_segment_sign_sync`, `_key_segment_sign_async`,
 `_comparator_segment_sign_sync` and `_comparator_segment_sign_async` are one
-function written four times: the natural-ordering expression
-`(ka > kb) - (ka < kb)` appears in all four, and so does the null-tie clause
-`0 if <a> is None and <b> is None else _null_sign(...)`. The shape underneath is
-that **a key segment is a comparator segment whose comparator is natural
-ordering** — which is the unification, and also the reason it cannot be done by
-normalising the payload: `sort.py`'s `_segment_column()` dispatches on
-`isinstance(payload, tuple)` to choose between a plain key column (compared in
-C) and a `cmp_to_key`-wrapped one, and that distinction is the
-decorate-sort-undecorate fast path. So the payload shapes stay and only the
-sign functions merge.
+function written four times. The shape underneath is that **a key segment is a
+comparator segment whose comparator is natural ordering** — which
+`comparator-key-comparator` already states as a requirement ("equivalent in
+result to supplying a bare comparator that extracts both keys itself and
+compares them"), so the merge makes a guaranteed equivalence structural rather
+than maintained by hand in four places.
 
-*The gate.* These four are reached only through `KeyComparator.__call__`, which
-`sort()` never uses — it unwraps `.segments` instead. The live consumers are
-`min()`/`max()` and `min_by()`/`max_by()`, at one comparison per element. That
-is a per-element path, which is where every measured rejection in
-[`decisions.md`](../decisions.md) has happened, so the
-`collapse-terminal-collector-duplication` threshold (+10% ns/element, sync
-variant) applies unchanged. `is_new_extremum`'s own docstring already records
-what this neighbourhood costs: delegating its type check measured ~5%.
+`.segments` keeps its shape regardless: `sort.py`'s `_segment_column()`
+dispatches on `isinstance(payload, tuple)` to choose between a plain key column
+compared in C and a `cmp_to_key`-wrapped one, and that is the
+decorate-sort-undecorate fast path.
+
+**The gate was met in advance, and the premise behind it was wrong.** It was
+filed as a `+10%` ns/element ceiling to survive, on the assumption that merging
+costs something on a per-element path (`min()`/`max()`, `min_by()`/`max_by()`,
+one comparison per element) — `is_new_extremum`'s docstring records ~5% for
+delegating a type check in the same neighbourhood. Measured on the
+`collapse-terminal-collector-duplication` harness (20,000 elements, interleaved
+round-robin, best of 3, median of 25 rounds, two independent runs), the merge
+alone is noise; the merge **plus normalising the segment list once per
+composition** is negative everywhere:
+
+| shape | sync | async |
+|---|---|---|
+| key segment | −6.2% / −4.4% | |
+| comparator segment | −8.7% / −6.8% | |
+| two-segment chain | −3.5% / −1.9% | |
+| async extractor, key segment | | **−20.3%**, ranges non-overlapping |
+
+The refund comes from work `__init__` already knew and every comparison was
+redoing: `isinstance(payload, tuple)` on both paths, and
+`zip(self.segments, self._is_async, strict=True)` on the async one. That is the
+same principle the class docstring already commits to — classification happens
+"once here at construction rather than per element or per comparison" — applied
+one step further, and it does not grow the object, since `_is_async`'s only two
+uses were the `zip` and computing `_any_async`.
+
+Behaviour is identical across 10 comparator shapes x 25 input pairs, covering
+nulls, descending, chains, bare comparator segments and
+`nulls_first()`/`nulls_last()`.
