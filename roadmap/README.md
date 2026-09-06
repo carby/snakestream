@@ -71,9 +71,40 @@ entry resolves against `openspec/` and the tree. A renamed spec or a deleted
 module breaks the build instead of quietly leaving a stale pointer behind. It
 also asserts the committed index matches what the generator renders.
 
-To add an item, copy the frontmatter of an existing one, and to close it, move
-the file's prose into [`decisions.md`](decisions.md) as a new top entry and
-delete the file.
+To add an item, copy the frontmatter of an existing one. To close it — and only
+once the work is **implemented or declined** — move the file's prose into
+[`decisions.md`](decisions.md) as a new top entry and delete the file.
+
+### Scaffolding an item is not closing it
+
+Turning an item into an openspec change does not take it out of the queue. A
+change directory holding a proposal and a design is enlightenment about what has
+to be done, not the doing of it, so the item stays in its bucket until an agent
+actually completes the tasks. `decisions.md` is for what shipped and what was
+measured and declined; a scaffolded item is neither, and filing it there hides
+live work in an append-only log that is never meant to be edited again.
+
+What scaffolding does earn is an edit to the item itself, in place:
+
+- **Split it** if the analysis found two pieces of work rather than one, each
+  getting its own file and its own `refs.changes`.
+- **Restate the `gate`** as whatever the work still has to clear. A gate that
+  was a question ("benchmark this") is met once the benchmark exists, and
+  leaving it there tells the next reader to redo it.
+- **Record what the analysis corrected**, especially where the item's own
+  earlier reasoning turned out to be wrong. That is the part a later reader
+  cannot reconstruct.
+- Leave `bucket` alone unless the entry criterion genuinely changed.
+  Scaffolding does not claim an item; only a person committing to it does.
+
+### Fix roadmap mistakes forward
+
+The roadmap is prose with a schema check over it, not tested code, and it is
+edited by more than one agent at a time. A wrong entry costs exactly one
+follow-up commit. **Do not `reset`, `amend`, or rebase to tidy one up** — the
+upside is a neater log and the downside is dropping a peer's just-landed commit
+out of the tree, which has already come within one command of happening here.
+Commit the correction on top and say what it corrects.
 
 ### Frontmatter
 
