@@ -1,0 +1,35 @@
+Task 4.1 post-change measurement
+bench_segment_sign.py, 20,000 elements, interleaved round-robin, best of 3,
+median of 25 rounds, ns/element. Two independent runs on merged
+comparator.py.
+
+=== run 1 ===
+sync shapes (ns/element, median, min-max range):
+  key segment: 296.6  (267.2-304.2)
+  comparator segment: 330.6  (303.9-342.8)
+  two-segment chain: 298.3  (267.6-306.5)
+async shapes (ns/element, median, min-max range):
+  async extractor, one key segment: 3922.6  (3753.5-4100.7)
+=== run 2 ===
+sync shapes (ns/element, median, min-max range):
+  key segment: 299.2  (274.3-312.9)
+  comparator segment: 331.2  (309.5-378.6)
+  two-segment chain: 302.5  (273.0-332.0)
+async shapes (ns/element, median, min-max range):
+  async extractor, one key segment: 4010.9  (3866.0-4196.1)
+
+Deltas vs. baseline.txt (median of median):
+  key segment:         329.3 -> 297.9   -9.5%
+  comparator segment:  371.2 -> 330.9  -10.9%
+  two-segment chain:   329.8 -> 300.4   -8.9%
+  async key segment:  4346.4 -> 3966.8  -8.7%
+
+Gate: no shape regresses past +10% ns/element. Met -- all four shapes are
+negative. The async figure (-8.7%) is smaller than proposal.md's earlier
+prototype measurement (-20.3%), because that prototype's single shared
+comparator-dispatch check across nulls modes was replaced here by a
+nulls-first branch split (see comparator.py's _segment_sign_sync/_async
+docstrings) to keep the sync path's instruction count down -- the
+prototype's -20.3% async figure and this change's -8.7% are different
+implementations of the same merge, and this file records what actually
+shipped, not the prototype.

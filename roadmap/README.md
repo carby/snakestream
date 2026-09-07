@@ -40,9 +40,9 @@ bucket.
 
 1. [`Box` belongs with the collector containers](items/move-box-into-collectors.md) — filed 2026-09-03
 
-### Next (1)
+### Next (0)
 
-1. [`comparator.py`'s segment-sign 2x2](items/comparator-segment-sign.md) — filed 2026-09-02<br>  **Gate:** met in advance: must not regress past +10% ns/element (sync), measured negative in all six runs and -20.3% async
+*Empty.*
 
 ### Later (5)
 

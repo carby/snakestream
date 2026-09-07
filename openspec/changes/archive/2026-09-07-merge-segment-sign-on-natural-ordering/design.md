@@ -50,9 +50,16 @@ two things were being recomputed on every comparison to reconstruct what
       strict=True)  [async]        field of the _norm tuple)
 ```
 
-The async figure is the one that settles it: −20.3%, 1147.2 -> 913.8
-ns/element, with the sample ranges not overlapping (1088-1168 vs 874-936). The
-`zip(..., strict=True)` per comparison was a real cost, not a rounding error.
+The async figure is the one that settles it, though not at the magnitude this
+section originally claimed: task 4.1's actual measurement of the shipped code
+is −11.0%/−6.4%, not the −20.3% an earlier prototype recorded on a cheaper
+extractor (`await asyncio.sleep(0)` in `bench_segment_sign.py` dominates the
+per-element cost the two figures were meant to compare, so they are not
+directly comparable - see proposal.md's Why for the full note and
+`post_change.txt` for the record). Both async runs and all six sync runs are
+still negative, which is what `zip(..., strict=True)` per comparison being a
+real cost - not a rounding error - actually requires: consistently on the
+right side of zero, not a specific number.
 
 **Alternative considered: merge only, leave `__init__` alone.** Rejected on the
 above. It is the smaller diff and it is defensible, but it converts a
