@@ -43,6 +43,13 @@ under `.sequential()`:
 - A behavioural guarantee is stated for the first time: a source with more
   elements than `WORKERS` reaches more than one worker. Today nothing promises
   this, and in fact it does not hold — a 200-element source runs on one thread.
+  > **Note (2026-09-07, falsified during implementation):** task 2.3 found
+  > this last claim wrong. Round one alone already dispatches to more than one
+  > worker pre-ramp, for any source bigger than `WORKERS`. What did not hold
+  > was that *most of the source's elements* reached more than one worker —
+  > round two's one-step jump to `BATCH_SIZE` drained the remainder into a
+  > single worker's batch. See design.md decision 3 and
+  > `benchmark-findings.md`.
 - README's "About `.parallel()`" loses the "once the source spans enough
   batches" qualifier and states the measured post-ramp behaviour instead.
 - README's Migration entry for 0.3.5 loses its parenthetical "with enough
