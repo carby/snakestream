@@ -99,6 +99,18 @@ and 7.2 measured the growth rule without ever measuring the seed. Measured now:
 | 2 | 8 | 71 | 96 | 16 |
 | 1 | 4 | 35 | 59 | 20 |
 
+> **2026-09-07:** Task 3.2 (`ramp-batch-growth-geometrically`'s tasks.md)
+> reproduced this table against the landed code, not the prototype these
+> figures came from. `@k=1` reproduces closely (3-4 across trials). `@17` and
+> `@20` do **not** reproduce these exact figures and are run-to-run noisy on
+> the landed code — three trials measured (k=17, k=20): (36, 204), (92, 148),
+> (38, 36) — because the unordered path's waste depends on real concurrent
+> completion order (`asyncio.wait(FIRST_COMPLETED)`), which this table's
+> figures apparently did not exhibit at the same variance. The seed-1-vs-4
+> *comparison* this table argues for is unaffected — same order of magnitude,
+> nowhere near the seed-4 column, let alone the old code's ~4096 — but do not
+> read `35`/`59` as reproducible measurements of the landed code.
+
 Seed 1 is strictly better on every waste column for +3 dispatches. More
 importantly it stops being a *number*: "one element per worker" is a
 description of the first round, not a tuning parameter, so there is nothing

@@ -12,13 +12,17 @@ be decisive on a loaded machine, short enough that the file stays quick.
 """
 
 import asyncio
+from collections.abc import AsyncGenerator, AsyncIterator
+from unittest import mock
 
 import pytest
 
 from snakestream import Stream
 from snakestream.collectors import to_list
+from snakestream.execution import FORK_JOIN, _fork_join_ordered_batches, _pull_round, _run_batch_async
 from snakestream.ops import DistinctOp, LimitOp, SkipOp, SortedOp
 from snakestream.ordering import OrderDemand, split_point
+from snakestream.spliterator import BATCH_SIZE, batch
 
 
 def _asc(a: int, b: int) -> int:
@@ -376,6 +380,110 @@ async def test_closing_while_a_branch_is_blocked_on_the_window_does_not_hang() -
     await asyncio.wait_for(agen.aclose(), timeout=2)
     await asyncio.sleep(0)
     assert len(asyncio.all_tasks()) == before
+
+
+# --- the ramp: an early stopper pays the climb, a drainer pays it once ------
+
+
+@pytest.mark.asyncio
+async def test_a_short_circuiting_terminal_is_charged_the_climb_not_the_ceiling() -> None:
+    # given an order-blind short-circuiting terminal over a source that never
+    # ends - if read-ahead jumped straight to the ceiling, satisfying it would
+    # already have run the chain on workers * BATCH_SIZE elements.
+    #
+    # this cannot be observed by racing real OS threads: asyncio.to_thread()
+    # dispatch order is genuine scheduling noise, and even asserting on the
+    # *batch size requested* rather than the element count does not escape it
+    # - measured 20 to 204 chain invocations, and the size itself reaching
+    # BATCH_SIZE outright, across repeated runs of a version of this test that
+    # let real threads race. asyncio.to_thread() is patched here to run the
+    # batch's coroutine body cooperatively on this event loop instead of on a
+    # real thread - the same computation, with nothing left for the OS
+    # scheduler to reorder - which made the size sequence requested below
+    # identical over 100 consecutive runs.
+    sizes_requested: list[int] = []
+
+    async def spy_batch(source, size):
+        sizes_requested.append(size)
+        return await batch(source, size)
+
+    async def synchronous_dispatch(func, *args, **kwargs):
+        chain, items, state_map = args
+        return await _run_batch_async(chain, items, state_map)
+
+    async def endless():
+        i = 0
+        while True:
+            yield i
+            i += 1
+
+    with (
+        mock.patch("snakestream.execution.batch", spy_batch),
+        mock.patch("snakestream.execution.asyncio.to_thread", synchronous_dispatch),
+    ):
+        result = await Stream.of(endless()).parallel().any_match(lambda n: n == 17)
+
+    assert result is True
+    assert sizes_requested == [1, 1, 1, 1, 8, 8, 8, 8]
+
+
+@pytest.mark.asyncio
+async def test_breaking_out_of_iterator_early_is_charged_the_climb_not_the_ceiling() -> None:
+    # the ordered twin of the above - no terminal at all, just a caller
+    # breaking out of its own loop over iterator() (design.md decision 2's
+    # argument that the executor cannot learn this from a sink declaration)
+    calls: list[int] = []
+
+    async def endless():
+        i = 0
+        while True:
+            yield i
+            i += 1
+
+    agen = Stream.of(endless()).parallel().peek(calls.append).iterator()
+    count = 0
+    async for _ in agen:
+        count += 1
+        if count == 20:
+            break
+    await agen.aclose()
+
+    assert len(calls) < FORK_JOIN.workers * BATCH_SIZE // 8
+
+
+@pytest.mark.asyncio
+async def test_a_draining_pipeline_reaches_the_ceiling_in_a_source_independent_number_of_refills() -> None:
+    # a pipeline that never short-circuits pays the climb once: the number of
+    # refills spent below BATCH_SIZE is the same whatever the source length,
+    # which is exactly what the arithmetic ramp task 7.2 rejected does not
+    # give - that one never saturates, so its below-cap refill count grows
+    # with the source instead of staying fixed
+    async def sizes_used(n: int) -> list[int]:
+        sizes: list[int] = []
+        real_pull_round = _pull_round
+
+        async def spy_pull_round(source: AsyncIterator, workers: int, size: int) -> list[list[int]]:
+            sizes.append(size)
+            return await real_pull_round(source, workers, size)
+
+        async def source() -> AsyncGenerator:
+            for i in range(n):
+                yield i
+
+        with mock.patch("snakestream.execution._pull_round", spy_pull_round):
+            agen = _fork_join_ordered_batches(aiter(source()), [], FORK_JOIN.workers, {})
+            async for _ in agen:
+                pass
+        return sizes
+
+    small = await sizes_used(20_000)
+    large = await sizes_used(200_000)
+
+    below_cap_small = sum(1 for s in small if s < BATCH_SIZE)
+    below_cap_large = sum(1 for s in large if s < BATCH_SIZE)
+
+    assert below_cap_small > 1
+    assert below_cap_small == below_cap_large
 
 
 # --- cancellation across the barrier ----------------------------------------

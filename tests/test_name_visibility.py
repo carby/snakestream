@@ -53,16 +53,17 @@ def test_the_check_reports_importer_definer_and_name_on_a_violation(tmp_path) ->
 
 
 def test_a_tests_module_reaching_into_a_private_name_is_not_inspected() -> None:
-    # test_sequential.py and test_find_first.py both do legitimate white-box
-    # testing, importing underscore-prefixed names straight from
-    # snakestream.execution (_wrap_sink, _FIRST_BATCH_SIZE). The check itself
-    # can detect that shape when pointed at it - this isn't vacuous - but the
+    # test_sequential.py and test_comparator_segments.py both do legitimate
+    # white-box testing, importing underscore-prefixed names straight from
+    # their modules under test (snakestream.execution's _wrap_sink,
+    # snakestream.comparator's _is_comparator_arity). The check itself can
+    # detect that shape when pointed at it - this isn't vacuous - but the
     # production check below only ever globs src/snakestream/*.py, so these
     # two files are never in its scope and neither import is ever reported.
-    findings = _cross_module_private_imports(["tests/test_sequential.py", "tests/test_find_first.py"])
+    findings = _cross_module_private_imports(["tests/test_sequential.py", "tests/test_comparator_segments.py"])
     assert ("tests/test_sequential.py", "snakestream.execution", "_wrap_sink") in findings
-    assert ("tests/test_find_first.py", "snakestream.execution", "_FIRST_BATCH_SIZE") in findings
+    assert ("tests/test_comparator_segments.py", "snakestream.comparator", "_is_comparator_arity") in findings
 
     scanned = sorted(glob.glob(f"{_SRC_ROOT}/*.py"))
     assert "tests/test_sequential.py" not in scanned
-    assert "tests/test_find_first.py" not in scanned
+    assert "tests/test_comparator_segments.py" not in scanned

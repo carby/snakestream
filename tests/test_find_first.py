@@ -5,7 +5,7 @@ import pytest
 from collections.abc import AsyncGenerator
 
 from snakestream import Stream
-from snakestream.execution import WORKERS, _FIRST_BATCH_SIZE
+from snakestream.execution import WORKERS
 
 
 async def _slower_for_earlier(x: int) -> int:
@@ -245,12 +245,12 @@ async def test_a_parallel_find_first_may_process_more_than_one_element() -> None
     it = await Stream.of(_SOURCE).parallel().map(timed).find_first()
 
     # then the right answer, and more than one element processed to get it -
-    # bounded by the first round's read-ahead. Asserted as invariants, never
-    # as the measured figure: the count sits between WORKERS and
-    # WORKERS * _FIRST_BATCH_SIZE depending on how the batches interleave,
-    # which a loaded machine moves
+    # bounded by the first round's read-ahead, which the ramp seeds at one
+    # element per worker. Asserted as invariants, never as the measured
+    # figure: the count sits between 1 and WORKERS depending on how the
+    # batches interleave, which a loaded machine moves
     assert it == 0
-    assert 1 < len(calls) <= WORKERS * _FIRST_BATCH_SIZE
+    assert 1 < len(calls) <= WORKERS
 
 
 @pytest.mark.asyncio
