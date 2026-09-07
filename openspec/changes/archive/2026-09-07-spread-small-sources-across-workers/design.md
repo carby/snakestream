@@ -67,11 +67,25 @@ is not funnelled into one.
 
 `_run_batch_sync()` runs on the `asyncio.to_thread` worker; recording
 `threading.get_ident()` per dispatch and asserting more than one distinct id
-for a source larger than `WORKERS` tests the requirement directly. It fails
-today (a 200-element source yields one id after the first round) and passes
-after the ramp, which is the "deliberately break it once to confirm the test
-catches it" discipline task 4.3 of `fork-join-executor-and-spliterator`
-established.
+for a source larger than `WORKERS` tests the requirement directly.
+
+Measured against the true pre-ramp shape (`_FIRST_BATCH_SIZE=4` seed, then a
+one-step jump to `BATCH_SIZE`), this does **not** discriminate old from new:
+round one alone already dispatches up to `WORKERS` batches concurrently via
+`asyncio.gather`, regardless of the seed size, so a source with more than a
+worker's-worth of elements touches more than one thread in round one under
+both the old code and the new. The pre-ramp cliff was never zero
+distribution — it was that almost all of a small source's *elements* landed
+in a single worker's batch in round two, while the rest sat idle, which is a
+work-concentration problem the thread-count test cannot see and, per
+decision 2, is not what this requirement promises to guarantee anyway
+(distribution, not balance). The "deliberately break it once" discipline task
+4.3 of `fork-join-executor-and-spliterator` established was applied here and
+came back negative: the test is correct for what the requirement actually
+states, but it does not double as a regression guard for the pre-ramp cliff.
+That guard is `ramp-batch-growth-geometrically`'s own concern, not this
+change's; the wall-clock benchmark in section 3 is what actually demonstrates
+the improvement here.
 
 ### 4. The README caveat is deleted, not softened
 
@@ -96,10 +110,21 @@ regression — is unaffected and stays.
   different speedup numbers. -> That is honest and is the point: small sources
   improve from *slower than sequential* to meaningfully faster, without
   reaching the large-source figure. Both are stated with their n.
+  > **Note (2026-09-07, superseded):** this machine's own measurement came in
+  > higher — 2.01x-2.06x at n=200 — see `benchmark-findings.md`. The stated
+  > figures are from a different machine (the proposal's own harness); the
+  > qualitative point stands regardless of which machine's absolute numbers
+  > are read.
 - **This change is inert, and a green suite proves nothing, if it lands
   first.** -> Sequencing is stated in the proposal's Impact and in the Migration
   Plan below; the new test fails before the ramp, which makes an
   out-of-order landing loud rather than silent.
+  > **Note (2026-09-07, falsified during implementation):** task 2.3 found
+  > this does not hold. The thread-identity test passes under both the old
+  > and new code for any source bigger than `WORKERS`, since round one alone
+  > already dispatches to more than one worker regardless of the ramp — see
+  > decision 3's revision, above. An out-of-order landing would be silent, not
+  > loud; the wall-clock benchmark is the thing that would actually catch it.
 - **Thread-identity assertions can be fragile if the executor ever pools or
   reuses in a way that collapses ids.** -> `asyncio.to_thread` uses the default
   executor's pool, whose threads persist; distinct *concurrent* batches get

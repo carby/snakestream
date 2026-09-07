@@ -316,6 +316,50 @@ async def test_only_the_main_thread_ever_pulls_from_the_shared_source() -> None:
     assert threading.current_thread() not in map_threads
 
 
+# --- parallel-worker-utilisation: distribution does not depend on source size
+
+
+@pytest.mark.asyncio
+async def test_a_200_element_source_is_not_confined_to_one_worker() -> None:
+    threads: set[threading.Thread] = set()
+
+    def track(x: int) -> int:
+        threads.add(threading.current_thread())
+        return x
+
+    source = list(range(200))
+    parallel = await Stream.of(source).parallel().map(track).collect(to_list())
+    sequential = await Stream.of(source).sequential().map(lambda x: x).collect(to_list())
+
+    assert parallel == sequential
+    assert len(threads) > 1
+
+
+@pytest.mark.asyncio
+async def test_a_source_exhausted_within_the_first_rounds_still_spreads() -> None:
+    # WORKERS + 1 elements: the ramp's very first round (one element per
+    # worker) already spans every worker, and the source is gone long before
+    # size climbs anywhere near BATCH_SIZE - distribution must not wait for
+    # the climb (parallel-worker-utilisation, "Distribution does not wait for
+    # the batch-size ramp to climb").
+    threads: set[threading.Thread] = set()
+
+    def track(x: int) -> int:
+        # a real hold, not a no-op: without it a loaded runner's
+        # ThreadPoolExecutor may reuse one idle thread across round one's
+        # near-simultaneous dispatches instead of spawning a second, which
+        # would make this flaky rather than deterministic
+        time.sleep(0.01)
+        threads.add(threading.current_thread())
+        return x
+
+    source = list(range(FORK_JOIN.workers + 1))
+    lst = await Stream.of(source).parallel().map(track).collect(to_list())
+
+    assert lst == source
+    assert len(threads) > 1
+
+
 @pytest.mark.asyncio
 async def test_parallel_over_a_slow_async_source_completes() -> None:
     # a source with a real await suspension point: nothing should deadlock
