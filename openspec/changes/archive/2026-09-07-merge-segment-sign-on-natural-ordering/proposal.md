@@ -43,18 +43,37 @@ every comparison.
 - `self.segments` is untouched in shape and meaning.
 
 Measured on the `collapse-terminal-collector-duplication` harness — 20,000
-elements, interleaved round-robin, best of 3, median of 25 rounds, ns/element,
-two independent runs:
+elements, interleaved round-robin, best of 3, median of 25 rounds, ns/element.
+The prototype figures originally recorded here (−6.2%/−4.4% key segment,
+−8.7%/−6.8% comparator segment, −3.5%/−1.9% two-segment chain, −20.3% async)
+came from a version of `_segment_sign_sync`/`_segment_sign_async` with one
+shared, unconditional null check after the branch that builds `ea`/`eb`. `ty`
+rejected that shape - it cannot narrow `Any | None` through a compound
+`nulls is not ABSENT and (...)` guard - and casting around it cost enough per
+comparison to regress the sync shapes past the gate on measurement. What
+shipped instead folds the null check into the nulls-tolerant branch itself
+(see `_segment_sign_sync`'s docstring), which is what task 4.1 actually
+measured, two independent runs:
 
 | shape | sync delta |
 |---|---|
-| key segment | −6.2% / −4.4% |
-| comparator segment | −8.7% / −6.8% |
-| two-segment chain | −3.5% / −1.9% |
+| key segment | −10.4% / −8.7% |
+| comparator segment | −11.3% / −10.4% |
+| two-segment chain | −10.4% / −7.4% |
 
 | shape | async delta |
 |---|---|
-| async extractor, one key segment | **−20.3%** (1147.2 -> 913.8 ns/element, ranges 1088-1168 vs 874-936, non-overlapping) |
+| async extractor, one key segment | −11.0% / −6.4% |
+
+The async prototype and shipped figures are not comparable to each other:
+the prototype used a cheaper extractor than `bench_segment_sign.py`'s
+`await asyncio.sleep(0)`, which dominates the per-element cost and dilutes
+whatever the merge itself contributes (1147 ns/element baseline in the
+prototype vs. 4346 ns/element here for nominally the same shape). Read
+−8.7% as this change's own measurement, not as a regression from −20.3% -
+the two numbers were never produced by the same harness running the same
+code. Full figures: `baseline.txt` and `post_change.txt` in this change
+directory.
 
 Behaviour is identical across 10 comparator shapes × 25 input pairs, covering
 nulls, descending, chains, bare comparator segments and

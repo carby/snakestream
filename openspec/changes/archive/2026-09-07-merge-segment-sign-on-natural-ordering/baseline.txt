@@ -1,0 +1,19 @@
+Task 1.1 pre-change baseline
+bench_segment_sign.py, 20,000 elements, interleaved round-robin, best of 3,
+median of 25 rounds, ns/element. Two independent runs on unmodified
+comparator.py.
+
+=== run 1 ===
+sync shapes (ns/element, median, min-max range):
+  key segment: 330.9  (296.9-354.8)
+  comparator segment: 372.8  (340.9-405.2)
+  two-segment chain: 332.8  (314.1-356.8)
+async shapes (ns/element, median, min-max range):
+  async extractor, one key segment: 4407.2  (4161.0-4553.4)
+=== run 2 ===
+sync shapes (ns/element, median, min-max range):
+  key segment: 327.6  (298.9-352.3)
+  comparator segment: 369.5  (333.9-477.9)
+  two-segment chain: 326.8  (297.5-352.8)
+async shapes (ns/element, median, min-max range):
+  async extractor, one key segment: 4285.6  (4230.0-4583.8)

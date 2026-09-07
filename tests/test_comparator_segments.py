@@ -456,6 +456,16 @@ def test_bool_returning_key_comparator_raises_type_error_via_direct_call() -> No
         cmp(1, 2)
 
 
+def test_bool_returning_key_comparator_raises_type_error_under_nulls_tolerance() -> None:
+    def bool_cmp(a: int, b: int) -> bool:
+        return a > b
+
+    cmp = nulls_first(comparing(lambda x: x, bool_cmp))
+
+    with pytest.raises(TypeError):
+        cmp(1, 2)
+
+
 def test_direct_call_two_argument_comparator_segment_with_one_side_null() -> None:
     def by_int(a: int, b: int) -> int:
         return (a > b) - (a < b)
@@ -493,6 +503,24 @@ async def test_direct_call_async_two_argument_comparator_segment_null_tolerant()
     assert await cmp(None, 3) < 0
     assert await cmp(3, None) > 0
     assert await cmp(None, None) == 0
+    assert await cmp(1, 2) < 0
+    assert await cmp(2, 1) > 0
+
+
+@pytest.mark.asyncio
+async def test_direct_call_async_bare_comparator_segment_null_tolerant_both_none() -> None:
+    # a first segment async and tied, so a bare comparator segment (no
+    # extractor of its own) is what sees the elements directly under nulls
+    # tolerance in the async dispatch path.
+    async def key(_: int) -> int:
+        return 0
+
+    def natural(a: int, b: int) -> int:
+        return (a > b) - (a < b)
+
+    cmp = nulls_first(comparing(key).then_comparing(natural))
+
+    assert await cmp(None, None) == 0
 
 
 @pytest.mark.asyncio
@@ -504,6 +532,20 @@ async def test_direct_call_async_bool_returning_key_comparator_raises_type_error
         return a > b
 
     cmp = comparing(key, bool_cmp)
+
+    with pytest.raises(TypeError):
+        await cmp(1, 2)
+
+
+@pytest.mark.asyncio
+async def test_direct_call_async_bool_returning_key_comparator_raises_type_error_under_nulls_tolerance() -> None:
+    async def key(x: int) -> int:
+        return x
+
+    def bool_cmp(a: int, b: int) -> bool:
+        return a > b
+
+    cmp = nulls_first(comparing(key, bool_cmp))
 
     with pytest.raises(TypeError):
         await cmp(1, 2)
