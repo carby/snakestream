@@ -2,7 +2,7 @@
 id = "spread-small-sources-across-workers"
 title = "A small source should reach more than one worker"
 bucket = "now"
-rank = 2
+rank = 1
 filed = 2026-09-06
 gate = "sequenced after ramp-batch-growth-geometrically, and verified by counting distinct worker threads — never by timing"
 
@@ -11,10 +11,10 @@ changes = ["spread-small-sources-across-workers", "fork-join-executor-and-splite
 files = ["src/snakestream/execution.py", "README.md", "CLAUDE.md"]
 +++
 
-Surfaced 2026-09-06 while benchmarking
-[`ramp-batch-growth-geometrically`](ramp-batch-growth-geometrically.md), and
-split out from the same parent item. Scaffolded as the change of the same name —
-proposal and design written, specs and tasks not. Still queue work.
+Surfaced 2026-09-06 while benchmarking `ramp-batch-growth-geometrically`
+(closed 2026-09-07; see [`decisions.md`](../decisions.md)), and split out from
+the same parent item. Scaffolded as the change of the same name — proposal and
+design written, specs and tasks not. Still queue work.
 
 `.parallel()` is documented as *slower than `.sequential()`* for CPU-bound work
 on a small source, even on the free-threaded build where real parallelism is

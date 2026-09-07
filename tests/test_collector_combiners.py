@@ -5,8 +5,9 @@ result equals the .sequential() result over a source spanning several
 batches (task 4.6) - a source small enough to be one partition would pass
 without the combiner ever running, which is the trap design.md's Risks
 section calls out. _N below is chosen the same way test_partitioning.py's is:
-_FIRST_BATCH_SIZE=4 per worker times 4 workers pulls 16 in the first round,
-so 50 elements guarantees a second round and several partitions to merge."""
+the ramp seeds round one at one element per worker and grows x8 per refill
+(4 workers pull 4, then 32, then whatever remains), so 50 elements
+guarantees several rounds and several partitions to merge."""
 
 import pytest
 

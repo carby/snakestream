@@ -492,10 +492,28 @@ async def test_a_tail_that_sorts_again_splits_again() -> None:
     assert res == [11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
 
 
+async def _alternating_speed(n: int) -> int:
+    # _slow_head's slow/fast boundary (values < 5) happens to land exactly on
+    # a fork-join round boundary under the geometric ramp (WORKERS=4, and the
+    # ramp's first round pulls exactly one element per worker): the four
+    # smallest values of a sorted source are always slow *and* always the
+    # whole of round one, so round one is homogeneously slow regardless of
+    # source size, and whether the result reorders comes down to a close race
+    # between round one's stragglers and round two's newly-dispatched fast
+    # batch - measured flaky (2-40% failure rate depending on source size)
+    # once the ramp stopped pulling round one as a single large, inherently
+    # mixed batch. Alternating speed by parity instead guarantees every
+    # batch of two or more elements is mixed, independent of where any
+    # future retuning of the ramp draws round boundaries.
+    await asyncio.sleep(0.05 if n % 2 == 0 else 0.001)
+    return n
+
+
 @pytest.mark.asyncio
 async def test_unordered_in_the_tail_removes_the_delivery_barrier() -> None:
     # when the caller clears the characteristic after the barrier
-    res = await Stream.of(list(range(12, 0, -1))).parallel().sorted(_asc).unordered().map(_slow_head).collect(to_list())
+    stream = Stream.of(list(range(12, 0, -1))).parallel().sorted(_asc).unordered()
+    res = await stream.map(_alternating_speed).collect(to_list())
     # then the sort still saw the whole stream, and delivery is the race's
     assert sorted(res) == list(range(1, 13))
     assert res != list(range(1, 13))

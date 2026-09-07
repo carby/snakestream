@@ -11,7 +11,7 @@ import pytest
 
 from snakestream import Stream
 from snakestream.collectors import to_list
-from snakestream.execution import _FIRST_BATCH_SIZE, FORK_JOIN, SEQUENTIAL
+from snakestream.execution import FORK_JOIN, SEQUENTIAL
 from snakestream.spliterator import BATCH_SIZE
 
 
@@ -85,9 +85,9 @@ async def test_in_flight_elements_are_bounded_by_workers_times_batch_size() -> N
     source = list(range(500))
     await Stream.of(source).parallel().map(track).collect(to_list())
 
-    # steady-state rounds pull workers batches of BATCH_SIZE each; the first
-    # round is smaller (_FIRST_BATCH_SIZE), so the observed peak can only be
-    # at or under workers * BATCH_SIZE, never over it
+    # the ramp climbs from one element per worker toward BATCH_SIZE per
+    # worker, monotonically, so the observed peak can only be at or under
+    # workers * BATCH_SIZE, never over it
     assert max_in_flight <= FORK_JOIN.workers * BATCH_SIZE
 
 
@@ -128,9 +128,10 @@ async def test_limit_zero_under_parallel_pulls_nothing() -> None:
 
 @pytest.mark.asyncio
 async def test_an_order_blind_terminal_does_not_wait_on_a_slow_batch_elsewhere() -> None:
-    # a slow element and the terminal's target land in *different* batches
-    # (target index 17 is past the first _FIRST_BATCH_SIZE=16 batch that
-    # index 0's slow element occupies) - the case design.md decision 10 fixed
+    # a slow element and the terminal's target land in *different* batches -
+    # index 0's slow element always occupies its own one-element first-round
+    # batch, and index 17 is pulled into a later, larger batch as the ramp
+    # climbs - the case design.md decision 10 fixed
     async def endless():
         i = 0
         while True:
@@ -336,10 +337,11 @@ async def test_parallel_over_a_slow_async_source_completes() -> None:
 @pytest.mark.asyncio
 async def test_parallel_map_runs_concurrently_not_serially() -> None:
     # time.sleep() blocks (no await point), so gather() only overlaps it
-    # across *threads*, not within one - enough elements are needed to span
-    # every worker's own batch in round 1, or everything lands on one
-    # thread and runs sequentially there regardless of gather()
-    per_worker = min(_FIRST_BATCH_SIZE, BATCH_SIZE)
+    # across *threads*, not within one - the ramp seeds round 1 at one
+    # element per worker, so that many elements is already enough to span
+    # every worker's own batch, or everything lands on one thread and runs
+    # sequentially there regardless of gather()
+    per_worker = 1
     source = list(range(FORK_JOIN.workers * per_worker))
 
     def slow(x: int) -> int:

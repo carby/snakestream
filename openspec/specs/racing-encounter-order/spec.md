@@ -328,8 +328,17 @@ that raising the worker count does not reduce what each branch may have in
 flight. A race across more branches SHALL be given a proportionally larger
 window rather than the same window divided further.
 
-The window's size SHALL be fixed for the duration of a pipeline's execution. A
-pipeline SHALL NOT observe the bound changing part-way through its own run.
+The window SHALL have a ceiling that is fixed for the duration of a pipeline's
+execution, and a pipeline SHALL NOT observe that ceiling changing part-way
+through its own run. What a pipeline may observe is the window *climbing toward*
+the ceiling: the amount in flight SHALL start at a small fraction of the ceiling
+and grow as the pipeline consumes, so that a consumer which stops early is never
+charged for a window sized for a consumer which does not. That growth SHALL be
+monotone — the window never shrinks within a run — and SHALL reach the ceiling
+after a number of refills that does not depend on the length of the source, so
+that a draining pipeline pays for the climb once rather than in proportion to
+what it consumes. The rate of the climb, its starting size and the ceiling are
+all subject to the retuning allowance below.
 
 This bound SHALL apply to a delivery barrier exactly as it applies to a barrier
 in front of an order-sensitive operation: an ordered racing pipeline whose
@@ -346,17 +355,19 @@ definition, not because of the barrier.
 
 A consequence SHALL be accepted and is not a defect: an operation upstream of a
 short-circuiting one may run on more elements than the sequential pipeline would
-run it on, up to the window. A racing pipeline is permitted this over-pull where
-a sequential one is not, matching the existing racing behaviour and Java's
+run it on, up to the window *as it stands when the short-circuiting operation
+settles* — not up to the ceiling. A racing pipeline is permitted this over-pull
+where a sequential one is not, matching the existing racing behaviour and Java's
 parallel `limit()`. The elements *selected* are unaffected.
 
 **This same allowance extends to an order-blind, short-circuiting terminal
 under `fork-join-executor-and-spliterator`'s executor**, which is not itself
 racing branches against a window but batches against a batch boundary: such a
 terminal may be delayed by a slow element sharing its own batch with the
-element that would have satisfied it, bounded by that batch's size, for the
-same reason and on the same footing as the over-pull this requirement already
-accepts. Which element eventually satisfies the terminal is unaffected.
+element that would have satisfied it, bounded by that batch's size as the ramp
+has grown it at that point, for the same reason and on the same footing as the
+over-pull this requirement already accepts. Which element eventually satisfies
+the terminal is unaffected.
 
 #### Scenario: A slow first element does not draw the whole source into memory
 - **WHEN** an ordered racing pipeline is run over a large source in which the
@@ -382,6 +393,21 @@ accepts. Which element eventually satisfies the terminal is unaffected.
   source with far more than `n` elements
 - **THEN** `fn` may be called more than `n` times but not unboundedly so, and
   the elements yielded are exactly the first `n` in encounter order
+
+#### Scenario: An early-stopping consumer is charged the climb, not the ceiling
+- **WHEN** a consumer of an ordered racing pipeline stops after a small number
+  of elements — a short-circuiting terminal, or a caller breaking out of its own
+  loop over `iterator()`
+- **THEN** the number of elements the chain ran on is bounded by how far the
+  window had climbed when the consumer stopped, which for a consumer stopping
+  within the first few rounds is far below the ceiling
+
+#### Scenario: A draining pipeline reaches the ceiling in a source-independent number of refills
+- **WHEN** a pipeline that never short-circuits is run over sources of very
+  different lengths
+- **THEN** the number of refills spent below the ceiling is the same for each,
+  so the cost of the climb is a fixed addition rather than one that grows with
+  the source
 
 #### Scenario: A wider race is given a wider window
 - **WHEN** the same ordered racing pipeline is run across more branches than the

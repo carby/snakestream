@@ -12,11 +12,12 @@ from snakestream import Stream
 from snakestream.collectors import to_list
 
 
-# A source spanning several fork-join batches: _FIRST_BATCH_SIZE=4 per worker
-# with 4 workers pulls 16 in round one, so 50 elements guarantees a second
-# round and several partitions to merge - the trap task 4.6 and design.md's
-# Risks both call out, where a source small enough to be one partition would
-# pass without ever merging.
+# A source spanning several fork-join batches: the ramp seeds round one at
+# one element per worker and grows x8 per refill (4 workers pull 4, then 32,
+# then whatever remains), so 50 elements guarantees several rounds and
+# several partitions to merge - the trap task 4.6 and design.md's Risks both
+# call out, where a source small enough to be one partition would pass
+# without ever merging.
 _N = 50
 
 

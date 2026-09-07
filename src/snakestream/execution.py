@@ -183,19 +183,6 @@ async def _accumulate_into(head: Sink[Any], items: list[Any], state_map: StateMa
 # needs a *global* view no per-batch chain can give it. See design.md
 # (fork-join-executor-and-spliterator) for both halves of the argument.
 
-# A short-circuiting terminal (limit(), find_any(), a `.limit()` barrier
-# downstream) should not have to wait out a full BATCH_SIZE-per-worker pull
-# just to discover it already has enough. The first round pulls this many
-# per worker instead - 4, one per worker (design.md decision 1's "made
-# concrete" addendum): _pull_round() already multiplies by `workers` once,
-# so a first-round size meant as the round's *total* would double-count it
-# (this was 16, meant as a total but read as per-worker, giving 64 rather
-# than 16 - caught by test_racing_encounter_order.py's own read-ahead
-# assertions). Later rounds grow to spliterator.BATCH_SIZE, the single
-# steady-state bound task 2.3 (fork-join-executor-and-spliterator) asks for.
-# A starting point, not a measurement — task 7.2 is where this gets one.
-_FIRST_BATCH_SIZE = 4
-
 
 async def _run_element(chain: list[Op], item: Any, state_map: StateMap) -> list[Any]:
     """One batch element's whole chain, pushed through a sink built fresh for
@@ -306,7 +293,7 @@ async def _fork_join_partitioned(chain: list[Op], source: AsyncGenerator, worker
             state_map[op] = state
 
     await head.begin(state_map)
-    size = _FIRST_BATCH_SIZE
+    size = 1
     async with maybe_aclosing(aiter(source)) as src:
         # same pre-first-pull guard as _copy_into(): a terminal cancelled
         # before it has merged anything (none of today's partitioning
@@ -326,7 +313,10 @@ async def _fork_join_partitioned(chain: list[Op], source: AsyncGenerator, worker
                     break
             if len(round_batches) < workers:
                 break
-            size = BATCH_SIZE
+            # same ramp as _fork_join_ordered_batches() - see its comment for
+            # the rule; the 8 is one retunable constant shared by all three
+            # sites (design.md decision 4, ramp-batch-growth-geometrically)
+            size = min(size * 8, BATCH_SIZE)
     await head.end()
     return head.result()
 
@@ -370,7 +360,7 @@ async def _fork_join_ordered_batches(src: AsyncIterator, chain: list[Op], worker
     nothing to reorder afterwards. Used whenever something downstream —
     an op needing a global view, or a terminal demanding it — needs that
     order; see _fork_join_batches()."""
-    size = _FIRST_BATCH_SIZE
+    size = 1
     while True:
         round_batches = await _pull_round(src, workers, size)
         if not round_batches:
@@ -383,16 +373,19 @@ async def _fork_join_ordered_batches(src: AsyncIterator, chain: list[Op], worker
 
         if len(round_batches) < workers:
             return
-        # deliberately the same BATCH_SIZE Spliterator.try_split() uses, not
-        # a separate constant chosen for this read-ahead bound specifically
-        # (design.md decision 1: one number for both, over splitting it) -
-        # steady-state in-flight is therefore workers * BATCH_SIZE, e.g.
-        # 4096 at the defaults, against the old window's 16. Every reason
-        # that window existed - memory held resident, latency behind a
-        # straggler, wasted upstream invocations under a short-circuiting
-        # terminal - still applies at this size; task 7.2 is where it gets
-        # measured and, if warranted, a bound of its own.
-        size = BATCH_SIZE
+        # Geometric ramp, not a one-step jump to the steady state: one
+        # element per worker in round one, x8 per refill thereafter, capped
+        # at the same BATCH_SIZE Spliterator.try_split() uses (design.md
+        # decision 1: one number for both, over splitting it). It saturates
+        # in log_8(BATCH_SIZE) refills regardless of source length, so a
+        # draining pipeline pays a fixed, small toll for the climb rather
+        # than reaching the workers * BATCH_SIZE ceiling immediately; a
+        # consumer that stops early - a short-circuiting terminal, or a
+        # caller breaking out of iterator() - is charged only for how far
+        # the climb had gotten, not for the ceiling (measured in
+        # ramp-batch-growth-geometrically, which inverted task 7.2's
+        # rejection of an arithmetic version of this same idea).
+        size = min(size * 8, BATCH_SIZE)
 
 
 async def _fork_join_unordered_batches(
@@ -410,7 +403,7 @@ async def _fork_join_unordered_batches(
     buffer; it is a sliding window of in-flight batches, not a merge."""
     in_flight: dict[asyncio.Task[list[Any]], None] = {}
     exhausted = False
-    size = _FIRST_BATCH_SIZE
+    size = 1
 
     async def _fill() -> None:
         nonlocal exhausted
@@ -430,7 +423,10 @@ async def _fork_join_unordered_batches(
                 del in_flight[task]
                 for out in task.result():
                     yield out
-            size = BATCH_SIZE
+            # same ramp as _fork_join_ordered_batches() - see its comment for
+            # the rule; the 8 is one retunable constant shared by all three
+            # sites (design.md decision 4, ramp-batch-growth-geometrically)
+            size = min(size * 8, BATCH_SIZE)
             await _fill()
     except BaseException:
         for task in in_flight:

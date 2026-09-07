@@ -146,21 +146,29 @@ between those two. `find_first()` declares `ALWAYS`, alone: its demand survives
 restored — `unordered()` clears the requirement to honour it, never the ability.
 
 Read-ahead has no bespoke bound any more — no `_Window`, no per-branch slot
-count. The steady-state in-flight amount is `WORKERS * BATCH_SIZE` (the same
-`BATCH_SIZE` `Spliterator.try_split()` uses — one number for both, deliberately,
-per design.md decision 1 — 4096 at the defaults, against the old window's 16),
-with the first round smaller (`_FIRST_BATCH_SIZE`, 4 per worker) so a
-short-circuiting terminal doesn't over-pull on its very first round. Every
-reason the old window existed — memory held resident, latency behind a
-straggler, wasted upstream invocations under a short-circuiting terminal —
-still applies at this size, and the lever a caller is given for all three
-remains `unordered()`, not a number. One bounded exception is new and
-accepted rather than fixed: an order-blind, short-circuiting terminal may
-still be delayed by a slow, unrelated element sharing its own batch with the
-one that would have satisfied it, bounded by that batch's size — never by an
-earlier one, and never unboundedly (design.md decision 10; see
-`racing-encounter-order`'s "Read-ahead under an ordered racing pipeline is
-bounded" requirement for the accepted-and-bounded framing this extends).
+count. It climbs a geometric ramp instead of jumping straight to its ceiling:
+one element per worker in the first round, x8 per refill thereafter, capped at
+`BATCH_SIZE` (the same `BATCH_SIZE` `Spliterator.try_split()` uses — one
+number for both, deliberately, per design.md decision 1 of
+`fork-join-executor-and-spliterator`). The ceiling — `WORKERS * BATCH_SIZE`,
+4096 at the defaults, against the old racing window's 16 — is reached only
+after a few refills (`log_8(BATCH_SIZE)`, ~3-4 rounds), not immediately, so a
+consumer that stops early - a short-circuiting terminal, or a caller breaking
+out of its own loop over `iterator()` - is charged for how far the climb had
+gotten, not for the ceiling (`ramp-batch-growth-geometrically`, which measured
+this against task 7.2's earlier, rejected, non-saturating arithmetic ramp and
+inverted that verdict for a geometric one). Every reason the old window
+existed — memory held resident, latency behind a straggler, wasted upstream
+invocations under a short-circuiting terminal — still applies once the ramp
+has climbed, and the lever a caller is given for all three remains
+`unordered()`, not a number. One bounded exception is new and accepted rather
+than fixed: an order-blind, short-circuiting terminal may still be delayed by
+a slow, unrelated element sharing its own batch with the one that would have
+satisfied it, bounded by that batch's size as the ramp has grown it at that
+point — never by an earlier one, and never unboundedly (design.md decision 10
+of `fork-join-executor-and-spliterator`; see `racing-encounter-order`'s
+"Read-ahead under an ordered racing pipeline is bounded" requirement for the
+accepted-and-bounded framing this extends).
 
 The split is internal. It is not a third executor, is not selectable, and
 `is_parallel()` still reports the executor the stream carries.

@@ -2,7 +2,7 @@
 id = "move-box-into-collectors"
 title = "`Box` belongs with the collector containers"
 bucket = "now"
-rank = 3
+rank = 2
 filed = 2026-09-03
 updated = 2026-09-06
 

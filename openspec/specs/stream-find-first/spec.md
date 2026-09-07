@@ -125,9 +125,15 @@ before it is known which element is first.
 
 The number of such elements SHALL be bounded. Under the fork-join executor it
 SHALL NOT exceed the total number of elements pulled into the first round of
-batches — `WORKERS` batches of up to `_FIRST_BATCH_SIZE` elements each — because
-the call settles as soon as the first element is released, and unless the
-source is exhausted first, resolving it never requires starting a second round.
+batches, which SHALL be one element per worker — the smallest first round that
+still reaches every worker — because the call settles as soon as the first
+element is released, and unless the source is exhausted first, resolving it
+never requires starting a second round.
+
+The size of that first round is a tuning decision, not a contract: it is
+covered by `racing-encounter-order`'s allowance that the read-ahead bound may be
+retuned without a breaking change, and this specification SHALL NOT name an
+internal symbol for it.
 
 A sequential `find_first()` SHALL continue to invoke them for exactly one
 element.
@@ -140,6 +146,11 @@ invocation SHALL declare `.sequential()`.
   elements
 - **THEN** the correct first element is returned, and `f` is permitted to have
   been invoked on more than one element, up to the first round's bound
+
+#### Scenario: The first round's bound is one element per worker
+- **WHEN** `.parallel().map(f).find_first()` is awaited on a source with far
+  more elements than workers
+- **THEN** `f` is invoked on no more elements than there are workers
 
 #### Scenario: A sequential find_first() processes exactly one
 - **WHEN** `.sequential().map(f).find_first()` is awaited on the same source

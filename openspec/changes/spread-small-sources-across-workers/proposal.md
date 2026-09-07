@@ -15,6 +15,15 @@ into a *single* worker's batch, because `batch()` pulls up to 1024 from one
 shared iterator before the next worker gets a turn. It closes: "The growth
 curve's shape controls this cliff directly."
 
+> **Note (superseded premise):** `ramp-batch-growth-geometrically` deleted
+> `_FIRST_BATCH_SIZE` and replaced the one-step 4 -> 1024 jump with a
+> geometric ramp (seed 1 per worker, x8 per refill, capped at `BATCH_SIZE`).
+> Round one now covers `WORKERS` elements (4 at the defaults), not 16, and
+> there is no longer a single jump straight to `BATCH_SIZE` — the climb passes
+> through several rounds first. This change is sequenced after that one and is
+> where the small-source cliff itself gets retired; its own measurements
+> should be taken against the ramp, not against the one-step figures above.
+
 `ramp-batch-growth-geometrically` changes that curve for a different reason —
 bounding speculative work under a short-circuiting terminal. This change is
 where the cliff itself is retired: measured, verified as a behavioural
