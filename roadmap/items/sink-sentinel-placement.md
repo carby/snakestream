@@ -2,13 +2,13 @@
 id = "sink-sentinel-placement"
 title = "`UNSET` and `unseeded()` sit in `sink.py` on rejected reasoning"
 bucket = "now"
-rank = 2
+rank = 1
 filed = 2026-09-03
 updated = 2026-09-08
-gate = "a home ruled *in* by what the names are siblings of, rebuilt from the actual import graph rather than from the stale comment — and sequenced after `unset-dual-role`, which decides how many names there are"
+gate = "a decision on whether `UnseededSink` earns the fold vocabulary its home despite `collectors.py`'s non-sink boxes — the import graph will not settle it, since the split leaves `UNSET`'s three importers unchanged"
 
 [refs]
-changes = ["extract-encounter-order-model", "name-by-visibility-not-underscore"]
+changes = ["extract-encounter-order-model", "name-by-visibility-not-underscore", "split-arity-and-seed-sentinels"]
 specs = ["sink-protocol"]
 files = ["src/snakestream/sink.py"]
 +++
@@ -66,3 +66,57 @@ That removes the third option above — leaving both in place and fixing
 `sink.py`'s docstring was available only while `UNSET` stayed a single
 sentinel, and it no longer is. Sequence this after the split; placing names
 whose count is about to change would be work done twice.
+
+## Corrected 2026-09-08 by rebuilding the graph the gate asked for
+
+Three findings, and each narrows the item further.
+
+**The stale comment is off by one letter, not one argument.** `collector.py` is
+a typo for `collectors.py`, which *is* the second caller — so the pair the
+comment names is otherwise right, and the item overstated the damage. What is
+genuinely false is the clause after it: `terminals.py` and `collectors.py` have
+disjoint import closures (`terminals` reaches `callable_dispatch, comparator,
+exception, ordering, sink, type`; `collectors` reaches those plus `collector,
+execution, spliterator`), so **both** edges are acyclic and either module could
+import the other today. The true statement is weaker — neither is downstream of
+the other, so neither is a plausible host. Rebuild the comment on that, not on
+"may not".
+
+**The import graph does not move under the split, so it cannot decide this.**
+`Stream.reduce()` still writes the seed sentinel for `ReduceSink` to read
+(`identity, accumulator = UNSET, identity`, then `ReduceSink(identity, ...)`),
+so `UNSET`'s importers stay exactly `stream.py`, `collectors.py`,
+`terminals.py` before and after. What changes is that all three now mean one
+thing. A gate phrased as "rebuilt from the actual import graph" was asking a
+question the graph has no answer to.
+
+**Option three is strengthened by the split, not removed.** The "Unblocked"
+note above has this backwards. A dual-purpose sentinel had *no* honest home —
+half its uses were arity dispatch with no relationship to sinks at all, which
+is precisely what made `sink.py` look like a dumping ground. Strip those away
+and the residue is a coherent trio, `UNSET` / `unseeded()` / `UnseededSink`,
+whose third member *is* the concept:
+
+```
+UnseededSink._create_container() -> UNSET
+UnseededSink._finish(c)          -> unseeded(c)
+```
+
+That rules `sink.py` **in** rather than merely failing to rule it out, which is
+the positive argument this item says has never been made. The split creates it.
+
+**The counterweight, which is the whole remaining question.**
+`collectors.py`'s `_ExtremumBox.found` and `_ReduceBox.acc` are dataclass
+boxes, deliberately *not* sinks — the stated reason `unseeded()` is a free
+function rather than a base-class method (design Decision 3 of
+`collapse-unseeded-accumulation-rule`). So the concept has two
+implementations and `sink.py`'s docstring advertises only one. Whether that
+reads as "the module docstring is one sentence short" or "the concept outgrew
+the module" is now the entire item.
+
+**And half of it has vanished.** `unset-dual-role` shipped 2026-09-08 as
+`split-arity-and-seed-sentinels` (see `decisions.md`): `_MISSING`'s identity
+never crosses a module boundary, so it is a private `_MISSING = object()` in
+each of `stream.py` and `collectors.py`, defined twice on purpose, and needed
+no placement decision at all. This item now places one trio —
+`UNSET` / `unseeded()` / `UnseededSink` — not two names of two kinds.

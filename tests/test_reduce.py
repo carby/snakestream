@@ -6,6 +6,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from snakestream import Stream
+from snakestream.exception import StreamBuildException
 
 
 @pytest.mark.asyncio
@@ -147,3 +148,94 @@ async def test_reduce_with_identity_still_works_unchanged() -> None:
 
     # then
     assert actual == 21
+
+
+@pytest.mark.asyncio
+async def test_reduce_no_identity_accumulator_by_keyword() -> None:
+    # when
+    actual = await Stream([1, 2, 3]).reduce(accumulator=lambda a, b: a + b)
+
+    # then
+    assert actual == 6
+
+
+@pytest.mark.asyncio
+async def test_reduce_no_identity_accumulator_by_keyword_empty_stream_returns_none() -> None:
+    calls = []
+
+    def accumulator(x: int, y: int) -> int:
+        calls.append((x, y))
+        return x + y
+
+    # when
+    actual = await Stream([]).reduce(accumulator=accumulator)
+
+    # then
+    assert actual is None
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_reduce_identity_and_accumulator_by_keyword() -> None:
+    # when
+    actual = await Stream([1, 2, 3]).reduce(identity=10, accumulator=lambda a, b: a + b)
+
+    # then
+    assert actual == 16
+
+
+@pytest.mark.asyncio
+async def test_reduce_all_three_by_keyword() -> None:
+    # when
+    actual = await Stream([1, 2, 3]).reduce(identity=0, accumulator=lambda a, b: a + b, combiner=lambda a, b: a + b)
+
+    # then
+    assert actual == 6
+
+
+@pytest.mark.asyncio
+async def test_reduce_all_three_by_keyword_combiner_is_invoked_under_parallel() -> None:
+    # given a keyword-spelled three-argument call, on a source large enough
+    # to span more than one batch under .parallel()
+    calls = 0
+
+    def combiner(a: int, b: int) -> int:
+        nonlocal calls
+        calls += 1
+        return a + b
+
+    # when
+    actual = await Stream(list(range(50))).parallel().reduce(identity=0, accumulator=lambda a, b: a + b, combiner=combiner)
+
+    # then
+    assert actual == sum(range(50))
+    assert calls > 0
+
+
+@pytest.mark.asyncio
+async def test_reduce_falsy_identity_by_keyword_is_not_omitted() -> None:
+    # when
+    actual = await Stream([1, 2, 3]).reduce(identity=0, accumulator=lambda a, b: a + b)
+
+    # then
+    assert actual == 6
+
+
+@pytest.mark.asyncio
+async def test_reduce_combiner_without_identity_is_rejected() -> None:
+    with pytest.raises(StreamBuildException):
+        await Stream([1, 2, 3]).reduce(accumulator=lambda a, b: a + b, combiner=lambda a, b: a + b)
+
+
+@pytest.mark.asyncio
+async def test_reduce_identity_and_combiner_without_accumulator_is_rejected() -> None:
+    # given a call unreachable positionally: identity and combiner supplied,
+    # accumulator omitted - identity must not be mistaken for accumulator
+    with pytest.raises(StreamBuildException):
+        await Stream([1, 2, 3]).reduce(identity=5, combiner=lambda a, b: a + b)
+
+
+@pytest.mark.asyncio
+async def test_reduce_no_accumulator_at_all_is_rejected() -> None:
+    with pytest.raises(StreamBuildException):
+        await Stream([1, 2, 3]).reduce()
