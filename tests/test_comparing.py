@@ -15,7 +15,7 @@ from snakestream.comparator import comparing
 async def test_sorted_with_sync_key_extractor() -> None:
     outset = [{"v": 3}, {"v": 1}, {"v": 2}]
 
-    actual = await Stream.of(outset).sorted(comparing(lambda x: x["v"])).collect(to_list())
+    actual = await Stream(outset).sorted(comparing(lambda x: x["v"])).collect(to_list())
 
     assert actual == [{"v": 1}, {"v": 2}, {"v": 3}]
 
@@ -28,7 +28,7 @@ async def test_sorted_with_async_key_extractor() -> None:
         await asyncio.sleep(0.01)
         return x["v"]
 
-    actual = await Stream.of(outset).sorted(comparing(key)).collect(to_list())
+    actual = await Stream(outset).sorted(comparing(key)).collect(to_list())
 
     assert actual == [{"v": 1}, {"v": 2}, {"v": 3}]
 
@@ -37,7 +37,7 @@ async def test_sorted_with_async_key_extractor() -> None:
 async def test_min_accepts_comparing_sync() -> None:
     outset = [{"v": 3}, {"v": 1}, {"v": 2}]
 
-    result = await Stream.of(outset).min(comparing(lambda x: x["v"]))
+    result = await Stream(outset).min(comparing(lambda x: x["v"]))
 
     assert result == {"v": 1}
 
@@ -46,7 +46,7 @@ async def test_min_accepts_comparing_sync() -> None:
 async def test_max_accepts_comparing_sync() -> None:
     outset = [{"v": 3}, {"v": 1}, {"v": 2}]
 
-    result = await Stream.of(outset).max(comparing(lambda x: x["v"]))
+    result = await Stream(outset).max(comparing(lambda x: x["v"]))
 
     assert result == {"v": 3}
 
@@ -59,7 +59,7 @@ async def test_min_accepts_comparing_async() -> None:
         await asyncio.sleep(0.01)
         return x["v"]
 
-    result = await Stream.of(outset).min(comparing(key))
+    result = await Stream(outset).min(comparing(key))
 
     assert result == {"v": 1}
 
@@ -72,7 +72,7 @@ async def test_max_accepts_comparing_async() -> None:
         await asyncio.sleep(0.01)
         return x["v"]
 
-    result = await Stream.of(outset).max(comparing(key))
+    result = await Stream(outset).max(comparing(key))
 
     assert result == {"v": 3}
 
@@ -81,7 +81,7 @@ async def test_max_accepts_comparing_async() -> None:
 async def test_min_by_accepts_comparing() -> None:
     outset = [{"v": 3}, {"v": 1}, {"v": 2}]
 
-    result = await Stream.of(outset).collect(min_by(comparing(lambda x: x["v"])))
+    result = await Stream(outset).collect(min_by(comparing(lambda x: x["v"])))
 
     assert result == {"v": 1}
 
@@ -90,7 +90,7 @@ async def test_min_by_accepts_comparing() -> None:
 async def test_max_by_accepts_comparing() -> None:
     outset = [{"v": 3}, {"v": 1}, {"v": 2}]
 
-    result = await Stream.of(outset).collect(max_by(comparing(lambda x: x["v"])))
+    result = await Stream(outset).collect(max_by(comparing(lambda x: x["v"])))
 
     assert result == {"v": 3}
 
@@ -103,7 +103,7 @@ async def test_min_by_accepts_comparing_async() -> None:
         await asyncio.sleep(0.01)
         return x["v"]
 
-    result = await Stream.of(outset).collect(min_by(comparing(key)))
+    result = await Stream(outset).collect(min_by(comparing(key)))
 
     assert result == {"v": 1}
 
@@ -116,7 +116,7 @@ async def test_max_by_accepts_comparing_async() -> None:
         await asyncio.sleep(0.01)
         return x["v"]
 
-    result = await Stream.of(outset).collect(max_by(comparing(key)))
+    result = await Stream(outset).collect(max_by(comparing(key)))
 
     assert result == {"v": 3}
 
@@ -151,7 +151,7 @@ async def test_sorted_order_matches_call_path_order(values: list[tuple[int, int]
     cmp = comparing(lambda x: x[0])
 
     # when: sort via the fast path, and independently via the __call__ path
-    fast = await Stream.of(outset).sorted(cmp).collect(to_list())
+    fast = await Stream(outset).sorted(cmp).collect(to_list())
 
     def sign(a: tuple, b: tuple) -> int:
         r = cmp(a, b)
@@ -169,7 +169,7 @@ async def test_sorted_order_matches_call_path_order_on_bool_keys() -> None:
     outset = [1, 2, 3, 4, 5]
     cmp = comparing(lambda x: x % 2 == 0)
 
-    fast = await Stream.of(outset).sorted(cmp).collect(to_list())
+    fast = await Stream(outset).sorted(cmp).collect(to_list())
 
     def sign(a: int, b: int) -> int:
         r = cmp(a, b)
@@ -190,7 +190,7 @@ async def test_key_extractor_invoked_exactly_once_per_element() -> None:
         return x
 
     outset = [5, 3, 1, 4, 2]
-    await Stream.of(outset).sorted(comparing(key)).collect(to_list())
+    await Stream(outset).sorted(comparing(key)).collect(to_list())
 
     assert len(calls) == len(outset)
 
@@ -211,7 +211,7 @@ class _CoroutineReturningKey:
 async def test_key_extractor_misclassified_sync_is_caught_by_safety_net() -> None:
     outset = [3, 1, 2]
 
-    actual = await Stream.of(outset).sorted(comparing(_CoroutineReturningKey())).collect(to_list())
+    actual = await Stream(outset).sorted(comparing(_CoroutineReturningKey())).collect(to_list())
 
     assert actual == [1, 2, 3]
 
@@ -225,7 +225,7 @@ async def test_key_extractor_invoked_exactly_once_per_element_async() -> None:
         return x
 
     outset = [5, 3, 1, 4, 2]
-    await Stream.of(outset).sorted(comparing(key)).collect(to_list())
+    await Stream(outset).sorted(comparing(key)).collect(to_list())
 
     assert len(calls) == len(outset)
 
@@ -234,7 +234,7 @@ async def test_key_extractor_invoked_exactly_once_per_element_async() -> None:
 async def test_stability_equal_keys_keep_encounter_order() -> None:
     outset = [("a", 1), ("b", 1), ("c", 0)]
 
-    actual = await Stream.of(outset).sorted(comparing(lambda x: x[1])).collect(to_list())
+    actual = await Stream(outset).sorted(comparing(lambda x: x[1])).collect(to_list())
 
     assert actual == [("c", 0), ("a", 1), ("b", 1)]
 
@@ -244,14 +244,14 @@ async def test_incomparable_keys_raise_type_error() -> None:
     outset = [1, "a", 2]
 
     with pytest.raises(TypeError):
-        await Stream.of(outset).sorted(comparing(lambda x: x)).collect(to_list())
+        await Stream(outset).sorted(comparing(lambda x: x)).collect(to_list())
 
 
 @pytest.mark.asyncio
 async def test_bool_valued_key_sorts_false_before_true() -> None:
     outset = [1, 2, 3, 4, 5]
 
-    actual = await Stream.of(outset).sorted(comparing(lambda x: x % 2 == 0)).collect(to_list())
+    actual = await Stream(outset).sorted(comparing(lambda x: x % 2 == 0)).collect(to_list())
 
     assert actual == [1, 3, 5, 2, 4]
 
@@ -276,7 +276,7 @@ class _NoLessThan:
 async def test_elements_without_lt_sort_correctly_when_keys_do() -> None:
     outset = [_NoLessThan(3), _NoLessThan(1), _NoLessThan(2)]
 
-    actual = await Stream.of(outset).sorted(comparing(lambda x: x.value)).collect(to_list())
+    actual = await Stream(outset).sorted(comparing(lambda x: x.value)).collect(to_list())
 
     assert actual == [_NoLessThan(1), _NoLessThan(2), _NoLessThan(3)]
 
@@ -285,7 +285,7 @@ async def test_elements_without_lt_sort_correctly_when_keys_do() -> None:
 async def test_sorted_reverse_with_comparing_reverses_the_buffer() -> None:
     outset = [{"v": 3}, {"v": 1}, {"v": 2}]
 
-    actual = await Stream.of(outset).sorted(comparing(lambda x: x["v"]), reverse=True).collect(to_list())
+    actual = await Stream(outset).sorted(comparing(lambda x: x["v"]), reverse=True).collect(to_list())
 
     assert actual == [{"v": 3}, {"v": 2}, {"v": 1}]
 
@@ -294,7 +294,7 @@ async def test_sorted_reverse_with_comparing_reverses_the_buffer() -> None:
 async def test_sorted_reverse_with_comparing_reverses_equal_key_runs_too() -> None:
     outset = [("a", 1), ("b", 1), ("c", 0)]
 
-    actual = await Stream.of(outset).sorted(comparing(lambda x: x[1]), reverse=True).collect(to_list())
+    actual = await Stream(outset).sorted(comparing(lambda x: x[1]), reverse=True).collect(to_list())
 
     # order-reversal of the ascending stable result, not comparator-negation
     assert actual == [("b", 1), ("a", 1), ("c", 0)]
@@ -307,7 +307,7 @@ async def test_comparing_under_parallel_sorts_the_whole_stream() -> None:
             await asyncio.sleep(0)
             yield {"v": i}
 
-    actual = await Stream.of(descending()).parallel().sorted(comparing(lambda x: x["v"])).collect(to_list())
+    actual = await Stream(descending()).parallel().sorted(comparing(lambda x: x["v"])).collect(to_list())
 
     assert actual == [{"v": i} for i in range(1, 13)]
 
@@ -319,21 +319,21 @@ async def test_comparing_after_unordered_still_restores_ordering() -> None:
             await asyncio.sleep(0)
             yield {"v": i}
 
-    actual = await Stream.of(descending()).parallel().unordered().sorted(comparing(lambda x: x["v"])).collect(to_list())
+    actual = await Stream(descending()).parallel().unordered().sorted(comparing(lambda x: x["v"])).collect(to_list())
 
     assert actual == [{"v": i} for i in range(1, 13)]
 
 
 @pytest.mark.asyncio
 async def test_sorted_by_comparing_empty_stream() -> None:
-    actual = await Stream.of([]).sorted(comparing(lambda x: x)).collect(to_list())
+    actual = await Stream([]).sorted(comparing(lambda x: x)).collect(to_list())
 
     assert actual == []
 
 
 @pytest.mark.asyncio
 async def test_sorted_by_comparing_single_element_stream() -> None:
-    actual = await Stream.of([{"v": 1}]).sorted(comparing(lambda x: x["v"])).collect(to_list())
+    actual = await Stream([{"v": 1}]).sorted(comparing(lambda x: x["v"])).collect(to_list())
 
     assert actual == [{"v": 1}]
 
@@ -345,7 +345,7 @@ async def test_sorted_by_comparing_single_element_stream() -> None:
 async def test_then_comparing_breaks_ties_with_second_key() -> None:
     outset = [("b", 1), ("a", 2), ("a", 1)]
 
-    actual = await Stream.of(outset).sorted(comparing(lambda x: x[0]).then_comparing(lambda x: x[1])).collect(to_list())
+    actual = await Stream(outset).sorted(comparing(lambda x: x[0]).then_comparing(lambda x: x[1])).collect(to_list())
 
     assert actual == [("a", 1), ("a", 2), ("b", 1)]
 
@@ -354,7 +354,7 @@ async def test_then_comparing_breaks_ties_with_second_key() -> None:
 async def test_first_key_wins_when_distinct() -> None:
     outset = [("b", 9), ("a", 1), ("c", 5)]
 
-    actual = await Stream.of(outset).sorted(comparing(lambda x: x[0]).then_comparing(lambda x: x[1])).collect(to_list())
+    actual = await Stream(outset).sorted(comparing(lambda x: x[0]).then_comparing(lambda x: x[1])).collect(to_list())
 
     assert actual == [("a", 1), ("b", 9), ("c", 5)]
 
@@ -364,7 +364,7 @@ async def test_three_segment_chain_third_decides() -> None:
     outset = [("a", 1, 2), ("a", 1, 1), ("a", 1, 3)]
 
     actual = (
-        await Stream.of(outset)
+        await Stream(outset)
         .sorted(comparing(lambda x: x[0]).then_comparing(lambda x: x[1]).then_comparing(lambda x: x[2]))
         .collect(to_list())
     )
@@ -386,7 +386,7 @@ async def test_then_comparing_accepts_another_key_comparator_preserving_directio
     spliced = comparing(first).then_comparing(tail)
 
     assert spliced.segments == ((first, False), (second, True))
-    actual = await Stream.of(outset).sorted(spliced).collect(to_list())
+    actual = await Stream(outset).sorted(spliced).collect(to_list())
     assert actual == [("a", 2), ("a", 1), ("b", 1)]
 
 
@@ -395,7 +395,7 @@ async def test_then_comparing_accepts_another_key_comparator_preserving_directio
 
 @pytest.mark.asyncio
 async def test_reversed_single_segment() -> None:
-    actual = await Stream.of([1, 3, 2]).sorted(comparing(lambda x: x).reversed()).collect(to_list())
+    actual = await Stream([1, 3, 2]).sorted(comparing(lambda x: x).reversed()).collect(to_list())
 
     assert actual == [3, 2, 1]
 
@@ -405,7 +405,7 @@ async def test_reversed_before_chaining_affects_only_earlier_segment() -> None:
     outset = [("a", 1), ("a", 2), ("b", 1)]
 
     actual = (
-        await Stream.of(outset).sorted(comparing(lambda x: x[0]).reversed().then_comparing(lambda x: x[1])).collect(to_list())
+        await Stream(outset).sorted(comparing(lambda x: x[0]).reversed().then_comparing(lambda x: x[1])).collect(to_list())
     )
 
     assert actual == [("b", 1), ("a", 1), ("a", 2)]
@@ -416,7 +416,7 @@ async def test_reversed_after_chaining_flips_both_segments() -> None:
     outset = [("a", 1), ("a", 2), ("b", 1)]
 
     actual = (
-        await Stream.of(outset).sorted(comparing(lambda x: x[0]).then_comparing(lambda x: x[1]).reversed()).collect(to_list())
+        await Stream(outset).sorted(comparing(lambda x: x[0]).then_comparing(lambda x: x[1]).reversed()).collect(to_list())
     )
 
     assert actual == [("b", 1), ("a", 2), ("a", 1)]
@@ -426,7 +426,7 @@ async def test_reversed_after_chaining_flips_both_segments() -> None:
 async def test_double_reversal_restores_original_ordering() -> None:
     outset = [{"v": 3}, {"v": 1}, {"v": 2}]
 
-    actual = await Stream.of(outset).sorted(comparing(lambda x: x["v"]).reversed().reversed()).collect(to_list())
+    actual = await Stream(outset).sorted(comparing(lambda x: x["v"]).reversed().reversed()).collect(to_list())
 
     assert actual == [{"v": 1}, {"v": 2}, {"v": 3}]
 
@@ -435,7 +435,7 @@ async def test_double_reversal_restores_original_ordering() -> None:
 async def test_reversed_preserves_encounter_order_for_equivalent_elements() -> None:
     outset = [("a", 1), ("b", 1), ("c", 0)]
 
-    actual = await Stream.of(outset).sorted(comparing(lambda x: x[1]).reversed()).collect(to_list())
+    actual = await Stream(outset).sorted(comparing(lambda x: x[1]).reversed()).collect(to_list())
 
     assert actual == [("a", 1), ("b", 1), ("c", 0)]
 
@@ -449,7 +449,7 @@ async def test_composing_leaves_original_comparator_unchanged() -> None:
     base = comparing(lambda x: x[0])
     base.then_comparing(lambda x: x[1])
 
-    actual = await Stream.of(outset).sorted(base).collect(to_list())
+    actual = await Stream(outset).sorted(base).collect(to_list())
 
     assert actual == [("a", 2), ("a", 1), ("b", 1)]
 
@@ -462,8 +462,8 @@ async def test_two_compositions_of_one_comparator_are_independent() -> None:
     by_second = base.then_comparing(lambda x: x[1])
     reversed_base = base.reversed()
 
-    assert await Stream.of(outset).sorted(by_second).collect(to_list()) == [("a", 1), ("a", 2), ("b", 1)]
-    assert await Stream.of(outset).sorted(reversed_base).collect(to_list()) == [("b", 1), ("a", 2), ("a", 1)]
+    assert await Stream(outset).sorted(by_second).collect(to_list()) == [("a", 1), ("a", 2), ("b", 1)]
+    assert await Stream(outset).sorted(reversed_base).collect(to_list()) == [("b", 1), ("a", 2), ("a", 1)]
 
 
 # --- 4.4 Sync/async -----------------------------------------------------------
@@ -486,9 +486,9 @@ async def test_all_sync_all_async_and_mixed_chains_agree() -> None:
     mixed = comparing(lambda x: x[0]).then_comparing(async_second)
 
     expected = [("a", 1), ("a", 2), ("b", 1)]
-    assert await Stream.of(outset).sorted(all_sync).collect(to_list()) == expected
-    assert await Stream.of(outset).sorted(all_async).collect(to_list()) == expected
-    assert await Stream.of(outset).sorted(mixed).collect(to_list()) == expected
+    assert await Stream(outset).sorted(all_sync).collect(to_list()) == expected
+    assert await Stream(outset).sorted(all_async).collect(to_list()) == expected
+    assert await Stream(outset).sorted(mixed).collect(to_list()) == expected
 
 
 @pytest.mark.asyncio
@@ -503,10 +503,10 @@ async def test_async_chain_works_with_min_max_min_by_max_by() -> None:
 
     cmp = comparing(key1).then_comparing(key2)
 
-    assert await Stream.of(outset).min(cmp) == ("a", 1)
-    assert await Stream.of(outset).max(cmp) == ("b", 1)
-    assert await Stream.of(outset).collect(min_by(cmp)) == ("a", 1)
-    assert await Stream.of(outset).collect(max_by(cmp)) == ("b", 1)
+    assert await Stream(outset).min(cmp) == ("a", 1)
+    assert await Stream(outset).max(cmp) == ("b", 1)
+    assert await Stream(outset).collect(min_by(cmp)) == ("a", 1)
+    assert await Stream(outset).collect(max_by(cmp)) == ("b", 1)
 
 
 # --- 4.5 Extraction counts -----------------------------------------------------
@@ -526,7 +526,7 @@ async def test_each_of_k_extractors_invoked_exactly_n_times() -> None:
         second_calls.append(x[1])
         return x[1]
 
-    await Stream.of(outset).sorted(comparing(first).then_comparing(second)).collect(to_list())
+    await Stream(outset).sorted(comparing(first).then_comparing(second)).collect(to_list())
 
     assert len(first_calls) == len(outset)
     assert len(second_calls) == len(outset)
@@ -574,7 +574,7 @@ async def test_later_extractor_error_propagates_even_when_first_keys_distinct() 
         return x[1]
 
     with pytest.raises(ValueError, match="boom"):
-        await Stream.of(outset).sorted(comparing(lambda x: x[0]).then_comparing(failing_second)).collect(to_list())
+        await Stream(outset).sorted(comparing(lambda x: x[0]).then_comparing(failing_second)).collect(to_list())
 
 
 # --- 4.7 Concurrency across segments --------------------------------------------
@@ -600,7 +600,7 @@ async def test_k_async_columns_do_not_serialize() -> None:
     cmp = comparing(key1).then_comparing(key2).then_comparing(key3)
 
     start = time.monotonic()
-    await Stream.of(outset).sorted(cmp).collect(to_list())
+    await Stream(outset).sorted(cmp).collect(to_list())
     elapsed = time.monotonic() - start
 
     assert elapsed < delay * 3
@@ -614,8 +614,8 @@ async def test_min_equals_first_element_of_sorted_result_for_chained_comparator(
     outset = [("b", 1), ("a", 2), ("a", 1), ("c", 0)]
     cmp = comparing(lambda x: x[0]).then_comparing(lambda x: x[1]).reversed()
 
-    sorted_result = await Stream.of(outset).sorted(cmp).collect(to_list())
-    minimum = await Stream.of(outset).min(cmp)
+    sorted_result = await Stream(outset).sorted(cmp).collect(to_list())
+    minimum = await Stream(outset).min(cmp)
 
     assert minimum == sorted_result[0]
 
@@ -628,7 +628,7 @@ async def test_incomparable_keys_within_one_segment_raise_type_error() -> None:
     outset = [(1, "x"), ("a", "y"), (2, "z")]
 
     with pytest.raises(TypeError):
-        await Stream.of(outset).sorted(comparing(lambda x: x[0]).then_comparing(lambda x: x[1])).collect(to_list())
+        await Stream(outset).sorted(comparing(lambda x: x[0]).then_comparing(lambda x: x[1])).collect(to_list())
 
 
 @pytest.mark.asyncio
@@ -636,14 +636,14 @@ async def test_earlier_segment_distinguishing_every_pair_does_not_excuse_a_later
     outset = [(1, "x"), (2, 1), (3, "y")]
 
     with pytest.raises(TypeError):
-        await Stream.of(outset).sorted(comparing(lambda x: x[0]).then_comparing(lambda x: x[1])).collect(to_list())
+        await Stream(outset).sorted(comparing(lambda x: x[0]).then_comparing(lambda x: x[1])).collect(to_list())
 
 
 @pytest.mark.asyncio
 async def test_segments_may_produce_unrelated_key_types() -> None:
     outset = [("b", 1), ("a", 2), ("a", 1)]
 
-    actual = await Stream.of(outset).sorted(comparing(lambda x: x[0]).then_comparing(lambda x: x[1])).collect(to_list())
+    actual = await Stream(outset).sorted(comparing(lambda x: x[0]).then_comparing(lambda x: x[1])).collect(to_list())
 
     assert actual == [("a", 1), ("a", 2), ("b", 1)]
 
@@ -655,7 +655,7 @@ async def test_segments_may_produce_unrelated_key_types() -> None:
 async def test_sorted_reverse_true_stacked_on_reversed_chain_flips_ties_too() -> None:
     outset = [("a", 1), ("b", 1), ("c", 0)]
 
-    actual = await Stream.of(outset).sorted(comparing(lambda x: x[1]).reversed(), reverse=True).collect(to_list())
+    actual = await Stream(outset).sorted(comparing(lambda x: x[1]).reversed(), reverse=True).collect(to_list())
 
     # reversed() (comparator negation) orders [("a", 1), ("b", 1), ("c", 0)] -
     # ties keep encounter order; sorted()'s reverse=True then flips the whole

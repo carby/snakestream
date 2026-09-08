@@ -14,11 +14,11 @@ the container's `add` method, then return the container itself as the
 result (no separate finisher).
 
 #### Scenario: Elements are added to a fresh container per collection
-- **WHEN** `Stream.of([1, 2, 3]).collect(to_collection(set))` is called
+- **WHEN** `Stream([1, 2, 3]).collect(to_collection(set))` is called
 - **THEN** the result is `{1, 2, 3}`
 
 #### Scenario: A custom container type is supported
-- **WHEN** `Stream.of([3, 1, 2]).collect(to_collection(lambda: SortedContainer()))` is called with a container whose `add` keeps it sorted
+- **WHEN** `Stream([3, 1, 2]).collect(to_collection(lambda: SortedContainer()))` is called with a container whose `add` keeps it sorted
 - **THEN** the result reflects elements added in sorted order
 
 #### Scenario: Each collection gets its own container
@@ -26,7 +26,7 @@ result (no separate finisher).
 - **THEN** each call's result is an independent container, unaffected by the other call's elements
 
 #### Scenario: Empty stream yields an empty container
-- **WHEN** `Stream.of([]).collect(to_collection(list))` is called
+- **WHEN** `Stream([]).collect(to_collection(list))` is called
 - **THEN** the result is `[]`
 
 ### Requirement: `to_collection()` declares a combiner

@@ -12,7 +12,7 @@ async def _async_len(s: str) -> int:
 @pytest.mark.asyncio
 async def test_summing_int_sums_mapped_values() -> None:
     # when
-    result = await Stream.of(["a", "bb", "ccc"]).collect(summing_int(len))
+    result = await Stream(["a", "bb", "ccc"]).collect(summing_int(len))
 
     # then
     assert result == 6
@@ -21,7 +21,7 @@ async def test_summing_int_sums_mapped_values() -> None:
 @pytest.mark.asyncio
 async def test_summing_int_async_mapper() -> None:
     # when
-    result = await Stream.of(["a", "bb", "ccc"]).collect(summing_int(_async_len))
+    result = await Stream(["a", "bb", "ccc"]).collect(summing_int(_async_len))
 
     # then
     assert result == 6
@@ -30,7 +30,7 @@ async def test_summing_int_async_mapper() -> None:
 @pytest.mark.asyncio
 async def test_summing_int_empty_stream() -> None:
     # when
-    result = await Stream.of([]).collect(summing_int(len))
+    result = await Stream([]).collect(summing_int(len))
 
     # then
     assert result == 0
@@ -39,7 +39,7 @@ async def test_summing_int_empty_stream() -> None:
 @pytest.mark.asyncio
 async def test_summing_long_sums_mapped_values() -> None:
     # when
-    result = await Stream.of(["a", "bb", "ccc"]).collect(summing_long(len))
+    result = await Stream(["a", "bb", "ccc"]).collect(summing_long(len))
 
     # then
     assert result == 6
@@ -48,7 +48,7 @@ async def test_summing_long_sums_mapped_values() -> None:
 @pytest.mark.asyncio
 async def test_summing_long_async_mapper() -> None:
     # when
-    result = await Stream.of(["a", "bb", "ccc"]).collect(summing_long(_async_len))
+    result = await Stream(["a", "bb", "ccc"]).collect(summing_long(_async_len))
 
     # then
     assert result == 6
@@ -57,7 +57,7 @@ async def test_summing_long_async_mapper() -> None:
 @pytest.mark.asyncio
 async def test_summing_long_empty_stream() -> None:
     # when
-    result = await Stream.of([]).collect(summing_long(len))
+    result = await Stream([]).collect(summing_long(len))
 
     # then
     assert result == 0
@@ -66,7 +66,7 @@ async def test_summing_long_empty_stream() -> None:
 @pytest.mark.asyncio
 async def test_summing_double_sums_as_float() -> None:
     # when
-    result = await Stream.of([1, 2, 3]).collect(summing_double(lambda x: x))
+    result = await Stream([1, 2, 3]).collect(summing_double(lambda x: x))
 
     # then
     assert result == 6.0
@@ -79,7 +79,7 @@ async def test_summing_double_async_mapper() -> None:
         return x
 
     # when
-    result = await Stream.of([1, 2, 3]).collect(summing_double(double))
+    result = await Stream([1, 2, 3]).collect(summing_double(double))
 
     # then
     assert result == 6.0
@@ -89,7 +89,7 @@ async def test_summing_double_async_mapper() -> None:
 @pytest.mark.asyncio
 async def test_summing_double_empty_stream() -> None:
     # when
-    result = await Stream.of([]).collect(summing_double(lambda x: x))
+    result = await Stream([]).collect(summing_double(lambda x: x))
 
     # then
     assert result == 0.0
@@ -108,8 +108,8 @@ def test_summing_double_does_not_report_unordered() -> None:
 @pytest.mark.asyncio
 async def test_summing_int_declaration_matches_behaviour_across_orderings() -> None:
     # given the same elements in two different orders
-    forward = await Stream.of(["a", "bb", "ccc"]).collect(summing_int(len))
-    backward = await Stream.of(["ccc", "bb", "a"]).collect(summing_int(len))
+    forward = await Stream(["a", "bb", "ccc"]).collect(summing_int(len))
+    backward = await Stream(["ccc", "bb", "a"]).collect(summing_int(len))
 
     # then the sums compare equal
     assert forward == backward

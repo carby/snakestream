@@ -17,7 +17,7 @@ async def test_iterator_returns_async_generator_without_consuming() -> None:
             yield i
 
     # when
-    it = Stream.of(source()).map(lambda x: x).iterator()
+    it = Stream(source()).map(lambda x: x).iterator()
 
     # then
     assert isinstance(it, AsyncGenerator)
@@ -27,7 +27,7 @@ async def test_iterator_returns_async_generator_without_consuming() -> None:
 @pytest.mark.asyncio
 async def test_iterator_yields_same_elements_as_collect() -> None:
     # given
-    chain = lambda: Stream.of([1, 2, 3, 4]).map(lambda x: x * 2).filter(lambda x: x > 2)  # noqa: E731
+    chain = lambda: Stream([1, 2, 3, 4]).map(lambda x: x * 2).filter(lambda x: x > 2)  # noqa: E731
 
     # when
     from_iterator = [x async for x in chain().iterator()]
@@ -40,7 +40,7 @@ async def test_iterator_yields_same_elements_as_collect() -> None:
 @pytest.mark.asyncio
 async def test_iterator_supports_partial_consumption() -> None:
     # when
-    it = Stream.of([1, 2, 3, 4, 5]).iterator()
+    it = Stream([1, 2, 3, 4, 5]).iterator()
     first = await it.__anext__()
     second = await it.__anext__()
 
@@ -52,7 +52,7 @@ async def test_iterator_supports_partial_consumption() -> None:
 @pytest.mark.asyncio
 async def test_iterator_on_parallel_stream_yields_expected_elements() -> None:
     # when
-    it = [x async for x in Stream.of([1, 2, 3, 4]).parallel().iterator()]
+    it = [x async for x in Stream([1, 2, 3, 4]).parallel().iterator()]
 
     # then
     assert sorted(it) == [1, 2, 3, 4]
@@ -61,7 +61,7 @@ async def test_iterator_on_parallel_stream_yields_expected_elements() -> None:
 @pytest.mark.asyncio
 async def test_iterator_does_not_consume_or_mutate_chain() -> None:
     # given
-    stream = Stream.of([1, 2, 3]).map(lambda x: x * 2)
+    stream = Stream([1, 2, 3]).map(lambda x: x * 2)
     chain_len_before = len(stream._chain)
 
     # when
@@ -84,5 +84,5 @@ async def test_iterator_drains_a_buffering_sink_via_the_bridge() -> None:
     # sorted() buffers its whole input and flushes at end(); iterator() is a
     # bridge consumer, unlike collect(to_list()) which now drives a terminal
     # sink directly and no longer touches the bridge's end-of-source flush.
-    it = Stream.of([3, 1, 2]).sorted().iterator()
+    it = Stream([3, 1, 2]).sorted().iterator()
     assert [x async for x in it] == [1, 2, 3]

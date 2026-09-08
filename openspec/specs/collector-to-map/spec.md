@@ -14,11 +14,11 @@ pulled element, matching Java's `Collectors.toMap(Function keyMapper,
 Function valueMapper)`.
 
 #### Scenario: builds a dict from key/value mappers
-- **WHEN** `Stream.of([1, 2, 3]).collect(to_map(lambda x: x, lambda x: x * x))` is called
+- **WHEN** `Stream([1, 2, 3]).collect(to_map(lambda x: x, lambda x: x * x))` is called
 - **THEN** the result is `{1: 1, 2: 4, 3: 9}`
 
 #### Scenario: empty stream yields an empty dict
-- **WHEN** `Stream.of([]).collect(to_map(lambda x: x, lambda x: x))` is called
+- **WHEN** `Stream([]).collect(to_map(lambda x: x, lambda x: x))` is called
 - **THEN** the result is `{}`
 
 #### Scenario: async key_mapper and value_mapper are both awaited
@@ -37,11 +37,11 @@ made a subclass of `ValueError`: a caller catching `ValueError` around a
 `to_map` collection no longer catches this.
 
 #### Scenario: duplicate key without a merge function raises IllegalStateException
-- **WHEN** `Stream.of(["a", "aa", "b"]).collect(to_map(lambda x: len(x), lambda x: x))` is called
+- **WHEN** `Stream(["a", "aa", "b"]).collect(to_map(lambda x: len(x), lambda x: x))` is called
 - **THEN** an `IllegalStateException` is raised, since `"a"` and `"b"` both map to key `1`
 
 #### Scenario: duplicate key is no longer a ValueError
-- **WHEN** `Stream.of(["a", "aa", "b"]).collect(to_map(lambda x: len(x), lambda x: x))` is called inside a `try` that catches only `ValueError`
+- **WHEN** `Stream(["a", "aa", "b"]).collect(to_map(lambda x: len(x), lambda x: x))` is called inside a `try` that catches only `ValueError`
 - **THEN** the `IllegalStateException` propagates uncaught, since it does not derive from `ValueError`
 
 ### Requirement: `to_map(key_mapper, value_mapper, merge_function)` resolves duplicate keys
@@ -52,7 +52,7 @@ instead of raising, matching Java's `Collectors.toMap(keyMapper,
 valueMapper, mergeFunction)`.
 
 #### Scenario: duplicate key is resolved via merge_function
-- **WHEN** `Stream.of(["a", "aa", "b"]).collect(to_map(lambda x: len(x), lambda x: x, lambda a, b: a + b))` is called
+- **WHEN** `Stream(["a", "aa", "b"]).collect(to_map(lambda x: len(x), lambda x: x, lambda a, b: a + b))` is called
 - **THEN** the result is `{1: "ab", 2: "aa"}`
 
 #### Scenario: async merge_function is awaited
@@ -60,7 +60,7 @@ valueMapper, mergeFunction)`.
 - **THEN** the result is computed correctly, with `merge_function` awaited via the same dispatch used elsewhere in the library
 
 #### Scenario: no collision means merge_function is never called
-- **WHEN** `Stream.of([1, 2, 3]).collect(to_map(lambda x: x, lambda x: x, merge_function))` is called with all-distinct keys
+- **WHEN** `Stream([1, 2, 3]).collect(to_map(lambda x: x, lambda x: x, merge_function))` is called with all-distinct keys
 - **THEN** the result is `{1: 1, 2: 2, 3: 3}` and `merge_function` is never invoked
 
 ### Requirement: `to_map` declares `UNORDERED` when it has no merge function
@@ -187,7 +187,7 @@ SHALL behave exactly as in the 3-arg form. The 1-, 2- and 3-argument forms
 SHALL be unaffected in signature, result and characteristics.
 
 #### Scenario: the result is the caller's mapping type
-- **WHEN** `Stream.of([1, 2, 3]).collect(to_map(lambda x: x, lambda x: x * x, lambda a, b: b, OrderedDict))` is called
+- **WHEN** `Stream([1, 2, 3]).collect(to_map(lambda x: x, lambda x: x * x, lambda a, b: b, OrderedDict))` is called
 - **THEN** the result is an `OrderedDict` holding `{1: 1, 2: 4, 3: 9}`, not a plain `dict`
 
 #### Scenario: a fresh mapping per collection
@@ -195,11 +195,11 @@ SHALL be unaffected in signature, result and characteristics.
 - **THEN** each call returns an independent mapping, unaffected by the other call's elements
 
 #### Scenario: empty stream yields the caller's empty mapping
-- **WHEN** `Stream.of([]).collect(to_map(k, v, merge, OrderedDict))` is called
+- **WHEN** `Stream([]).collect(to_map(k, v, merge, OrderedDict))` is called
 - **THEN** the result is an empty `OrderedDict`
 
 #### Scenario: duplicate keys are merged into the caller's mapping
-- **WHEN** `Stream.of(["a", "aa", "b"]).collect(to_map(len, lambda x: x, lambda a, b: a + b, OrderedDict))` is called
+- **WHEN** `Stream(["a", "aa", "b"]).collect(to_map(len, lambda x: x, lambda a, b: a + b, OrderedDict))` is called
 - **THEN** the result is an `OrderedDict` holding `{1: "ab", 2: "aa"}`
 
 #### Scenario: an async map_supplier is awaited

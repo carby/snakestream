@@ -11,7 +11,7 @@ async def test_for_each_ordered_sequential_preserves_order() -> None:
     seen = []
 
     # when
-    await Stream.of([4, 1, 3, 2]).for_each_ordered(seen.append)
+    await Stream([4, 1, 3, 2]).for_each_ordered(seen.append)
 
     # then
     assert seen == [4, 1, 3, 2]
@@ -27,7 +27,7 @@ async def test_for_each_ordered_async_consumer() -> None:
         seen.append(n)
 
     # when
-    await Stream.of([4, 1, 3, 2]).for_each_ordered(async_append)
+    await Stream([4, 1, 3, 2]).for_each_ordered(async_append)
 
     # then
     assert seen == [4, 1, 3, 2]
@@ -55,7 +55,7 @@ async def test_for_each_on_parallel_stream_can_be_out_of_order() -> None:
     seen: list[int] = []
 
     # when
-    await Stream.of(values).parallel().map(_delay_by_position).for_each(seen.append)
+    await Stream(values).parallel().map(_delay_by_position).for_each(seen.append)
 
     # then
     assert seen != values
@@ -67,7 +67,7 @@ async def test_for_each_ordered_preserves_encounter_order_on_parallel_stream() -
     seen: list[int] = []
 
     # when
-    await Stream.of(values).parallel().map(_delay_by_position).for_each_ordered(seen.append)
+    await Stream(values).parallel().map(_delay_by_position).for_each_ordered(seen.append)
 
     # then: for_each_ordered still reports elements in source encounter
     # order despite being called on a ParallelStream with the same chain
@@ -84,7 +84,7 @@ async def test_for_each_ordered_on_unordered_parallel_stream_delivers_every_elem
     seen: list[int] = []
 
     # when
-    await Stream.of(values).parallel().unordered().map(_delay_by_position).for_each_ordered(seen.append)
+    await Stream(values).parallel().unordered().map(_delay_by_position).for_each_ordered(seen.append)
 
     # then: every element exactly once, order unconstrained
     assert sorted(seen) == sorted(values)
@@ -97,7 +97,7 @@ async def test_for_each_ordered_on_unordered_sequential_stream_still_delivers_in
     seen: list[int] = []
 
     # when
-    await Stream.of(values).unordered().for_each_ordered(seen.append)
+    await Stream(values).unordered().for_each_ordered(seen.append)
 
     # then
     assert seen == values
@@ -113,7 +113,7 @@ async def test_for_each_ordered_on_unordered_parallel_stream_does_not_deliver_in
     seen: list[int] = []
 
     # when
-    await Stream.of(values).parallel().unordered().map(_delay_by_position).for_each_ordered(seen.append)
+    await Stream(values).parallel().unordered().map(_delay_by_position).for_each_ordered(seen.append)
 
     # then the positional delay decided the order, not the source
     assert sorted(seen) == sorted(values)
@@ -131,12 +131,7 @@ async def test_sorted_after_unordered_restores_the_for_each_ordered_guarantee() 
 
     # when
     await (
-        Stream.of(values)
-        .parallel()
-        .unordered()
-        .map(_delay_by_position)
-        .sorted(lambda a, b: a - b)
-        .for_each_ordered(seen.append)
+        Stream(values).parallel().unordered().map(_delay_by_position).sorted(lambda a, b: a - b).for_each_ordered(seen.append)
     )
 
     # then: sorted() set the ordering characteristic again, so the encounter
@@ -169,7 +164,7 @@ async def test_ordered_for_each_ordered_does_not_serialize_the_chain() -> None:
     seen: list[int] = []
 
     # when
-    await Stream.of(values).parallel().map(timed).for_each_ordered(seen.append)
+    await Stream(values).parallel().map(timed).for_each_ordered(seen.append)
 
     # then the consumer saw encounter order
     assert seen == values
@@ -195,8 +190,8 @@ async def test_ordered_for_each_ordered_is_faster_than_sequential() -> None:
         return time.perf_counter() - started
 
     # when
-    parallel = await run(Stream.of(values).parallel())
-    sequential = await run(Stream.of(values).sequential())
+    parallel = await run(Stream(values).parallel())
+    sequential = await run(Stream(values).sequential())
 
     # then
     assert parallel < sequential / 2
@@ -212,7 +207,7 @@ async def test_an_op_upstream_of_for_each_ordered_is_not_ordered() -> None:
     consumed: list[int] = []
 
     # when
-    await Stream.of(values).parallel().peek(peeked.append).map(_delay_by_position).for_each_ordered(consumed.append)
+    await Stream(values).parallel().peek(peeked.append).map(_delay_by_position).for_each_ordered(consumed.append)
 
     # then the consumer is ordered, as promised
     assert consumed == values
@@ -230,7 +225,7 @@ async def test_the_same_side_effect_in_the_consumer_is_ordered() -> None:
     recorded: list[int] = []
 
     # when
-    await Stream.of(values).parallel().map(_delay_by_position).for_each_ordered(recorded.append)
+    await Stream(values).parallel().map(_delay_by_position).for_each_ordered(recorded.append)
 
     # then
     assert recorded == values

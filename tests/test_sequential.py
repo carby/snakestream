@@ -13,7 +13,7 @@ from snakestream.stream import Stream
 @pytest.mark.asyncio
 async def test_sequential_simple(int_2_letter) -> None:
     # when
-    it = await Stream.of([1, 2, 3, 4, 1, 2, 3, 4]).sequential().map(lambda x: int_2_letter[x]).distinct().collect(to_list())
+    it = await Stream([1, 2, 3, 4, 1, 2, 3, 4]).sequential().map(lambda x: int_2_letter[x]).distinct().collect(to_list())
     # then
     assert len(it) == 4
     assert "a" in it
@@ -52,7 +52,7 @@ async def test_sequential_applies_to_ops_declared_before_it(int_2_letter) -> Non
 
     # when
     started = time.time()
-    it = await Stream.of(list(range(8))).parallel().map(slow).sequential().collect(to_list())
+    it = await Stream(list(range(8))).parallel().map(slow).sequential().collect(to_list())
     elapsed = time.time() - started
 
     # then: the last switch wins for the whole pipeline, so the map ran
@@ -67,7 +67,7 @@ async def test_sequential_applies_to_ops_declared_before_it(int_2_letter) -> Non
 async def test_sequential_declared_late_still_produces_every_element(int_2_letter) -> None:
     # when
     it = (
-        await Stream.of([1, 2, 3, 4, 1, 2, 3, 4])
+        await Stream([1, 2, 3, 4, 1, 2, 3, 4])
         .parallel()
         .map(lambda x: int_2_letter[x])
         .sequential()

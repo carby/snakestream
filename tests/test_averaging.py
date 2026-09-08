@@ -12,7 +12,7 @@ async def _async_identity(x: int) -> int:
 @pytest.mark.asyncio
 async def test_averaging_int_computes_mean() -> None:
     # when
-    result = await Stream.of([1, 2, 3, 4]).collect(averaging_int(lambda x: x))
+    result = await Stream([1, 2, 3, 4]).collect(averaging_int(lambda x: x))
 
     # then
     assert result == 2.5
@@ -21,7 +21,7 @@ async def test_averaging_int_computes_mean() -> None:
 @pytest.mark.asyncio
 async def test_averaging_int_async_mapper() -> None:
     # when
-    result = await Stream.of([1, 2, 3, 4]).collect(averaging_int(_async_identity))
+    result = await Stream([1, 2, 3, 4]).collect(averaging_int(_async_identity))
 
     # then
     assert result == 2.5
@@ -30,7 +30,7 @@ async def test_averaging_int_async_mapper() -> None:
 @pytest.mark.asyncio
 async def test_averaging_int_empty_stream() -> None:
     # when
-    result = await Stream.of([]).collect(averaging_int(lambda x: x))
+    result = await Stream([]).collect(averaging_int(lambda x: x))
 
     # then
     assert result == 0.0
@@ -39,7 +39,7 @@ async def test_averaging_int_empty_stream() -> None:
 @pytest.mark.asyncio
 async def test_averaging_long_computes_mean() -> None:
     # when
-    result = await Stream.of([1, 2, 3, 4]).collect(averaging_long(lambda x: x))
+    result = await Stream([1, 2, 3, 4]).collect(averaging_long(lambda x: x))
 
     # then
     assert result == 2.5
@@ -48,7 +48,7 @@ async def test_averaging_long_computes_mean() -> None:
 @pytest.mark.asyncio
 async def test_averaging_long_async_mapper() -> None:
     # when
-    result = await Stream.of([1, 2, 3, 4]).collect(averaging_long(_async_identity))
+    result = await Stream([1, 2, 3, 4]).collect(averaging_long(_async_identity))
 
     # then
     assert result == 2.5
@@ -57,7 +57,7 @@ async def test_averaging_long_async_mapper() -> None:
 @pytest.mark.asyncio
 async def test_averaging_long_empty_stream() -> None:
     # when
-    result = await Stream.of([]).collect(averaging_long(lambda x: x))
+    result = await Stream([]).collect(averaging_long(lambda x: x))
 
     # then
     assert result == 0.0
@@ -66,7 +66,7 @@ async def test_averaging_long_empty_stream() -> None:
 @pytest.mark.asyncio
 async def test_averaging_double_computes_mean() -> None:
     # when
-    result = await Stream.of([1, 2, 3, 4]).collect(averaging_double(lambda x: x))
+    result = await Stream([1, 2, 3, 4]).collect(averaging_double(lambda x: x))
 
     # then
     assert result == 2.5
@@ -75,7 +75,7 @@ async def test_averaging_double_computes_mean() -> None:
 @pytest.mark.asyncio
 async def test_averaging_double_async_mapper() -> None:
     # when
-    result = await Stream.of([1, 2, 3, 4]).collect(averaging_double(_async_identity))
+    result = await Stream([1, 2, 3, 4]).collect(averaging_double(_async_identity))
 
     # then
     assert result == 2.5
@@ -84,7 +84,7 @@ async def test_averaging_double_async_mapper() -> None:
 @pytest.mark.asyncio
 async def test_averaging_double_empty_stream() -> None:
     # when
-    result = await Stream.of([]).collect(averaging_double(lambda x: x))
+    result = await Stream([]).collect(averaging_double(lambda x: x))
 
     # then
     assert result == 0.0

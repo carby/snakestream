@@ -8,15 +8,15 @@ Defines the single 3-way `Comparator` contract shared by `sorted()`, `min()`, an
 The `Comparator` type SHALL represent a 3-way comparison function returning a negative int when the first argument orders before the second, zero when they are equivalent, and a positive int when the first argument orders after the second (sync or `Awaitable[int]`). `sorted()`, `min()`, and `max()` on `Stream` SHALL all interpret a user-supplied `Comparator` argument using this same contract — no operation SHALL treat it as a boolean predicate.
 
 #### Scenario: sorted() orders ascending by comparator sign
-- **WHEN** `Stream.of([3, 1, 2]).sorted(lambda a, b: a - b)` is collected
+- **WHEN** `Stream([3, 1, 2]).sorted(lambda a, b: a - b)` is collected
 - **THEN** the result is `[1, 2, 3]`
 
 #### Scenario: max() selects the greatest element by comparator sign
-- **WHEN** `Stream.of([3, 1, 2]).max(lambda a, b: a - b)` is awaited
+- **WHEN** `Stream([3, 1, 2]).max(lambda a, b: a - b)` is awaited
 - **THEN** the result is `3`
 
 #### Scenario: min() selects the least element by comparator sign
-- **WHEN** `Stream.of([3, 1, 2]).min(lambda a, b: a - b)` is awaited
+- **WHEN** `Stream([3, 1, 2]).min(lambda a, b: a - b)` is awaited
 - **THEN** the result is `1`
 
 #### Scenario: async comparator is supported identically
@@ -44,11 +44,11 @@ consistent with equality; only which of two equal-comparing but distinguishable
 elements is returned depends on the pipeline's ordering.
 
 #### Scenario: max() keeps the first of equal maximums
-- **WHEN** `Stream.of([("a", 5), ("b", 5)]).max(lambda x, y: x[1] - y[1])` is awaited
+- **WHEN** `Stream([("a", 5), ("b", 5)]).max(lambda x, y: x[1] - y[1])` is awaited
 - **THEN** the result is `("a", 5)`
 
 #### Scenario: min() keeps the first of equal minimums
-- **WHEN** `Stream.of([("a", 5), ("b", 5)]).min(lambda x, y: x[1] - y[1])` is awaited
+- **WHEN** `Stream([("a", 5), ("b", 5)]).min(lambda x, y: x[1] - y[1])` is awaited
 - **THEN** the result is `("a", 5)`
 
 #### Scenario: An ordered racing max() keeps the first of equal maximums
@@ -82,15 +82,15 @@ The exception raised SHALL be `ComparatorContractException` from `snakestream.ex
 The same rejection SHALL apply to any non-`int` return, not only `bool`; `bool` is called out because it is the one that type-checks as an `int` and therefore fails silently without this guard.
 
 #### Scenario: sorted() rejects a bool comparator
-- **WHEN** `Stream.of([3, 1, 2]).sorted(lambda a, b: a > b)` is collected
+- **WHEN** `Stream([3, 1, 2]).sorted(lambda a, b: a > b)` is collected
 - **THEN** a `TypeError` is raised before any ordering result is returned
 
 #### Scenario: max() rejects a bool comparator
-- **WHEN** `Stream.of([3, 1, 2]).max(lambda a, b: a > b)` is awaited
+- **WHEN** `Stream([3, 1, 2]).max(lambda a, b: a > b)` is awaited
 - **THEN** a `TypeError` is raised
 
 #### Scenario: min() rejects a bool comparator
-- **WHEN** `Stream.of([3, 1, 2]).min(lambda a, b: a > b)` is awaited
+- **WHEN** `Stream([3, 1, 2]).min(lambda a, b: a > b)` is awaited
 - **THEN** a `TypeError` is raised
 
 #### Scenario: async bool comparator is rejected identically
@@ -98,11 +98,11 @@ The same rejection SHALL apply to any non-`int` return, not only `bool`; `bool` 
 - **THEN** a `TypeError` is raised after the comparator is awaited, using the same rejection as the sync case
 
 #### Scenario: a proper 3-way int comparator is unaffected
-- **WHEN** `Stream.of([3, 1, 2]).max(lambda a, b: a - b)` is awaited
+- **WHEN** `Stream([3, 1, 2]).max(lambda a, b: a - b)` is awaited
 - **THEN** no error is raised and the result is `3`
 
 #### Scenario: the rejection is catchable as a library exception
-- **WHEN** `Stream.of([3, 1, 2]).sorted(lambda a, b: a > b)` is collected inside a `try` catching only `StreamException`
+- **WHEN** `Stream([3, 1, 2]).sorted(lambda a, b: a > b)` is collected inside a `try` catching only `StreamException`
 - **THEN** the rejection is caught, and the same exception also satisfies `except TypeError`
 
 #### Scenario: a non-int, non-bool return is rejected the same way
@@ -126,7 +126,7 @@ This is the same rule as `min()`/`max()`'s tie-break, read over a whole stream
 rather than a single running result, which is why one capability states both.
 
 #### Scenario: A sync comparator sort preserves the order of tied elements
-- **WHEN** `Stream.of([("a", 5), ("b", 3), ("c", 5)]).sorted(lambda x, y: x[1] - y[1])`
+- **WHEN** `Stream([("a", 5), ("b", 3), ("c", 5)]).sorted(lambda x, y: x[1] - y[1])`
   is collected
 - **THEN** the result is `[("b", 3), ("a", 5), ("c", 5)]`
 

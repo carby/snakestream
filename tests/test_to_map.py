@@ -12,7 +12,7 @@ from snakestream.stream import Stream
 @pytest.mark.asyncio
 async def test_to_map_builds_dict_from_key_and_value_mappers() -> None:
     # when
-    result = await Stream.of([1, 2, 3]).collect(to_map(lambda x: x, lambda x: x * x))
+    result = await Stream([1, 2, 3]).collect(to_map(lambda x: x, lambda x: x * x))
 
     # then
     assert result == {1: 1, 2: 4, 3: 9}
@@ -21,7 +21,7 @@ async def test_to_map_builds_dict_from_key_and_value_mappers() -> None:
 @pytest.mark.asyncio
 async def test_to_map_empty_stream_returns_empty_dict() -> None:
     # when
-    result = await Stream.of([]).collect(to_map(lambda x: x, lambda x: x))
+    result = await Stream([]).collect(to_map(lambda x: x, lambda x: x))
 
     # then
     assert result == {}
@@ -38,7 +38,7 @@ async def test_to_map_async_key_mapper_and_value_mapper_are_awaited() -> None:
         return x.upper()
 
     # when
-    result = await Stream.of(["a", "bb"]).collect(to_map(async_key, async_value))
+    result = await Stream(["a", "bb"]).collect(to_map(async_key, async_value))
 
     # then
     assert result == {1: "A", 2: "BB"}
@@ -48,13 +48,13 @@ async def test_to_map_async_key_mapper_and_value_mapper_are_awaited() -> None:
 async def test_to_map_duplicate_key_without_merge_function_raises_illegal_state_exception() -> None:
     # when / then
     with pytest.raises(IllegalStateException):
-        await Stream.of(["a", "aa", "b"]).collect(to_map(len, lambda x: x))
+        await Stream(["a", "aa", "b"]).collect(to_map(len, lambda x: x))
 
 
 @pytest.mark.asyncio
 async def test_to_map_duplicate_key_is_resolved_via_merge_function() -> None:
     # when
-    result = await Stream.of(["a", "aa", "b"]).collect(to_map(len, lambda x: x, lambda a, b: a + b))
+    result = await Stream(["a", "aa", "b"]).collect(to_map(len, lambda x: x, lambda a, b: a + b))
 
     # then
     assert result == {1: "ab", 2: "aa"}
@@ -67,7 +67,7 @@ async def test_to_map_async_merge_function_is_awaited() -> None:
         return a + b
 
     # when
-    result = await Stream.of(["a", "aa", "b"]).collect(to_map(len, lambda x: x, async_merge))
+    result = await Stream(["a", "aa", "b"]).collect(to_map(len, lambda x: x, async_merge))
 
     # then
     assert result == {1: "ab", 2: "aa"}
@@ -82,7 +82,7 @@ async def test_to_map_merge_function_never_called_when_no_collision() -> None:
         return a + b
 
     # when
-    result = await Stream.of([1, 2, 3]).collect(to_map(lambda x: x, lambda x: x, merge))
+    result = await Stream([1, 2, 3]).collect(to_map(lambda x: x, lambda x: x, merge))
 
     # then
     assert result == {1: 1, 2: 2, 3: 3}
@@ -98,7 +98,7 @@ async def test_to_map_sync_key_mapper_with_async_value_mapper() -> None:
         return x.upper()
 
     # when
-    result = await Stream.of(["a", "bb"]).collect(to_map(len, async_value))
+    result = await Stream(["a", "bb"]).collect(to_map(len, async_value))
 
     # then
     assert result == {1: "A", 2: "BB"}
@@ -111,7 +111,7 @@ async def test_to_map_async_key_mapper_with_sync_value_mapper() -> None:
         return len(x)
 
     # when
-    result = await Stream.of(["a", "bb"]).collect(to_map(async_key, str.upper))
+    result = await Stream(["a", "bb"]).collect(to_map(async_key, str.upper))
 
     # then
     assert result == {1: "A", 2: "BB"}
@@ -126,7 +126,7 @@ async def test_to_map_sync_mappers_with_async_merge_function() -> None:
         return a + b
 
     # when
-    result = await Stream.of(["a", "aa", "b"]).collect(to_map(len, str.upper, async_merge))
+    result = await Stream(["a", "aa", "b"]).collect(to_map(len, str.upper, async_merge))
 
     # then
     assert result == {1: "AB", 2: "AA"}
@@ -155,8 +155,8 @@ def test_to_map_with_a_merge_function_does_not_declare_unordered() -> None:
 async def test_to_map_without_a_merge_function_is_equal_under_any_ordering() -> None:
     """The declaration above is true of the behaviour, not merely asserted."""
     # given the same elements in two orders, with no key collision
-    forwards = await Stream.of(["a", "bb", "ccc"]).collect(to_map(len, str.upper))
-    backwards = await Stream.of(["ccc", "bb", "a"]).collect(to_map(len, str.upper))
+    forwards = await Stream(["a", "bb", "ccc"]).collect(to_map(len, str.upper))
+    backwards = await Stream(["ccc", "bb", "a"]).collect(to_map(len, str.upper))
 
     # then the collected dicts compare equal, whatever order they were built in
     assert forwards == backwards
@@ -165,7 +165,7 @@ async def test_to_map_without_a_merge_function_is_equal_under_any_ordering() -> 
 @pytest.mark.asyncio
 async def test_to_map_with_a_map_supplier_returns_the_callers_type() -> None:
     # given the 4-arg form, whose fourth argument chooses the result container
-    result = await Stream.of([1, 2, 3]).collect(to_map(lambda x: x, lambda x: x * x, lambda a, b: b, OrderedDict))
+    result = await Stream([1, 2, 3]).collect(to_map(lambda x: x, lambda x: x * x, lambda a, b: b, OrderedDict))
 
     # then the caller's mapping reaches the caller intact, not copied into a dict
     assert isinstance(result, OrderedDict)
@@ -178,8 +178,8 @@ async def test_to_map_calls_its_map_supplier_once_per_collection() -> None:
     collector = to_map(lambda x: x, lambda x: x, lambda a, b: b, OrderedDict)
 
     # when
-    first = await Stream.of([1, 2]).collect(collector)
-    second = await Stream.of([3]).collect(collector)
+    first = await Stream([1, 2]).collect(collector)
+    second = await Stream([3]).collect(collector)
 
     # then each collection got its own mapping, unaffected by the other's elements
     assert first is not second
@@ -190,7 +190,7 @@ async def test_to_map_calls_its_map_supplier_once_per_collection() -> None:
 @pytest.mark.asyncio
 async def test_to_map_with_a_map_supplier_over_an_empty_stream() -> None:
     # when
-    result = await Stream.of([]).collect(to_map(lambda x: x, lambda x: x, lambda a, b: b, OrderedDict))
+    result = await Stream([]).collect(to_map(lambda x: x, lambda x: x, lambda a, b: b, OrderedDict))
 
     # then the caller's type survives even with nothing to put in it
     assert isinstance(result, OrderedDict)
@@ -200,7 +200,7 @@ async def test_to_map_with_a_map_supplier_over_an_empty_stream() -> None:
 @pytest.mark.asyncio
 async def test_to_map_merges_duplicate_keys_into_the_callers_mapping() -> None:
     # when a collision is resolved by the merge the 4-arg form always carries
-    result = await Stream.of(["a", "aa", "b"]).collect(to_map(len, lambda x: x, lambda a, b: a + b, OrderedDict))
+    result = await Stream(["a", "aa", "b"]).collect(to_map(len, lambda x: x, lambda a, b: a + b, OrderedDict))
 
     # then
     assert isinstance(result, OrderedDict)
@@ -215,7 +215,7 @@ async def test_to_map_awaits_an_async_map_supplier() -> None:
         return OrderedDict()
 
     # when
-    result = await Stream.of([1, 2]).collect(to_map(lambda x: x, lambda x: x, lambda a, b: b, supply))
+    result = await Stream([1, 2]).collect(to_map(lambda x: x, lambda x: x, lambda a, b: b, supply))
 
     # then
     assert isinstance(result, OrderedDict)

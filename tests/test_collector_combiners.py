@@ -43,8 +43,8 @@ _N = 50
 
 
 async def _parallel_equals_sequential(source: list, collector: Collector) -> None:
-    seq = await Stream.of(source).sequential().collect(collector)
-    par = await Stream.of(source).parallel().collect(collector)
+    seq = await Stream(source).sequential().collect(collector)
+    par = await Stream(source).parallel().collect(collector)
     assert par == seq
 
 
@@ -133,8 +133,8 @@ async def test_min_by_keeps_first_of_tied_wins_under_partitioning() -> None:
     def all_tied(a: tuple, b: tuple) -> int:
         return 0
 
-    seq = await Stream.of(source).sequential().collect(min_by(all_tied))
-    par = await Stream.of(source).parallel().collect(min_by(all_tied))
+    seq = await Stream(source).sequential().collect(min_by(all_tied))
+    par = await Stream(source).parallel().collect(min_by(all_tied))
 
     assert par == seq == (0, "first")
     assert Characteristics.UNORDERED not in min_by(all_tied).characteristics
@@ -154,8 +154,8 @@ async def test_min_by_empty_partition_does_not_win_a_tie() -> None:
     # batches to nothing, so their peer's `found` stays UNSET and must not
     # displace a real element from another partition
     source = list(range(_N))
-    seq = await Stream.of(source).sequential().filter(lambda x: x < 3).collect(min_by(_cmp))
-    par = await Stream.of(source).parallel().filter(lambda x: x < 3).collect(min_by(_cmp))
+    seq = await Stream(source).sequential().filter(lambda x: x < 3).collect(min_by(_cmp))
+    par = await Stream(source).parallel().filter(lambda x: x < 3).collect(min_by(_cmp))
 
     assert par == seq == 0
 
@@ -182,8 +182,8 @@ async def test_reducing_three_arg_combiner_matches_sequential() -> None:
 async def test_reducing_one_arg_empty_partition_does_not_contribute() -> None:
     # exercises _combine_reduce's UNSET branches the same way min_by's does
     source = list(range(_N))
-    seq = await Stream.of(source).sequential().filter(lambda x: x < 3).collect(reducing(lambda a, b: a + b))
-    par = await Stream.of(source).parallel().filter(lambda x: x < 3).collect(reducing(lambda a, b: a + b))
+    seq = await Stream(source).sequential().filter(lambda x: x < 3).collect(reducing(lambda a, b: a + b))
+    par = await Stream(source).parallel().filter(lambda x: x < 3).collect(reducing(lambda a, b: a + b))
 
     assert par == seq == 0 + 1 + 2
 
@@ -203,7 +203,7 @@ async def test_to_map_two_arg_combiner_raises_on_cross_partition_duplicate() -> 
     # within one partition - _combine_to_map's own raise, not accept()'s
     source = list(range(_N))
     with pytest.raises(IllegalStateException):
-        await Stream.of(source).parallel().collect(to_map(lambda x: x % 7, lambda x: x))
+        await Stream(source).parallel().collect(to_map(lambda x: x % 7, lambda x: x))
 
 
 @pytest.mark.asyncio

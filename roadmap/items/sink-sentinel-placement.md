@@ -2,7 +2,7 @@
 id = "sink-sentinel-placement"
 title = "`UNSET` and `unseeded()` sit in `sink.py` on rejected reasoning"
 bucket = "now"
-rank = 3
+rank = 2
 filed = 2026-09-03
 updated = 2026-09-08
 gate = "a home ruled *in* by what the names are siblings of, rebuilt from the actual import graph rather than from the stale comment — and sequenced after `unset-dual-role`, which decides how many names there are"

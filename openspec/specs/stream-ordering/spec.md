@@ -121,7 +121,7 @@ on the ordering characteristic.
 
 #### Scenario: unordered() chains with other intermediate operations
 - **WHEN** a fluent chain such as
-  `Stream.of([1, 2, 3, 4]).unordered().filter(g).collect(to_list())` is awaited
+  `Stream([1, 2, 3, 4]).unordered().filter(g).collect(to_list())` is awaited
 - **THEN** it produces the same elements it would without the `.unordered()`
   call
 

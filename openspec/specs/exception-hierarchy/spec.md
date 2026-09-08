@@ -33,7 +33,7 @@ and `except IllegalStateException` call sites SHALL continue to catch exactly
 what they caught before.
 
 #### Scenario: A build error is caught by the base
-- **WHEN** `Stream.of([1, 2, 3]).collect(lambda c: c)` is awaited inside a `try` catching only `StreamException`
+- **WHEN** `Stream([1, 2, 3]).collect(lambda c: c)` is awaited inside a `try` catching only `StreamException`
 - **THEN** the `StreamBuildException` it raises is caught
 
 #### Scenario: A reuse error is caught by the base
@@ -74,7 +74,7 @@ The exception's message SHALL be unchanged from the bare `TypeError` it
 replaces, and the conditions under which it is raised SHALL be unchanged.
 
 #### Scenario: A bool comparator is caught as a TypeError
-- **WHEN** `Stream.of([3, 1, 2]).sorted(lambda a, b: a > b)` is collected inside a `try` catching only `TypeError`
+- **WHEN** `Stream([3, 1, 2]).sorted(lambda a, b: a > b)` is collected inside a `try` catching only `TypeError`
 - **THEN** the exception is caught, exactly as before this change
 
 #### Scenario: A bool comparator is caught as a build error

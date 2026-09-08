@@ -13,7 +13,7 @@ async def _async_double(x: int) -> int:
 @pytest.mark.asyncio
 async def test_mapping_collects_mapped_values() -> None:
     # when
-    result = await Stream.of(["a", "bb", "ccc"]).collect(mapping(len, to_list()))
+    result = await Stream(["a", "bb", "ccc"]).collect(mapping(len, to_list()))
 
     # then
     assert result == [1, 2, 3]
@@ -22,7 +22,7 @@ async def test_mapping_collects_mapped_values() -> None:
 @pytest.mark.asyncio
 async def test_mapping_async_mapper() -> None:
     # when
-    result = await Stream.of([1, 2, 3]).collect(mapping(_async_double, to_list()))
+    result = await Stream([1, 2, 3]).collect(mapping(_async_double, to_list()))
 
     # then
     assert result == [2, 4, 6]
@@ -31,7 +31,7 @@ async def test_mapping_async_mapper() -> None:
 @pytest.mark.asyncio
 async def test_mapping_empty_stream() -> None:
     # when
-    result = await Stream.of([]).collect(mapping(len, to_list()))
+    result = await Stream([]).collect(mapping(len, to_list()))
 
     # then
     assert result == []
@@ -40,7 +40,7 @@ async def test_mapping_empty_stream() -> None:
 @pytest.mark.asyncio
 async def test_mapping_composes_with_reducing_downstream() -> None:
     # when
-    result = await Stream.of(["a", "bb", "ccc"]).collect(mapping(len, counting()))
+    result = await Stream(["a", "bb", "ccc"]).collect(mapping(len, counting()))
 
     # then
     assert result == 3
@@ -49,7 +49,7 @@ async def test_mapping_composes_with_reducing_downstream() -> None:
 @pytest.mark.asyncio
 async def test_mapping_with_async_downstream_accumulator() -> None:
     # when
-    result = await Stream.of(["a", "bb", "ccc"]).collect(mapping(len, summing_int(lambda x: x)))
+    result = await Stream(["a", "bb", "ccc"]).collect(mapping(len, summing_int(lambda x: x)))
 
     # then
     assert result == 6

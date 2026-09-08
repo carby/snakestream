@@ -51,7 +51,7 @@ async def _drain_ordered(stream: Stream[int]) -> list[int]:
 @pytest.mark.asyncio
 async def test_a_new_sequential_stream_is_ordered() -> None:
     # when
-    seen = await _drain_ordered(Stream.of(values))
+    seen = await _drain_ordered(Stream(values))
     # then
     assert seen == values
 
@@ -60,7 +60,7 @@ async def test_a_new_sequential_stream_is_ordered() -> None:
 async def test_a_new_parallel_stream_is_ordered() -> None:
     # when: .parallel() alone does not relax encounter order, so
     # for_each_ordered() still forces a single ordered flight
-    seen = await _drain_ordered(Stream.of(values).parallel())
+    seen = await _drain_ordered(Stream(values).parallel())
     # then
     assert seen == values
 
@@ -68,7 +68,7 @@ async def test_a_new_parallel_stream_is_ordered() -> None:
 @pytest.mark.asyncio
 async def test_a_chain_of_order_preserving_ops_stays_ordered() -> None:
     # when: map/filter contribute nothing to the characteristic
-    seen = await _drain_ordered(Stream.of(values).parallel().map(lambda x: x).filter(lambda x: True))
+    seen = await _drain_ordered(Stream(values).parallel().map(lambda x: x).filter(lambda x: True))
     # then
     assert seen == values
 
@@ -78,7 +78,7 @@ async def test_unordered_clears_the_encounter_order_requirement() -> None:
     # when: the pipeline no longer requires encounter order, so
     # for_each_ordered() keeps the concurrency the caller asked for instead of
     # forfeiting it
-    seen = await _drain_ordered(Stream.of(values).parallel().unordered())
+    seen = await _drain_ordered(Stream(values).parallel().unordered())
 
     # then: every element exactly once, but not in encounter order - the
     # positional delay decides who finishes first
@@ -89,8 +89,8 @@ async def test_unordered_clears_the_encounter_order_requirement() -> None:
 @pytest.mark.asyncio
 async def test_unordered_does_not_affect_other_instances() -> None:
     # given
-    a = Stream.of(values)
-    b = Stream.of(values)
+    a = Stream(values)
+    b = Stream(values)
 
     # when
     a.unordered()
@@ -105,7 +105,7 @@ async def test_unordered_does_not_affect_other_instances() -> None:
 @pytest.mark.asyncio
 async def test_unordered_returns_a_distinct_instance() -> None:
     # given
-    stream = Stream.of([1, 2, 3])
+    stream = Stream([1, 2, 3])
 
     # when
     res = stream.unordered()
@@ -117,7 +117,7 @@ async def test_unordered_returns_a_distinct_instance() -> None:
 @pytest.mark.asyncio
 async def test_unordered_consumes_the_receiver() -> None:
     # given
-    stream = Stream.of([1, 2, 3])
+    stream = Stream([1, 2, 3])
     stream.unordered()
 
     # when / then: unordered() is an ordinary intermediate op now, so the
@@ -129,7 +129,7 @@ async def test_unordered_consumes_the_receiver() -> None:
 @pytest.mark.asyncio
 async def test_unordered_chains_with_other_intermediate_ops() -> None:
     # when
-    res = await Stream.of([1, 2, 3, 4]).unordered().filter(lambda x: x % 2 == 0).collect(to_list())
+    res = await Stream([1, 2, 3, 4]).unordered().filter(lambda x: x % 2 == 0).collect(to_list())
     # then
     assert sorted(res) == [2, 4]
 
@@ -146,7 +146,7 @@ async def test_unordered_leaves_earlier_ops_untouched() -> None:
     seen: list[int] = []
 
     # when
-    res = await Stream.of([1, 2, 3, 4]).peek(seen.append).unordered().filter(lambda x: x % 2 == 0).collect(to_list())
+    res = await Stream([1, 2, 3, 4]).peek(seen.append).unordered().filter(lambda x: x % 2 == 0).collect(to_list())
 
     # then: the peek still saw every element, in position, and the filter
     # after the boundary still ran
@@ -157,9 +157,9 @@ async def test_unordered_leaves_earlier_ops_untouched() -> None:
 @pytest.mark.asyncio
 async def test_unordered_position_does_not_change_the_elements_produced() -> None:
     # when
-    before = await Stream.of([3, 1, 2]).unordered().map(lambda x: x * 2).collect(to_list())
-    after = await Stream.of([3, 1, 2]).map(lambda x: x * 2).unordered().collect(to_list())
-    without = await Stream.of([3, 1, 2]).map(lambda x: x * 2).collect(to_list())
+    before = await Stream([3, 1, 2]).unordered().map(lambda x: x * 2).collect(to_list())
+    after = await Stream([3, 1, 2]).map(lambda x: x * 2).unordered().collect(to_list())
+    without = await Stream([3, 1, 2]).map(lambda x: x * 2).collect(to_list())
 
     # then
     assert before == after == without == [6, 2, 4]
@@ -179,7 +179,7 @@ async def test_unordered_position_does_not_change_the_elements_produced() -> Non
 @pytest.mark.asyncio
 async def test_sorted_after_unordered_is_ordered_again() -> None:
     # when: a sort imposes an encounter order whether or not its input had one
-    res = await Stream.of(values).parallel().unordered().map(_delay_by_position).sorted(_asc).limit(3).collect(to_list())
+    res = await Stream(values).parallel().unordered().map(_delay_by_position).sorted(_asc).limit(3).collect(to_list())
     # then the limit selected on the sorted encounter order
     assert res == [1, 2, 3]
 
@@ -188,7 +188,7 @@ async def test_sorted_after_unordered_is_ordered_again() -> None:
 async def test_unordered_after_sorted_is_unordered() -> None:
     # given a positional delay after the sort, so the branches finish the
     # sorted stream out of order
-    seen = await _drain_ordered(Stream.of(values).parallel().sorted(_asc).unordered())
+    seen = await _drain_ordered(Stream(values).parallel().sorted(_asc).unordered())
     # then the pipeline took the order-blind path downstream of the
     # unordered(), keeping the concurrency rather than delivering in sorted
     # order
@@ -200,7 +200,7 @@ async def test_unordered_after_sorted_is_unordered() -> None:
 async def test_unordered_between_two_sorts_is_ordered() -> None:
     # when: the fold is left to right, so the last op to speak wins
     res = (
-        await Stream.of(values)
+        await Stream(values)
         .parallel()
         .sorted(_asc)
         .unordered()
@@ -218,7 +218,7 @@ async def test_ops_after_a_sort_preserve_the_restored_ordering() -> None:
     # when: an order-preserving op sits between the sort and the op that reads
     # the characteristic
     res = (
-        await Stream.of(values)
+        await Stream(values)
         .parallel()
         .unordered()
         .map(_delay_by_position)
@@ -246,7 +246,7 @@ async def test_ops_after_a_sort_preserve_the_restored_ordering() -> None:
 @pytest.mark.asyncio
 async def test_unordered_survives_parallel_switch() -> None:
     # when
-    res = Stream.of([1, 2, 3]).unordered().parallel()._is_ordered()
+    res = Stream([1, 2, 3]).unordered().parallel()._is_ordered()
     # then
     assert res is False
 
@@ -254,7 +254,7 @@ async def test_unordered_survives_parallel_switch() -> None:
 @pytest.mark.asyncio
 async def test_unordered_survives_sequential_switch() -> None:
     # when
-    res = Stream.of([1, 2, 3]).parallel().unordered().sequential()._is_ordered()
+    res = Stream([1, 2, 3]).parallel().unordered().sequential()._is_ordered()
     # then
     assert res is False
 
@@ -262,7 +262,7 @@ async def test_unordered_survives_sequential_switch() -> None:
 @pytest.mark.asyncio
 async def test_ordered_stays_true_across_parallel_switch() -> None:
     # when
-    res = Stream.of([1, 2, 3]).parallel()._is_ordered()
+    res = Stream([1, 2, 3]).parallel()._is_ordered()
     # then
     assert res is True
 
@@ -270,7 +270,7 @@ async def test_ordered_stays_true_across_parallel_switch() -> None:
 @pytest.mark.asyncio
 async def test_ordered_stays_true_across_sequential_switch() -> None:
     # when
-    res = Stream.of([1, 2, 3]).parallel().sequential()._is_ordered()
+    res = Stream([1, 2, 3]).parallel().sequential()._is_ordered()
     # then
     assert res is True
 
@@ -282,7 +282,7 @@ async def test_ordered_stays_true_across_sequential_switch() -> None:
 async def test_the_public_ordering_accessor_does_not_exist() -> None:
     # given: Java's BaseStream exposes isParallel() and nothing else; ORDERED
     # lives in the package-private StreamOpFlag and is never readable
-    stream = Stream.of([1, 2, 3])
+    stream = Stream([1, 2, 3])
 
     # then
     assert not hasattr(stream, "is_ordered")
@@ -302,7 +302,7 @@ async def test_the_public_ordering_accessor_does_not_exist() -> None:
 @pytest.mark.asyncio
 async def test_unordered_max_returns_one_of_the_tied_records() -> None:
     # when
-    it = await Stream.of(TIE_SOURCE).parallel().unordered().map(overtaken).max(by_key)
+    it = await Stream(TIE_SOURCE).parallel().unordered().map(overtaken).max(by_key)
     # then - either is valid; the extreme key is not
     assert it in (TIED_EARLY, TIED_LATE)
     assert it[1] == 5
@@ -326,7 +326,7 @@ async def test_a_total_comparator_is_determinate_on_an_unordered_pipeline(run) -
     total = comparing(lambda pair: pair[1]).then_comparing(lambda pair: pair[0])
 
     # when
-    it = await Stream.of(TIE_SOURCE).parallel().unordered().map(overtaken).max(total)
+    it = await Stream(TIE_SOURCE).parallel().unordered().map(overtaken).max(total)
 
     # then: "late" > "early" on the tie-break segment, on every run
     assert it == TIED_LATE

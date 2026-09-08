@@ -7,7 +7,7 @@ from snakestream.stream import Stream
 @pytest.mark.asyncio
 async def test_joining_no_args_concatenates_with_no_delimiter() -> None:
     # when
-    result = await Stream.of(["a", "b", "c"]).collect(joining())
+    result = await Stream(["a", "b", "c"]).collect(joining())
 
     # then
     assert result == "abc"
@@ -16,7 +16,7 @@ async def test_joining_no_args_concatenates_with_no_delimiter() -> None:
 @pytest.mark.asyncio
 async def test_joining_delimiter_only() -> None:
     # when
-    result = await Stream.of(["a", "b", "c"]).collect(joining(", "))
+    result = await Stream(["a", "b", "c"]).collect(joining(", "))
 
     # then
     assert result == "a, b, c"
@@ -25,7 +25,7 @@ async def test_joining_delimiter_only() -> None:
 @pytest.mark.asyncio
 async def test_joining_delimiter_prefix_and_suffix() -> None:
     # when
-    result = await Stream.of(["a", "b", "c"]).collect(joining(", ", "[", "]"))
+    result = await Stream(["a", "b", "c"]).collect(joining(", ", "[", "]"))
 
     # then
     assert result == "[a, b, c]"
@@ -34,7 +34,7 @@ async def test_joining_delimiter_prefix_and_suffix() -> None:
 @pytest.mark.asyncio
 async def test_joining_single_element_has_no_delimiter_applied() -> None:
     # when
-    result = await Stream.of(["a"]).collect(joining(", "))
+    result = await Stream(["a"]).collect(joining(", "))
 
     # then
     assert result == "a"
@@ -43,7 +43,7 @@ async def test_joining_single_element_has_no_delimiter_applied() -> None:
 @pytest.mark.asyncio
 async def test_joining_empty_stream_returns_empty_string() -> None:
     # when
-    result = await Stream.of([]).collect(joining(", "))
+    result = await Stream([]).collect(joining(", "))
 
     # then
     assert result == ""
@@ -52,7 +52,7 @@ async def test_joining_empty_stream_returns_empty_string() -> None:
 @pytest.mark.asyncio
 async def test_joining_empty_stream_with_prefix_and_suffix() -> None:
     # when
-    result = await Stream.of([]).collect(joining(", ", "[", "]"))
+    result = await Stream([]).collect(joining(", ", "[", "]"))
 
     # then
     assert result == "[]"
@@ -62,4 +62,4 @@ async def test_joining_empty_stream_with_prefix_and_suffix() -> None:
 async def test_joining_non_string_element_raises_type_error() -> None:
     # when / then
     with pytest.raises(TypeError):
-        await Stream.of(["a", 1, "c"]).collect(joining())
+        await Stream(["a", 1, "c"]).collect(joining())

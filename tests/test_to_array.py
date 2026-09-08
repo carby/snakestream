@@ -7,7 +7,7 @@ from snakestream.stream import Stream
 @pytest.mark.asyncio
 async def test_to_array_returns_list_of_all_elements() -> None:
     # when
-    result = await Stream.of([1, 2, 3]).to_array()
+    result = await Stream([1, 2, 3]).to_array()
 
     # then
     assert result == [1, 2, 3]
@@ -16,7 +16,7 @@ async def test_to_array_returns_list_of_all_elements() -> None:
 @pytest.mark.asyncio
 async def test_to_array_on_empty_stream_returns_empty_list() -> None:
     # when
-    result = await Stream.of([]).to_array()
+    result = await Stream([]).to_array()
 
     # then
     assert result == []
@@ -25,7 +25,7 @@ async def test_to_array_on_empty_stream_returns_empty_list() -> None:
 @pytest.mark.asyncio
 async def test_to_array_equals_collect_to_list() -> None:
     # given
-    chain = lambda: Stream.of([1, 2, 3, 4]).map(lambda x: x * 2).filter(lambda x: x > 2)  # noqa: E731
+    chain = lambda: Stream([1, 2, 3, 4]).map(lambda x: x * 2).filter(lambda x: x > 2)  # noqa: E731
 
     # when
     from_to_array = await chain().to_array()
@@ -38,7 +38,7 @@ async def test_to_array_equals_collect_to_list() -> None:
 @pytest.mark.asyncio
 async def test_to_array_on_parallel_stream_returns_all_elements() -> None:
     # when
-    result = await Stream.of([1, 2, 3, 4]).parallel().to_array()
+    result = await Stream([1, 2, 3, 4]).parallel().to_array()
 
     # then
     assert sorted(result) == [1, 2, 3, 4]
@@ -48,4 +48,4 @@ async def test_to_array_on_parallel_stream_returns_all_elements() -> None:
 async def test_to_array_rejects_arguments() -> None:
     # when / then
     with pytest.raises(TypeError):
-        await Stream.of([1, 2, 3]).to_array(list)
+        await Stream([1, 2, 3]).to_array(list)

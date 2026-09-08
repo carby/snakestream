@@ -13,15 +13,15 @@ matching Java's `Collectors.groupingBy(Function classifier)` (which defaults
 its downstream to `toList()`).
 
 #### Scenario: buckets elements by classifier into lists
-- **WHEN** `Stream.of([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2))` is called
+- **WHEN** `Stream([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2))` is called
 - **THEN** the result is `{1: [1, 3, 5], 0: [2, 4]}`
 
 #### Scenario: empty stream yields an empty dict
-- **WHEN** `Stream.of([]).collect(grouping_by(lambda x: x))` is called
+- **WHEN** `Stream([]).collect(grouping_by(lambda x: x))` is called
 - **THEN** the result is `{}`
 
 #### Scenario: only keys actually produced appear in the result
-- **WHEN** `Stream.of([1, 1, 1]).collect(grouping_by(lambda x: x))` is called
+- **WHEN** `Stream([1, 1, 1]).collect(grouping_by(lambda x: x))` is called
 - **THEN** the result is `{1: [1, 1, 1]}`, with no other keys present
 
 #### Scenario: async classifier is awaited
@@ -44,11 +44,11 @@ is exhausted. Passing a callable that is not a `Collector` as `downstream`
 SHALL raise `StreamBuildException`.
 
 #### Scenario: downstream collector reduces each group
-- **WHEN** `Stream.of([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2, counting()))` is called
+- **WHEN** `Stream([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2, counting()))` is called
 - **THEN** the result is `{1: 3, 0: 2}`
 
 #### Scenario: downstream collector composes with other collector.py collectors
-- **WHEN** `Stream.of(["a", "bb", "ccc", "dd"]).collect(grouping_by(len, joining(", ")))` is called
+- **WHEN** `Stream(["a", "bb", "ccc", "dd"]).collect(grouping_by(len, joining(", ")))` is called
 - **THEN** the result is `{1: "a", 2: "bb, dd", 3: "ccc"}`
 
 #### Scenario: only present classifier outputs get a downstream-reduced entry
@@ -173,7 +173,7 @@ exactly as in the 2-arg form, and a `downstream` that is not a `Collector`
 SHALL raise `StreamBuildException` in this form as in that one.
 
 #### Scenario: the result is the caller's mapping type
-- **WHEN** `Stream.of([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2, OrderedDict, counting()))` is called
+- **WHEN** `Stream([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2, OrderedDict, counting()))` is called
 - **THEN** the result is an `OrderedDict` holding `{1: 3, 0: 2}`, not a plain `dict`
 
 #### Scenario: the downstream finisher writes into the caller's mapping
@@ -185,7 +185,7 @@ SHALL raise `StreamBuildException` in this form as in that one.
 - **THEN** each call returns an independent mapping, unaffected by the other call's elements
 
 #### Scenario: empty stream yields the caller's empty mapping
-- **WHEN** `Stream.of([]).collect(grouping_by(f, OrderedDict, to_list()))` is called
+- **WHEN** `Stream([]).collect(grouping_by(f, OrderedDict, to_list()))` is called
 - **THEN** the result is an empty `OrderedDict`
 
 #### Scenario: an async map_factory is awaited
@@ -214,11 +214,11 @@ three forms so that a call is checked statically as well as dispatched at
 runtime.
 
 #### Scenario: a two-argument call still binds its second argument to downstream
-- **WHEN** `Stream.of([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2, counting()))` is called
+- **WHEN** `Stream([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2, counting()))` is called
 - **THEN** the result is `{1: 3, 0: 2}` in a plain `dict`, exactly as before this change
 
 #### Scenario: a one-argument call is unchanged
-- **WHEN** `Stream.of([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2))` is called
+- **WHEN** `Stream([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2))` is called
 - **THEN** the result is `{1: [1, 3, 5], 0: [2, 4]}` in a plain `dict`
 
 #### Scenario: the second of three arguments is the container factory

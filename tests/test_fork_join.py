@@ -25,14 +25,14 @@ async def test_parallel_map_preserves_encounter_order_with_uneven_latency() -> N
         return x
 
     source = list(range(30))
-    lst = await Stream.of(source).parallel().map(uneven).collect(to_list())
+    lst = await Stream(source).parallel().map(uneven).collect(to_list())
 
     assert lst == source
 
 
 @pytest.mark.asyncio
 async def test_parallel_flat_map_preserves_encounter_order() -> None:
-    lst = await Stream.of([1, 2, 3, 4]).parallel().flat_map(lambda x: Stream.of([x, x * 10])).collect(to_list())
+    lst = await Stream([1, 2, 3, 4]).parallel().flat_map(lambda x: Stream([x, x * 10])).collect(to_list())
 
     assert lst == [1, 10, 2, 20, 3, 30, 4, 40]
 
@@ -48,10 +48,10 @@ async def test_parallel_flat_map_preserves_order_under_uneven_latency() -> None:
         yield x + 100
 
     def inner(x: int) -> Stream:
-        return Stream.of(inner_source(x))
+        return Stream(inner_source(x))
 
     source = list(range(20))
-    lst = await Stream.of(source).parallel().flat_map(inner).collect(to_list())
+    lst = await Stream(source).parallel().flat_map(inner).collect(to_list())
 
     expected = [y for x in source for y in (x, x + 100)]
     assert lst == expected
@@ -83,7 +83,7 @@ async def test_in_flight_elements_are_bounded_by_workers_times_batch_size() -> N
         return x
 
     source = list(range(500))
-    await Stream.of(source).parallel().map(track).collect(to_list())
+    await Stream(source).parallel().map(track).collect(to_list())
 
     # the ramp climbs from one element per worker toward BATCH_SIZE per
     # worker, monotonically, so the observed peak can only be at or under
@@ -105,7 +105,7 @@ async def test_limit_under_parallel_does_not_pull_a_full_batch_size_per_worker()
             pulled += 1
             yield i
 
-    lst = await Stream.of(counting_source()).parallel().limit(3).collect(to_list())
+    lst = await Stream(counting_source()).parallel().limit(3).collect(to_list())
 
     assert lst == [0, 1, 2]
     # bounded by the small first-round pull, not by workers * BATCH_SIZE
@@ -116,7 +116,7 @@ async def test_limit_under_parallel_does_not_pull_a_full_batch_size_per_worker()
 async def test_limit_zero_under_parallel_pulls_nothing() -> None:
     seen: list[int] = []
 
-    lst = await Stream.of([1, 2, 3, 4]).parallel().peek(seen.append).limit(0).collect(to_list())
+    lst = await Stream([1, 2, 3, 4]).parallel().peek(seen.append).limit(0).collect(to_list())
 
     assert lst == []
     assert seen == []
@@ -143,7 +143,7 @@ async def test_an_order_blind_terminal_does_not_wait_on_a_slow_batch_elsewhere()
         return n
 
     result = await asyncio.wait_for(
-        Stream.of(endless()).parallel().map(one_slow_element).any_match(lambda n: n == 17),
+        Stream(endless()).parallel().map(one_slow_element).any_match(lambda n: n == 17),
         timeout=0.2,
     )
 
@@ -161,7 +161,7 @@ async def test_an_exception_in_a_worker_propagates_with_its_type_and_message() -
         return x
 
     with pytest.raises(ValueError, match="kaboom") as excinfo:
-        await Stream.of(list(range(20))).parallel().map(boom).collect(to_list())
+        await Stream(list(range(20))).parallel().map(boom).collect(to_list())
 
     # traceback intact across the thread boundary: the frame that actually
     # raised is still in it, not swallowed into an opaque wrapper
@@ -177,7 +177,7 @@ async def test_an_exception_in_one_batch_does_not_leave_unretrieved_exceptions(r
         return x
 
     with pytest.raises(ValueError, match="kaboom"):
-        await Stream.of(list(range(200))).parallel().map(boom).collect(to_list())
+        await Stream(list(range(200))).parallel().map(boom).collect(to_list())
 
     # let any tasks whose exception wasn't retrieved get garbage collected
     # and emit their warning before we check for one
@@ -218,15 +218,15 @@ async def test_limit_skip_distinct_stay_correct_under_concurrent_batch_access() 
     n, trials = 5000, 12
 
     for _ in range(trials):
-        limited = await Stream.of(list(range(n))).parallel().unordered().limit(100).to_array()
+        limited = await Stream(list(range(n))).parallel().unordered().limit(100).to_array()
         assert len(limited) == 100
         assert len(set(limited)) == 100
 
-        skipped = await Stream.of(list(range(n))).parallel().unordered().skip(n - 100).to_array()
+        skipped = await Stream(list(range(n))).parallel().unordered().skip(n - 100).to_array()
         assert len(skipped) == 100
         assert len(set(skipped)) == 100
 
-        distinct = await Stream.of([i % 250 for i in range(n)]).parallel().unordered().distinct().to_array()
+        distinct = await Stream([i % 250 for i in range(n)]).parallel().unordered().distinct().to_array()
         assert len(distinct) == 250
         assert len(set(distinct)) == 250
 
@@ -236,25 +236,25 @@ async def test_limit_skip_distinct_stay_correct_under_concurrent_batch_access() 
 
 @pytest.mark.asyncio
 async def test_parallel_reports_is_parallel_true() -> None:
-    assert Stream.of([1, 2, 3]).parallel().is_parallel() is True
+    assert Stream([1, 2, 3]).parallel().is_parallel() is True
 
 
 @pytest.mark.asyncio
 async def test_parallel_stream_uses_fork_join() -> None:
-    stream = Stream.of([1, 2, 3]).parallel()
+    stream = Stream([1, 2, 3]).parallel()
     assert stream._executor is FORK_JOIN
 
 
 @pytest.mark.asyncio
 async def test_sequential_after_parallel_wins() -> None:
-    lst = await Stream.of([1, 2, 3]).parallel().sequential().collect(to_list())
+    lst = await Stream([1, 2, 3]).parallel().sequential().collect(to_list())
     assert lst == [1, 2, 3]
-    assert Stream.of([1, 2, 3]).parallel().sequential()._executor is SEQUENTIAL
+    assert Stream([1, 2, 3]).parallel().sequential()._executor is SEQUENTIAL
 
 
 @pytest.mark.asyncio
 async def test_parallel_after_sequential_wins() -> None:
-    assert Stream.of([1, 2, 3]).sequential().parallel()._executor is FORK_JOIN
+    assert Stream([1, 2, 3]).sequential().parallel()._executor is FORK_JOIN
 
 
 # --- source acceptance under fork/join: a bare AsyncIterable whose __aiter__ -
@@ -305,7 +305,7 @@ async def test_only_the_main_thread_ever_pulls_from_the_shared_source() -> None:
         map_threads.add(threading.current_thread())
         return x
 
-    lst = await Stream.of(source()).parallel().map(track_worker).collect(to_list())
+    lst = await Stream(source()).parallel().map(track_worker).collect(to_list())
 
     assert sorted(lst) == list(range(200))
     # exactly one thread ever pulled from the source - the pull happens
@@ -328,8 +328,8 @@ async def test_a_200_element_source_is_not_confined_to_one_worker() -> None:
         return x
 
     source = list(range(200))
-    parallel = await Stream.of(source).parallel().map(track).collect(to_list())
-    sequential = await Stream.of(source).sequential().map(lambda x: x).collect(to_list())
+    parallel = await Stream(source).parallel().map(track).collect(to_list())
+    sequential = await Stream(source).sequential().map(lambda x: x).collect(to_list())
 
     assert parallel == sequential
     assert len(threads) > 1
@@ -354,7 +354,7 @@ async def test_a_source_exhausted_within_the_first_rounds_still_spreads() -> Non
         return x
 
     source = list(range(FORK_JOIN.workers + 1))
-    lst = await Stream.of(source).parallel().map(track).collect(to_list())
+    lst = await Stream(source).parallel().map(track).collect(to_list())
 
     assert lst == source
     assert len(threads) > 1
@@ -370,7 +370,7 @@ async def test_parallel_over_a_slow_async_source_completes() -> None:
             await asyncio.sleep(0.001)
             yield i
 
-    lst = await Stream.of(slow_source()).parallel().map(lambda x: x * 2).collect(to_list())
+    lst = await Stream(slow_source()).parallel().map(lambda x: x * 2).collect(to_list())
 
     assert lst == [x * 2 for x in range(10)]
 
@@ -393,7 +393,7 @@ async def test_parallel_map_runs_concurrently_not_serially() -> None:
         return x
 
     start = time.perf_counter()
-    lst = await Stream.of(source).parallel().map(slow).collect(to_list())
+    lst = await Stream(source).parallel().map(slow).collect(to_list())
     elapsed = time.perf_counter() - start
 
     assert lst == source

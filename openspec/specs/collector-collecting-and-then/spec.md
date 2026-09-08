@@ -14,19 +14,19 @@ finished result and return that as the overall result. `downstream` SHALL be
 a `Collector`; passing anything else SHALL raise `StreamBuildException`.
 
 #### Scenario: Finisher transforms the downstream's result
-- **WHEN** `Stream.of([1, 2, 3]).collect(collecting_and_then(to_list(), tuple))` is called
+- **WHEN** `Stream([1, 2, 3]).collect(collecting_and_then(to_list(), tuple))` is called
 - **THEN** the result is `(1, 2, 3)`
 
 #### Scenario: Async finisher is awaited
-- **WHEN** `Stream.of([1, 2, 3]).collect(collecting_and_then(to_list(), async_len))` is called with an async finisher returning the list's length
+- **WHEN** `Stream([1, 2, 3]).collect(collecting_and_then(to_list(), async_len))` is called with an async finisher returning the list's length
 - **THEN** the result is `3`
 
 #### Scenario: Composes with a downstream that already has its own finisher
-- **WHEN** `Stream.of([1, 2, 3]).collect(collecting_and_then(counting(), lambda n: n * 10))` is called
+- **WHEN** `Stream([1, 2, 3]).collect(collecting_and_then(counting(), lambda n: n * 10))` is called
 - **THEN** the result is `30`
 
 #### Scenario: Empty stream still runs the finisher
-- **WHEN** `Stream.of([]).collect(collecting_and_then(to_list(), tuple))` is called
+- **WHEN** `Stream([]).collect(collecting_and_then(to_list(), tuple))` is called
 - **THEN** the result is `()`
 
 #### Scenario: Non-Collector downstream is rejected

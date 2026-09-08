@@ -1,8 +1,4 @@
-## Purpose
-
-Defines how `Stream.of(*args)` and general source normalization (`Stream()` construction) turn a caller-supplied value or values into stream elements — how many arguments `Stream.of()` accepts and in what form, and which source values are treated as a single scalar element versus spread into multiple elements.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Stream.of() argument arity
 `Stream.of(*args)` SHALL accept only positional arguments and SHALL treat every argument atomically, at every arity. The resulting stream SHALL have exactly one element per argument, in the order given, and SHALL NOT spread any argument into its constituent items, however many arguments are supplied. The number of arguments SHALL NOT change what an argument means. Calling it with keyword arguments SHALL raise `TypeError`.

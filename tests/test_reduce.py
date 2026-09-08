@@ -11,7 +11,7 @@ from snakestream import Stream
 @pytest.mark.asyncio
 async def test_reducer() -> None:
     # when
-    it = Stream.of([1, 2, 3, 4, 5, 6]).reduce(0, lambda x, y: x + y)
+    it = Stream([1, 2, 3, 4, 5, 6]).reduce(0, lambda x, y: x + y)
     # then
     assert await it == 21
 
@@ -19,9 +19,9 @@ async def test_reducer() -> None:
 @pytest.mark.asyncio
 async def test_reducer_associative() -> None:
     # when
-    it = Stream.of([1, 2, 3, 4, 5, 6]).reduce(0, lambda x, y: x + y)
+    it = Stream([1, 2, 3, 4, 5, 6]).reduce(0, lambda x, y: x + y)
 
-    it2 = Stream.of([1, 2, 3, 4, 5, 6]).reduce(0, lambda x, y: y + x)
+    it2 = Stream([1, 2, 3, 4, 5, 6]).reduce(0, lambda x, y: y + x)
     # then
     assert await it == 21
     assert await it2 == 21
@@ -34,7 +34,7 @@ async def test_async_reducer() -> None:
         return x + y
 
     # when
-    it = Stream.of([1, 2, 3, 4, 5, 6]).reduce(0, async_reducer)
+    it = Stream([1, 2, 3, 4, 5, 6]).reduce(0, async_reducer)
 
     # then
     assert await it == 21
@@ -43,7 +43,7 @@ async def test_async_reducer() -> None:
 @pytest.mark.asyncio
 async def test_reducer_mixed_chain(letter_2_int) -> None:
     # when
-    it = Stream.of(["a", "b", "c", "d"]).map(lambda x: letter_2_int[x]).reduce(0, lambda x, y: x + y)
+    it = Stream(["a", "b", "c", "d"]).map(lambda x: letter_2_int[x]).reduce(0, lambda x, y: x + y)
     # then
     assert await it == 10
 
@@ -54,7 +54,7 @@ async def test_reduce_matches_functools_reduce(values: list[int]) -> None:
     accumulator = lambda x, y: x + y  # noqa: E731
 
     # when
-    actual = await Stream.of(values).reduce(0, accumulator)
+    actual = await Stream(values).reduce(0, accumulator)
 
     # then
     assert actual == functools.reduce(accumulator, values, 0)
@@ -67,7 +67,7 @@ async def test_reduce_async_accumulator_matches_functools_reduce(values: list[in
         return x + y
 
     # when
-    actual = await Stream.of(values).reduce(0, async_add)
+    actual = await Stream(values).reduce(0, async_add)
 
     # then
     assert actual == functools.reduce(lambda x, y: x + y, values, 0)
@@ -82,7 +82,7 @@ async def test_reduce_no_identity_empty_stream_returns_none() -> None:
         return x + y
 
     # when
-    actual = await Stream.of([]).reduce(accumulator)
+    actual = await Stream([]).reduce(accumulator)
 
     # then
     assert actual is None
@@ -98,7 +98,7 @@ async def test_reduce_no_identity_single_element_returns_it_unchanged() -> None:
         return x + y
 
     # when
-    actual = await Stream.of([42]).reduce(accumulator)
+    actual = await Stream([42]).reduce(accumulator)
 
     # then
     assert actual == 42
@@ -108,7 +108,7 @@ async def test_reduce_no_identity_single_element_returns_it_unchanged() -> None:
 @pytest.mark.asyncio
 async def test_reduce_no_identity_folds_left_from_first_element() -> None:
     # when
-    actual = await Stream.of([1, 2, 3, 4, 5, 6]).reduce(lambda x, y: x + y)
+    actual = await Stream([1, 2, 3, 4, 5, 6]).reduce(lambda x, y: x + y)
 
     # then
     assert actual == 21
@@ -121,7 +121,7 @@ async def test_reduce_no_identity_async_accumulator_is_awaited() -> None:
         return x + y
 
     # when
-    actual = Stream.of([1, 2, 3, 4, 5, 6]).reduce(async_add)
+    actual = Stream([1, 2, 3, 4, 5, 6]).reduce(async_add)
 
     # then
     assert not isinstance(actual, int)
@@ -134,7 +134,7 @@ async def test_reduce_no_identity_matches_functools_reduce(values: list[int]) ->
     accumulator = lambda x, y: x + y  # noqa: E731
 
     # when
-    actual = await Stream.of(values).reduce(accumulator)
+    actual = await Stream(values).reduce(accumulator)
 
     # then
     assert actual == functools.reduce(accumulator, values)
@@ -143,7 +143,7 @@ async def test_reduce_no_identity_matches_functools_reduce(values: list[int]) ->
 @pytest.mark.asyncio
 async def test_reduce_with_identity_still_works_unchanged() -> None:
     # when
-    actual = await Stream.of([1, 2, 3, 4, 5, 6]).reduce(0, lambda x, y: x + y)
+    actual = await Stream([1, 2, 3, 4, 5, 6]).reduce(0, lambda x, y: x + y)
 
     # then
     assert actual == 21

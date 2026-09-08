@@ -20,15 +20,15 @@ The tie-break and the comparator-result-type guard SHALL be the same ones
 `Stream.min`/`max` apply, not an independent reimplementation of them.
 
 #### Scenario: min_by selects the smallest element
-- **WHEN** `Stream.of([3, 1, 2]).collect(min_by(lambda a, b: a - b))` is called
+- **WHEN** `Stream([3, 1, 2]).collect(min_by(lambda a, b: a - b))` is called
 - **THEN** the result is `1`
 
 #### Scenario: max_by selects the largest element
-- **WHEN** `Stream.of([3, 1, 2]).collect(max_by(lambda a, b: a - b))` is called
+- **WHEN** `Stream([3, 1, 2]).collect(max_by(lambda a, b: a - b))` is called
 - **THEN** the result is `3`
 
 #### Scenario: empty stream yields None
-- **WHEN** `Stream.of([]).collect(min_by(lambda a, b: a - b))` is called
+- **WHEN** `Stream([]).collect(min_by(lambda a, b: a - b))` is called
 - **THEN** the result is `None`
 
 #### Scenario: tie keeps the first of equal elements

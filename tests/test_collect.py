@@ -32,7 +32,7 @@ class _AsyncIteratorNoAclose:
 async def test_to_list_simple() -> None:
     # to_list() is a Collector, not a bare callable: only usable via collect()
     # when
-    actual = await Stream.of(async_generator()).collect(to_list())
+    actual = await Stream(async_generator()).collect(to_list())
     # then
     assert actual == [1, 2, 3, 4, 5]
 
@@ -63,7 +63,7 @@ async def test_to_generator_no_aclose_on_source() -> None:
 @pytest.mark.asyncio
 async def test_to_generator() -> None:
     # when
-    it = Stream.of([1, 2, 3, 4]).collect(to_generator)
+    it = Stream([1, 2, 3, 4]).collect(to_generator)
     # then
     assert await it.__anext__() == 1
     assert await it.__anext__() == 2
@@ -77,7 +77,7 @@ async def test_to_generator() -> None:
 @pytest.mark.asyncio
 async def test_to_generator_with_null_in_stream() -> None:
     # when
-    it = Stream.of([1, 2, None, 4]).collect(to_generator)
+    it = Stream([1, 2, None, 4]).collect(to_generator)
     # then
     assert await it.__anext__() == 1
     assert await it.__anext__() == 2
@@ -91,7 +91,7 @@ async def test_to_generator_with_null_in_stream() -> None:
 @pytest.mark.asyncio
 async def test_to_generator_with_empty_list_input() -> None:
     # when
-    it = Stream.of([]).collect(to_generator)
+    it = Stream([]).collect(to_generator)
     # then
     with pytest.raises(StopAsyncIteration):
         await it.__anext__()
@@ -100,7 +100,7 @@ async def test_to_generator_with_empty_list_input() -> None:
 @pytest.mark.asyncio
 async def test_to_list() -> None:
     # when
-    it = await Stream.of([1, 2, 3, 4]).collect(to_list())
+    it = await Stream([1, 2, 3, 4]).collect(to_list())
     # then
     assert it == [1, 2, 3, 4]
 
@@ -108,7 +108,7 @@ async def test_to_list() -> None:
 @pytest.mark.asyncio
 async def test_to_list_with_none_in_stream() -> None:
     # when
-    it = await Stream.of([1, None, 3, 4]).collect(to_list())
+    it = await Stream([1, None, 3, 4]).collect(to_list())
     # then
     assert it == [1, None, 3, 4]
 
@@ -116,7 +116,7 @@ async def test_to_list_with_none_in_stream() -> None:
 @pytest.mark.asyncio
 async def test_to_list_with_empty_list_input() -> None:
     # when
-    it = await Stream.of([]).collect(to_list())
+    it = await Stream([]).collect(to_list())
     # then
     assert it == []
 
@@ -124,7 +124,7 @@ async def test_to_list_with_empty_list_input() -> None:
 @pytest.mark.asyncio
 async def test_collect_supplier_accumulator_combiner_sync() -> None:
     # when
-    it = await Stream.of([1, 2, 3]).collect(list, list.append, list.extend)
+    it = await Stream([1, 2, 3]).collect(list, list.append, list.extend)
     # then
     assert it == [1, 2, 3]
 
@@ -139,7 +139,7 @@ async def test_collect_supplier_accumulator_combiner_async() -> None:
         container.append(item)
 
     # when
-    it = await Stream.of([1, 2, 3]).collect(async_supplier, async_accumulator, list.extend)
+    it = await Stream([1, 2, 3]).collect(async_supplier, async_accumulator, list.extend)
     # then
     assert it == [1, 2, 3]
 
@@ -147,7 +147,7 @@ async def test_collect_supplier_accumulator_combiner_async() -> None:
 @pytest.mark.asyncio
 async def test_collect_supplier_accumulator_combiner_empty_stream() -> None:
     # when
-    it = await Stream.of([]).collect(list, list.append, list.extend)
+    it = await Stream([]).collect(list, list.append, list.extend)
     # then
     assert it == []
 
@@ -161,7 +161,7 @@ async def test_collect_supplier_accumulator_combiner_never_calls_combiner() -> N
         combiner_calls.append((a, b))
 
     # when
-    it = await Stream.of([1, 2, 3]).collect(list, list.append, combiner)
+    it = await Stream([1, 2, 3]).collect(list, list.append, combiner)
     # then
     assert it == [1, 2, 3]
     assert combiner_calls == []
@@ -181,7 +181,7 @@ async def test_collect_supplier_accumulator_combiner_parallel_invokes_combiner()
         return a
 
     # given a source spanning several batches
-    it = await Stream.of(list(range(50))).parallel().collect(list, list.append, combiner)
+    it = await Stream(list(range(50))).parallel().collect(list, list.append, combiner)
     # then
     assert sorted(it) == list(range(50))
     assert combiner_calls > 0
@@ -194,7 +194,7 @@ async def test_collect_supplier_accumulator_combiner_accepts_javas_biconsumer_co
     # documented example - unlike Collector.combiner()'s returning
     # BinaryOperator<A>. Both conventions must work here: a combiner
     # returning None is read as "the container was mutated in place".
-    it = await Stream.of(list(range(50))).parallel().collect(list, list.append, list.extend)
+    it = await Stream(list(range(50))).parallel().collect(list, list.append, list.extend)
     assert sorted(it) == list(range(50))
 
 
@@ -210,7 +210,7 @@ def test_to_list_and_joining_do_not_report_unordered() -> None:
 @pytest.mark.asyncio
 async def test_to_set_declaration_matches_behaviour_across_orderings() -> None:
     # when
-    forward = await Stream.of([1, 2, 3]).collect(to_set())
-    backward = await Stream.of([3, 2, 1]).collect(to_set())
+    forward = await Stream([1, 2, 3]).collect(to_set())
+    backward = await Stream([3, 2, 1]).collect(to_set())
     # then
     assert forward == backward

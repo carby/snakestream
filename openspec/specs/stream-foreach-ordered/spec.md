@@ -8,7 +8,7 @@ Defines the contract for `Stream.for_each_ordered(consumer)`, an ordered variant
 `Stream.for_each_ordered(consumer)` SHALL invoke `consumer` once per element of the composed stream, in the stream's encounter order, and SHALL NOT return a value (matching `for_each()`'s `None` return).
 
 #### Scenario: Sequential Stream preserves source order
-- **WHEN** `Stream.of([1, 2, 3, 4]).for_each_ordered(consumer)` is called
+- **WHEN** `Stream([1, 2, 3, 4]).for_each_ordered(consumer)` is called
 - **THEN** `consumer` is invoked with `1`, then `2`, then `3`, then `4`, in that order
 
 #### Scenario: Both sync and async consumers are supported
@@ -39,7 +39,7 @@ fallback to sequential traversal.
 
 #### Scenario: A RACING stream yields ordered results via for_each_ordered
 - **WHEN** a stream built from an ordered source and switched to `RACING`
-  execution (e.g. `Stream.of([1, 2, 3, 4]).parallel()`) has
+  execution (e.g. `Stream([1, 2, 3, 4]).parallel()`) has
   `.for_each_ordered(consumer)` called on it
 - **THEN** `consumer` is invoked with `1`, then `2`, then `3`, then `4`, in that
   order — the same order `for_each_ordered()` would produce on the equivalent

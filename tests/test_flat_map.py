@@ -15,7 +15,7 @@ async def async_flat_map(x: int) -> int:
 @pytest.mark.asyncio
 async def test_flat_map() -> None:
     # when
-    it = Stream.of([[1, 2], [3, 4]]).flat_map(Stream.of).collect(to_generator)
+    it = Stream([[1, 2], [3, 4]]).flat_map(Stream).collect(to_generator)
 
     # then
     assert await it.__anext__() == 1
@@ -32,7 +32,7 @@ async def test_flat_map() -> None:
 
 @pytest.mark.asyncio
 async def test_flat_map_mixed_list() -> None:
-    it = Stream.of([[1, 2], [3, 4], 5, [6, 7], 8]).flat_map(Stream.of).collect(to_generator)
+    it = Stream([[1, 2], [3, 4], 5, [6, 7], 8]).flat_map(Stream).collect(to_generator)
 
     # then
     assert await it.__anext__() == 1
@@ -66,7 +66,7 @@ async def test_flat_map_closes_inner_generator_on_short_circuit() -> None:
         return Stream(tracked_inner(n))
 
     # when
-    result = await Stream.of([5]).flat_map(mapper).limit(1).collect(to_list())
+    result = await Stream([5]).flat_map(mapper).limit(1).collect(to_list())
 
     # then
     assert result == [0]
@@ -88,7 +88,7 @@ async def test_flat_map_still_closes_inner_generator_on_normal_exhaustion() -> N
         return Stream(tracked_inner(n))
 
     # when
-    result = await Stream.of([2, 3]).flat_map(mapper).collect(to_list())
+    result = await Stream([2, 3]).flat_map(mapper).collect(to_list())
 
     # then
     assert result == [0, 1, 0, 1, 2]
@@ -99,7 +99,7 @@ async def test_flat_map_still_closes_inner_generator_on_normal_exhaustion() -> N
 async def test_flat_map_async_function() -> None:
     # when
     try:
-        Stream.of([[1, 2], [3, 4], 5]).flat_map(async_flat_map).collect(to_generator)
+        Stream([[1, 2], [3, 4], 5]).flat_map(async_flat_map).collect(to_generator)
     except StreamBuildException:
         pass
     else:

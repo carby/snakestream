@@ -28,23 +28,23 @@ mapped values and `sum`/`min`/`max` to `float`, mirroring the existing
 family.
 
 #### Scenario: Summary statistics over mapped values
-- **WHEN** `Stream.of(["a", "bb", "ccc"]).collect(summarizing_int(len))` is called
+- **WHEN** `Stream(["a", "bb", "ccc"]).collect(summarizing_int(len))` is called
 - **THEN** the result's `count` is `3`, `sum` is `6`, `min` is `1`, `max` is `3`, and `average` is `2.0`
 
 #### Scenario: summarizing_long behaves identically to summarizing_int
-- **WHEN** `Stream.of([1, 2, 3]).collect(summarizing_long(lambda x: x))` is called
-- **THEN** the result equals `Stream.of([1, 2, 3]).collect(summarizing_int(lambda x: x))`'s result
+- **WHEN** `Stream([1, 2, 3]).collect(summarizing_long(lambda x: x))` is called
+- **THEN** the result equals `Stream([1, 2, 3]).collect(summarizing_int(lambda x: x))`'s result
 
 #### Scenario: summarizing_double coerces to float
-- **WHEN** `Stream.of([1, 2, 3]).collect(summarizing_double(lambda x: x))` is called
+- **WHEN** `Stream([1, 2, 3]).collect(summarizing_double(lambda x: x))` is called
 - **THEN** the result's `sum`, `min`, and `max` are all `float` (`6.0`, `1.0`, `3.0`)
 
 #### Scenario: Async mapper is awaited
-- **WHEN** `Stream.of([1, 2, 3]).collect(summarizing_int(async_double))` is called with an async mapper doubling its input
+- **WHEN** `Stream([1, 2, 3]).collect(summarizing_int(async_double))` is called with an async mapper doubling its input
 - **THEN** the result's `sum` is `12`
 
 #### Scenario: Empty stream yields a zeroed summary with no min/max
-- **WHEN** `Stream.of([]).collect(summarizing_int(len))` is called
+- **WHEN** `Stream([]).collect(summarizing_int(len))` is called
 - **THEN** the result's `count` is `0`, `sum` is `0`, `min` is `None`, `max` is `None`, and `average` is `0.0`
 
 ### Requirement: `summarizing_int()` and `summarizing_long()` declare `UNORDERED`
