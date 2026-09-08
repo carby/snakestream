@@ -1,10 +1,11 @@
 +++
 id = "unset-dual-role"
 title = "`UNSET` is two sentinels wearing one name"
-bucket = "later"
-rank = 4
+bucket = "now"
+rank = 2
 filed = 2026-09-06
-blocked_on = "whether an accumulation seed and an omitted argument are the same concept here, or coincide in one place and are conflated in the rest"
+updated = 2026-09-08
+gate = "two named sentinels, with `reduce()`'s single translating line the only place they meet — and `grouping_by()` naming arity as arity"
 
 [refs]
 specs = ["reduce-without-identity", "collector-reducing"]
@@ -41,3 +42,10 @@ neighbourhood.
 *Blocked on the decision, not on effort* — the work is small either way. It also
 gates its sibling: where `UNSET` belongs depends on whether it is one concept or
 two, which is why `sink-sentinel-placement` sits behind this one.
+
+**Unblocked 2026-09-08: split.** Two sentinels — `MISSING` for arity dispatch,
+`UNSET` for the unseeded fold. The coincidence in `Stream.reduce()` is real but
+pays for itself only once, and one translating line there is cheaper than three
+places where a reader has to infer the meaning from the neighbourhood. This
+also settles [`sink-sentinel-placement`](sink-sentinel-placement.md), which now
+places two names of two kinds rather than one name of ambiguous kind.

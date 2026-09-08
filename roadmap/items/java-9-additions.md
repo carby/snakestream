@@ -2,7 +2,7 @@
 id = "java-9-additions"
 title = "Java 9 additions — six, not four"
 bucket = "later"
-rank = 2
+rank = 1
 filed = 2026-08-20
 updated = 2026-09-05
 blocked_on = "whether Java 9 becomes a tracked parity effort, gets cherry-picked for independent merit, or stays opportunistic with Java 8 as the destination"
