@@ -160,13 +160,21 @@ silence to interpret. The leftmost column has three states:
 | | ~~`name(...)`~~ | Deliberately skipped. The summary says why. |
 | | `name(...)` | Not yet implemented, and a genuine parity gap. The summary says what it would take and points at its `roadmap/` entry. |
 
-The tables cover `Stream` and `BaseStream` only. `IntStream`, `LongStream`,
-`DoubleStream` and `StreamSupport` are skipped wholesale, for the reason
-`map_to_int()`'s row below gives: they exist in Java to avoid autoboxing
-primitives and to expose numeric-only operations a generic `Stream<T>` cannot
-offer, and Python numbers are already objects with no boxing cost. Every
-primitive-specialization skip row in the tables is a consequence of that one
-decision rather than an independent judgement.
+The tables cover `Stream` and `BaseStream` only. `IntStream`, `LongStream` and
+`DoubleStream` are skipped wholesale, for the reason `map_to_int()`'s row below
+gives: they exist in Java to avoid autoboxing primitives and to expose
+numeric-only operations a generic `Stream<T>` cannot offer, and Python numbers
+are already objects with no boxing cost. Every primitive-specialization skip row
+in the tables is a consequence of that one decision rather than an independent
+judgement.
+
+`StreamSupport` is skipped too, but only six of its eight statics fall to that
+same reason — the `intStream`/`longStream`/`doubleStream` pairs. The two generic
+`stream(Spliterator, boolean)` overloads do not, and they are the ones that turn
+a `Spliterator` back into a stream. `spliterator()` exists here and that return
+trip does not, which is a real gap rather than a primitive-specialization
+consequence; it is tracked in [`roadmap/`](roadmap/) as `spliterator-round-trip`
+rather than settled here.
 
 ### Stream
 

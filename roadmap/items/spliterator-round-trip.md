@@ -69,9 +69,10 @@ parity home for the normalizing constructor and rejected three times over:
 - **The wholesale skip is only partly wrong about it.** `StreamSupport` has eight
   statics; six are `intStream`/`longStream`/`doubleStream` overloads that the
   stated autoboxing reason genuinely covers. Only the two generic `stream(...)`
-  overloads borrow a reason that does not fit. That is a one-sentence wording fix
-  in README's wholesale-skip paragraph, still outstanding, and small enough to
-  ride along with whichever answer above is chosen.
+  overloads borrow a reason that does not fit. **Corrected in README's
+  wholesale-skip paragraph 2026-09-08**, which now separates the six from the two
+  and points here for the two; the paragraph no longer needs revisiting whichever
+  answer above is chosen.
 - **`Stream(source)` is not `StreamSupport.stream()`.** Java's takes a
   `Spliterator` plus a parallel flag. `Stream(source)` takes anything at all, does
   not accept a `Spliterator`, and the parallel flag is `.parallel()`, a separate
