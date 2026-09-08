@@ -1,11 +1,11 @@
 +++
 id = "sink-sentinel-placement"
 title = "`UNSET` and `unseeded()` sit in `sink.py` on rejected reasoning"
-bucket = "later"
-rank = 5
+bucket = "now"
+rank = 3
 filed = 2026-09-03
 updated = 2026-09-08
-blocked_on = "whether `UNSET` stays one sentinel or becomes two — a two-symbol concern module and a one-sentinel-plus-one-rule module are different judgements"
+gate = "a home ruled *in* by what the names are siblings of, rebuilt from the actual import graph rather than from the stale comment — and sequenced after `unset-dual-role`, which decides how many names there are"
 
 [refs]
 changes = ["extract-encounter-order-model", "name-by-visibility-not-underscore"]
@@ -58,3 +58,11 @@ available while `UNSET` remains a single sentinel — which is what
 
 No spec in `openspec/specs/` names either symbol, so whatever lands is a
 zero-delta refactor needing `skip_specs: true`.
+
+**Unblocked 2026-09-08 by its gate.** [`unset-dual-role`](unset-dual-role.md)
+was decided as a **split**, so this item now places a `MISSING` arity sentinel
+and an `UNSET`/`unseeded()` fold pair rather than one sentinel of two minds.
+That removes the third option above — leaving both in place and fixing
+`sink.py`'s docstring was available only while `UNSET` stayed a single
+sentinel, and it no longer is. Sequence this after the split; placing names
+whose count is about to change would be work done twice.
