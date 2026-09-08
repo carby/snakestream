@@ -183,6 +183,23 @@ def test_concat_does_not_pick_up_handlers_registered_after_concat(mocker) -> Non
     late_handler.assert_not_called()
 
 
+def test_registering_on_the_concatenation_does_not_affect_an_operand(mocker) -> None:
+    late_handler = mocker.Mock()
+
+    a = Stream([1, 2])
+    b = Stream([3, 4])
+
+    # when: a handler goes on the concatenation, not an operand
+    concatenated = Stream.concat(a, b)
+    concatenated.on_close(late_handler)
+    a.close()
+
+    # then: this fails if _concatenate() aliased a's handler list rather than
+    # building a new one, since the concatenation's append would then land on
+    # a's list too
+    late_handler.assert_not_called()
+
+
 def test_concat_raising_handler_on_a_does_not_skip_bs_handler(mocker) -> None:
     bad_a = mocker.Mock(side_effect=ValueError("boom"))
     good_b = mocker.Mock()
@@ -223,6 +240,17 @@ async def test_concat_is_parallel_when_only_one_operand_is() -> None:
 @pytest.mark.asyncio
 async def test_concat_of_two_sequential_streams_is_sequential() -> None:
     assert Stream.concat(Stream([1, 2, 3]), Stream([4, 5])).is_parallel() is False
+
+
+@pytest.mark.asyncio
+async def test_concat_of_two_parallel_unordered_operands_is_still_parallel() -> None:
+    # mode and ordering asserted together: this fails if _concatenate() assigns
+    # _executor after the .unordered() derive rather than before, since
+    # _derive() copies _executor by value and the assignment would then land
+    # on the already-consumed receiver and be lost (design.md Decision 4)
+    c = Stream.concat(Stream([1, 2, 3]).parallel().unordered(), Stream([4, 5]).parallel().unordered())
+    assert c.is_parallel() is True
+    assert c._is_ordered() is False
 
 
 @pytest.mark.asyncio

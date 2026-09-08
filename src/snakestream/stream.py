@@ -129,11 +129,11 @@ _CARDINALITY_CHANGING_OPS = (FilterOp, FlatMapOp, DistinctOp, LimitOp, SkipOp)
 
 
 class Stream[T]:
-    def __init__(self, source: Any, close_handlers: list[CloseHandler] | None = None) -> None:
+    def __init__(self, source: Any) -> None:
         self._size_hint: int | None = _estimate_size(source)
         self._source: AsyncGenerator[T] = _accept(source) or _normalize(source)
         self._chain: list[Op] = []
-        self._close_handlers: list[CloseHandler] = [] if close_handlers is None else close_handlers
+        self._close_handlers: list[CloseHandler] = []
         self._consumed: bool = False
         self._executor: Executor = SEQUENTIAL
 
@@ -259,9 +259,10 @@ class Stream[T]:
         pipeline plus a mode switch - so a subclass wrapping an I/O resource,
         which is the use case CLAUDE.md documents, acquired one resource per
         stage and kept the last. It also silently required every subclass to
-        accept (source, close_handlers) positionally, with an already-normalized
-        AsyncGenerator first, which is not how anyone would write that subclass:
-        `DsnStream(dsn)` raised TypeError on its first intermediate op.
+        accept the base class's constructor parameters positionally, with an
+        already-normalized AsyncGenerator first, which is not how anyone would
+        write that subclass: `DsnStream(dsn)` raised TypeError on its first
+        intermediate op.
 
         Java has neither problem because its derived stages are an internal
         type holding no resource, and Stream is an interface nobody subclasses.
@@ -281,6 +282,40 @@ class Stream[T]:
         new_stream._executor = executor or self._executor
         self._consumed = True
         return new_stream
+
+    def _concatenate(self, a: Stream[T], b: Stream[T]) -> Stream[T]:
+        """Fills in what a parentless stream owes the two operands it was
+        assembled from, neither of which is its parent - the shape `concat()`
+        alone needs, since every other stream either comes from a source with
+        no context to inherit (`Stream(source)`) or from one parent, whose
+        context `_derive()` copies. `_derive()` and this are the only two
+        internal ways a stream comes into being, which is why they sit next to
+        each other here rather than ~200 lines apart.
+
+        Sets the two assignable pieces - handlers and executor - by direct
+        assignment, then returns the ordering derive `.unordered()` needs to
+        happen through, since ordering is positional rather than assignable and
+        has to occupy a place in the chain (see `concat()`'s own docstring).
+        That derive is why this returns a stream instead of mutating in place:
+        `.unordered()` consumes its receiver like every other operation, so the
+        result has to be handed onward rather than reflected back into `self`.
+
+        The executor assignment happens BEFORE the derive, not after: `_derive()`
+        copies `_executor` by value, so an executor set on `self` after
+        `.unordered()` has already derived the next stage would sit on the
+        now-consumed receiver and be silently lost. `_close_handlers` would
+        survive either ordering, being shared by reference rather than copied -
+        which is what makes getting this backwards dangerous rather than merely
+        wrong: half the inherited state would carry and half would not, and the
+        half that would not is mode, which no close-handler test would catch.
+
+        Consuming `self` here is safe only because `self` is the stream
+        `concat()` just constructed and has not yet handed to any caller;
+        `pipeline-immutability` protects a caller's reference, and there is no
+        such reference yet for this receiver to invalidate."""
+        self._close_handlers = a._close_handlers + b._close_handlers
+        self._executor = FORK_JOIN if a.is_parallel() or b.is_parallel() else SEQUENTIAL
+        return self if (a._is_ordered() and b._is_ordered()) else self.unordered()
 
     async def _evaluate(self, terminal: TerminalSink[Any], demand: OrderDemand) -> Any:
         """The chain driven into a terminal sink. The one place a stream's
@@ -447,11 +482,7 @@ class Stream[T]:
         next reader to guess it was one."""
         # eager: the argument expressions run here, so an already-extended
         # operand raises at call time rather than at the first pull.
-        new_stream = _concat(a.iterator(), b.iterator())
-        concatenated = Stream(new_stream, a._close_handlers + b._close_handlers)
-        concatenated._executor = FORK_JOIN if a.is_parallel() or b.is_parallel() else SEQUENTIAL
-        if not (a._is_ordered() and b._is_ordered()):
-            concatenated = concatenated.unordered()
+        concatenated = Stream(_concat(a.iterator(), b.iterator()))._concatenate(a, b)
         a._consumed = b._consumed = True
         return concatenated
 

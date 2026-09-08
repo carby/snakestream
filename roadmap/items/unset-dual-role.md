@@ -2,7 +2,7 @@
 id = "unset-dual-role"
 title = "`UNSET` is two sentinels wearing one name"
 bucket = "now"
-rank = 2
+rank = 1
 filed = 2026-09-06
 updated = 2026-09-08
 gate = "two named sentinels, with `reduce()`'s single translating line the only place they meet — and `grouping_by()` naming arity as arity"

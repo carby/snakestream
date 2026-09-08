@@ -106,18 +106,10 @@ def test_close_with_no_handlers_is_a_noop() -> None:
     stream.close()
 
 
-@pytest.mark.asyncio
-async def test_construct_with_initial_close_handlers(mocker, int_2_letter) -> None:
-    mock_callback = mocker.Mock()
-
-    stream = Stream([1, 2, 3], [mock_callback])
-    await stream.collect(to_list())
-
-    # when
-    stream.close()
-
-    # then
-    mock_callback.assert_called_once()
+def test_a_handler_argument_is_rejected() -> None:
+    # when / then: the constructor takes a source and nothing else
+    with pytest.raises(TypeError):
+        Stream([1, 2, 3], [lambda: None])
 
 
 def test_close_runs_remaining_handlers_after_one_raises(mocker) -> None:
