@@ -51,6 +51,15 @@ if TYPE_CHECKING:
     from snakestream.stream_builder import StreamBuilder
 
 
+# Sentinel for "argument omitted", used only to detect which of reduce()'s
+# slots the caller supplied. Distinct from sink.py's UNSET, which means "no
+# value yet" for an unseeded fold: every `is _MISSING` test here compares
+# against a default this module wrote for this function, so its identity
+# never needs to cross a module boundary. See design Decision 1 of
+# split-arity-and-seed-sentinels.
+_MISSING = object()
+
+
 async def _normalize(source: Any) -> AsyncGenerator:
     # The scalar set, and the complete set of exceptions to the spreading
     # below. It stays first in the ladder so a bytearray never reaches the
@@ -587,12 +596,34 @@ class Stream[T]:
     @overload
     async def reduce(self, identity: R, accumulator: Accumulator[T, R], combiner: BinaryOperator[R]) -> R: ...
 
-    async def reduce(self, identity: Any = UNSET, accumulator: Any = UNSET, combiner: Any = UNSET) -> Any:
-        if accumulator is UNSET:
+    async def reduce(self, identity: Any = _MISSING, accumulator: Any = _MISSING, combiner: Any = _MISSING) -> Any:
+        # Dispatch tests which slots are unsupplied, not the leading one, so a
+        # keyword-spelled call behaves identically to its positional spelling
+        # (design Decision 2 of split-arity-and-seed-sentinels). The shift
+        # fires only in a state a positional call could actually produce -
+        # accumulator and combiner both empty; a keyword call that filled
+        # combiner without accumulator (reduce(identity=5, combiner=g)) must
+        # not be reinterpreted as if identity had been written positionally.
+        # reduce(identity=5) alone is NOT distinguished from reduce(5) - both
+        # bind identically, and rejecting one would reject the other.
+        if accumulator is _MISSING and combiner is _MISSING:
             # Called as reduce(accumulator): the single positional arg is the
             # accumulator, and the identity is seeded from the stream itself.
-            identity, accumulator = UNSET, identity
-        # combiner is UNSET for both the one- and two-argument forms, and
+            identity, accumulator = _MISSING, identity
+        if accumulator is _MISSING:
+            raise StreamBuildException(
+                "reduce() requires an accumulator: reduce(accumulator), "
+                "reduce(identity, accumulator) or reduce(identity, accumulator, combiner)"
+            )
+        if combiner is not _MISSING and identity is _MISSING:
+            raise StreamBuildException("reduce() with a combiner also requires an identity")
+        if identity is _MISSING:
+            # THE one place the two sentinels meet: no identity was supplied,
+            # so the fold is unseeded and starts from the stream's own first
+            # element - the same rule ReduceSink.accept() applies when its
+            # container is UNSET.
+            identity = UNSET
+        # combiner is _MISSING for both the one- and two-argument forms, and
         # None is what ReduceSink.can_partition() reads as "not supplied" -
         # arity alone decides which overload this call is, exactly as it
         # already did between one and two arguments.
@@ -601,7 +632,7 @@ class Stream[T]:
         # here, so the fold is over encounter order or it is over nothing;
         # a supplied combiner carries its own contract instead, stated on
         # parallel-reduction rather than here.
-        reduce_combiner = None if combiner is UNSET else combiner
+        reduce_combiner = None if combiner is _MISSING else combiner
         return await self._evaluate(ReduceSink(identity, accumulator, reduce_combiner), OrderDemand.IF_ORDERED)
 
     async def for_each(self, consumer: Consumer[T]) -> None:

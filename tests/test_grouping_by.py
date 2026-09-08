@@ -208,6 +208,49 @@ def test_grouping_by_with_a_map_factory_clears_the_mark() -> None:
     assert Characteristics.UNORDERED not in grouping_by(len, OrderedDict, to_set()).characteristics
 
 
+@pytest.mark.asyncio
+async def test_grouping_by_downstream_by_keyword_selects_two_argument_form() -> None:
+    # when
+    result = await Stream([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2, downstream=counting()))
+
+    # then
+    assert result == {1: 3, 0: 2}
+    assert type(result) is dict
+
+
+def test_grouping_by_keyword_downstream_still_derives_unordered() -> None:
+    # given the keyword-spelled two-argument form, whose supplied_factory must
+    # be read after the shift (design Decision 2) - getting it wrong here
+    # would silently change whether the collector declares UNORDERED
+    assert Characteristics.UNORDERED in grouping_by(len, downstream=to_set()).characteristics
+
+
+@pytest.mark.asyncio
+async def test_grouping_by_classifier_by_keyword_selects_one_argument_form() -> None:
+    # when
+    result = await Stream([1, 2, 3, 4, 5]).collect(grouping_by(classifier=lambda x: x % 2))
+
+    # then
+    assert result == {1: [1, 3, 5], 0: [2, 4]}
+
+
+@pytest.mark.asyncio
+async def test_grouping_by_map_factory_and_downstream_by_keyword_selects_three_argument_form() -> None:
+    # when
+    result = await Stream([1, 2, 3, 4, 5]).collect(
+        grouping_by(lambda x: x % 2, map_factory=OrderedDict, downstream=counting())
+    )
+
+    # then
+    assert isinstance(result, OrderedDict)
+    assert result == {1: 3, 0: 2}
+
+
+def test_grouping_by_map_factory_without_downstream_is_rejected() -> None:
+    with pytest.raises(StreamBuildException):
+        grouping_by(lambda x: x % 2, map_factory=dict)
+
+
 def test_grouping_by_clears_the_mark_even_for_dict() -> None:
     """The exclusion follows from map_factory being supplied at all, not from
     the type it produces - deciding from the type would mean running a

@@ -31,6 +31,15 @@ from snakestream.type import (
 )
 
 
+# Sentinel for "argument omitted", used only to detect which of reducing()'s
+# and grouping_by()'s slots the caller supplied. Distinct from sink.py's
+# UNSET, which means "no value yet" for an unseeded fold: every `is _MISSING`
+# test here compares against a default this module wrote for this function,
+# so its identity never needs to cross a module boundary. See design
+# Decision 1 of split-arity-and-seed-sentinels.
+_MISSING = object()
+
+
 # The mark the order-blind factories below declare. Named once so the reason
 # lives in one place: UNORDERED here means "any two orderings of the same
 # elements collect to a result that compares equal", which is a claim about the
@@ -456,18 +465,47 @@ def reducing(
 ) -> Collector[T, Any, R]: ...  # pragma: no cover
 
 
-def reducing(identity: Any = UNSET, mapper: Any = UNSET, binary_operator: Any = UNSET) -> Any:
+def _dispatch_reducing(identity: Any, mapper: Any, binary_operator: Any) -> tuple[Any, Any, Any]:
+    # Dispatch tests which slots are unsupplied, not the leading one, so a
+    # keyword-spelled call behaves identically to its positional spelling
+    # (design Decision 2 of split-arity-and-seed-sentinels). The shift fires
+    # only in a state a positional call could actually produce: mapper alone
+    # supplied with identity empty (reducing(mapper=m)) can never come from a
+    # positional call, so it is left alone and falls through to the
+    # missing-binary_operator rejection below rather than being reinterpreted
+    # as the 2-argument form. reducing(identity=0, mapper=len) is NOT
+    # distinguished from reducing(0, len) - both bind identically, and
+    # rejecting one would reject the other too.
+    if binary_operator is _MISSING:
+        if mapper is _MISSING:
+            # Called as reducing(binary_operator): the single positional arg
+            # is the fold operator, with no identity and no element mapper.
+            identity, mapper, binary_operator = _MISSING, _MISSING, identity
+        elif identity is not _MISSING:
+            # Called as reducing(identity, binary_operator): the second
+            # positional arg is the fold operator, with no element mapper.
+            mapper, binary_operator = _MISSING, mapper
+    if binary_operator is _MISSING:
+        raise StreamBuildException(
+            "reducing() requires a binary_operator: reducing(binary_operator), "
+            "reducing(identity, binary_operator) or reducing(identity, mapper, binary_operator)"
+        )
+    if mapper is not _MISSING and identity is _MISSING:
+        raise StreamBuildException("reducing() with a mapper also requires an identity")
+    if mapper is _MISSING:
+        mapper = None
+    if identity is _MISSING:
+        # THE one place the two sentinels meet: no identity was supplied, so
+        # the fold is unseeded and starts from the first accumulated value.
+        identity = UNSET
+    return identity, mapper, binary_operator
+
+
+def reducing(identity: Any = _MISSING, mapper: Any = _MISSING, binary_operator: Any = _MISSING) -> Any:
     """Implements the same UNSET-seed fold as terminals.py's ReduceSink. The
     duplication is deliberate and measured - see that sink's docstring - so a
     change to that seed rule belongs in both places."""
-    if mapper is UNSET:
-        # Called as reducing(binary_operator): the single positional arg is
-        # the fold operator, with no identity and no element mapper.
-        identity, mapper, binary_operator = UNSET, None, identity
-    elif binary_operator is UNSET:
-        # Called as reducing(identity, binary_operator): the second
-        # positional arg is the fold operator, with no element mapper.
-        mapper, binary_operator = None, mapper
+    identity, mapper, binary_operator = _dispatch_reducing(identity, mapper, binary_operator)
 
     def _supply() -> _ReduceBox:
         return _ReduceBox(identity)
@@ -686,8 +724,27 @@ async def _finish_groups(downstream: Collector[Any, Any, Any], groups: M) -> M:
     return groups
 
 
-def _check_downstream(downstream: Collector[Any, Any, Any]) -> None:
+def _check_downstream(downstream: Collector[Any, Any, Any], *, shifted: bool = False) -> None:
     if not isinstance(downstream, Collector):
+        if shifted:
+            # The second argument landed in map_factory's slot (Java puts
+            # map_factory second) but was never accompanied by a downstream,
+            # so it cannot be the three-argument form either. Name that
+            # unsatisfied form rather than reporting a downstream type error
+            # about an argument the caller may not have passed as downstream
+            # at all (design Decision 4 of split-arity-and-seed-sentinels).
+            # This message also fires for a genuinely positional 2-argument
+            # call with a bad second argument (grouping_by(f, 42)) - shifted
+            # is set whenever a value landed in this slot without a
+            # downstream to accompany it, and that state cannot tell the two
+            # calls apart. It is still an improvement over the old message
+            # there too, since it names the two forms rather than reporting a
+            # type error about a slot the caller may not have meant as
+            # downstream at all.
+            raise StreamBuildException(
+                "grouping_by() needs downstream to be a Collector for the two-argument form, "
+                "or map_factory together with downstream for the three-argument form"
+            )
         raise StreamBuildException("downstream must be a Collector")
 
 
@@ -726,27 +783,42 @@ def grouping_by(
 
 def grouping_by(
     classifier: Mapper[T, R],
-    map_factory: Any = UNSET,
-    downstream: Any = UNSET,
+    map_factory: Any = _MISSING,
+    downstream: Any = _MISSING,
 ) -> Collector[T, Any, Any]:
-    # The form is chosen by *arity*, never by inspecting an argument's type -
-    # the same dispatch reducing() uses above for the harder case where one
-    # position carries three different meanings. Java puts mapFactory second,
-    # and keeping it there costs nothing: a two-argument call can only be the
-    # two-argument form, so grouping_by(f, to_set()) still binds to downstream
-    # whatever to_set() happens to be. Sniffing isinstance(..., Collector)
-    # instead would misbind a hand-rolled Collector-lookalike, and arity needs
-    # no such judgement.
-    if downstream is UNSET:
+    # The form is chosen by *which slots were supplied*, never by inspecting
+    # an argument's type - the same dispatch reducing() uses above for the
+    # harder case where one position carries three different meanings. Java
+    # puts mapFactory second, and keeping it there costs nothing: a
+    # two-argument call can only be the two-argument form, so
+    # grouping_by(f, to_set()) still binds to downstream whatever to_set()
+    # happens to be. Sniffing isinstance(..., Collector) instead would
+    # misbind a hand-rolled Collector-lookalike, and arity needs no such
+    # judgement.
+    if downstream is _MISSING:
         # Called as grouping_by(classifier) or grouping_by(classifier,
-        # downstream): the second positional arg, if any, is the downstream,
-        # and the container is the default dict.
-        map_factory, downstream = dict, _TO_LIST if map_factory is UNSET else map_factory
+        # downstream): the second positional arg, if any, lands in
+        # map_factory's slot only because of Java's parameter order, and is
+        # really the downstream. A keyword call spelled
+        # grouping_by(classifier, map_factory=x) reaches this same state and
+        # is indistinguishable from that positional call - Python binds both
+        # the same way - so both are decided identically below, via
+        # shifted=True feeding _check_downstream() (design Decision 4 of
+        # split-arity-and-seed-sentinels).
+        shifted = map_factory is not _MISSING
+        downstream = map_factory if shifted else _TO_LIST
+        map_factory = dict
+        # supplied_factory is read after the shift, so it means "map_factory
+        # survived as supplied", not "three arguments were passed" (design
+        # Decision 2) - here it never does, since a survivor would have kept
+        # downstream out of _MISSING.
         supplied_factory = False
     else:
-        supplied_factory = True
+        supplied_factory = map_factory is not _MISSING
+        map_factory = dict if map_factory is _MISSING else map_factory
+        shifted = False
     # after the arity branch, so the 3-arg form rejects a non-Collector too
-    _check_downstream(downstream)
+    _check_downstream(downstream, shifted=shifted)
 
     # async unconditionally, for the reason to_map()'s supplier is: it runs once
     # per collection rather than per element, so one path beats a sync fast one.

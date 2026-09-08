@@ -3,6 +3,7 @@ import asyncio
 import pytest
 
 from snakestream.collectors import reducing
+from snakestream.exception import StreamBuildException
 from snakestream.stream import Stream
 
 
@@ -132,3 +133,66 @@ async def test_reducing_async_mapper_with_sync_binary_operator() -> None:
 
     # then
     assert result == 6
+
+
+@pytest.mark.asyncio
+async def test_reducing_no_identity_operator_by_keyword() -> None:
+    # when
+    result = await Stream([1, 2, 3]).collect(reducing(binary_operator=lambda a, b: a + b))
+
+    # then
+    assert result == 6
+
+
+@pytest.mark.asyncio
+async def test_reducing_identity_and_operator_by_keyword() -> None:
+    # when
+    result = await Stream([1, 2, 3]).collect(reducing(identity=10, binary_operator=lambda a, b: a + b))
+
+    # then
+    assert result == 16
+
+
+@pytest.mark.asyncio
+async def test_reducing_identity_positional_operator_by_keyword() -> None:
+    # when
+    result = await Stream([1, 2, 3]).collect(reducing(10, binary_operator=lambda a, b: a + b))
+
+    # then
+    assert result == 16
+
+
+@pytest.mark.asyncio
+async def test_reducing_all_three_by_keyword() -> None:
+    # when
+    result = await Stream(["a", "bb", "ccc"]).collect(reducing(identity=0, mapper=len, binary_operator=lambda a, b: a + b))
+
+    # then
+    assert result == 6
+
+
+@pytest.mark.asyncio
+async def test_reducing_falsy_identity_by_keyword_is_not_omitted() -> None:
+    # when
+    result = await Stream([1, 2, 3]).collect(reducing(identity=0, binary_operator=lambda a, b: a + b))
+
+    # then
+    assert result == 6
+
+
+def test_reducing_mapper_without_identity_is_rejected() -> None:
+    with pytest.raises(StreamBuildException):
+        reducing(mapper=len, binary_operator=lambda a, b: a + b)
+
+
+def test_reducing_mapper_alone_is_rejected() -> None:
+    # given a call unreachable positionally: mapper supplied with neither
+    # identity nor binary_operator - must not be reinterpreted as the
+    # 2-argument form and shifted into binary_operator
+    with pytest.raises(StreamBuildException):
+        reducing(mapper=len)
+
+
+def test_reducing_no_arguments_is_rejected() -> None:
+    with pytest.raises(StreamBuildException):
+        reducing()

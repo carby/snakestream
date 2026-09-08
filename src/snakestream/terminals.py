@@ -54,7 +54,7 @@ class ReduceSink(AsyncDispatch, UnseededSink[T]):
     means the no-identity overload: the first element seeds the fold instead,
     and an empty source finishes as None.
 
-    The UNSET-seed rule is implemented twice, here and in collector.py's
+    The UNSET-seed rule is implemented twice, here and in collectors.py's
     reducing(), which is deliberate and measured rather than an oversight:
     routing Stream.reduce() through reducing() cost +70% per element, because
     the collector form reaches its callables through classify_step and a

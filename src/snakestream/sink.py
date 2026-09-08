@@ -21,8 +21,8 @@ from snakestream.type import StateMap, T
 
 # Sentinel for "no value yet": distinguishes an unseeded reduction/accumulation
 # from one seeded with a legitimately falsy identity. Lives here rather than in
-# terminals.py or collector.py because both need it and neither may import the
-# other.
+# terminals.py or collectors.py because both need it and neither is downstream
+# of the other, so neither is a plausible host.
 UNSET = object()
 
 
