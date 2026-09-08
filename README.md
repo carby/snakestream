@@ -23,7 +23,7 @@ async def async_int_to_letter(x: int) -> str:
 
 
 async def main():
-    it = Stream.of([1, 3, 4, 5, 6]).filter(lambda n: 3 < n < 6).map(async_int_to_letter).collect(to_generator)
+    it = Stream([1, 3, 4, 5, 6]).filter(lambda n: 3 < n < 6).map(async_int_to_letter).collect(to_generator)
 
     async for x in it:
         print(x)
@@ -79,7 +79,7 @@ Stream<T> p = s.parallel();   // s == p, and s still usable
 Here it returns a new stream and consumes the receiver, so the second line leaves `s` raising `IllegalStateException`. That is the same derive-and-consume rule `map()`, `filter()` and every other intermediate operation follow, applied to mode switches as well — Java can return `this` only because the flag is mutable state on a stage, and this library keeps no mutable per-stream state to flip. Assign the result and use that:
 
 ```python
-s = Stream.of([1, 2, 3]).parallel()
+s = Stream([1, 2, 3]).parallel()
 count = await s.map(fetch).count()
 ```
 
@@ -90,14 +90,14 @@ Contextlib already supports something that is very similar to the AutoClose from
 ```python
 from contextlib import closing
 
-with closing(Stream.of([1, 2, 3, 4, 1, 2, 3, 4])) as stream:
+with closing(Stream([1, 2, 3, 4, 1, 2, 3, 4])) as stream:
     it = await stream.map(lambda x: int_2_letter[x]).distinct().collect(to_list())
 ```
 
 A `Stream` is itself a context manager, so `closing()` is optional — `with` on the stream directly does the same thing:
 
 ```python
-with Stream.of([1, 2, 3, 4, 1, 2, 3, 4]) as stream:
+with Stream([1, 2, 3, 4, 1, 2, 3, 4]) as stream:
     it = await stream.map(lambda x: int_2_letter[x]).distinct().collect(to_list())
 ```
 
@@ -119,7 +119,7 @@ with closing(DsnStream("db://x")) as stream:
 
 ### The generate() function
 
-In snakestream this has been omitted since python has generators and those can be sent in as a source with `Stream.of()`
+In snakestream this has been omitted since python has generators and those can be sent in as a source with `Stream(...)`
 
 ## Python's data model
 
@@ -140,6 +140,12 @@ Three of these are parity rather than expansion: Java's stream satisfies its own
 |   | ~~`__getitem__`~~ | Refused, and the one that could have worked — `s[10:20]` is lazy. Python synthesizes an iterator from `__getitem__` when `__iter__` is absent, so defining it would make `for x in stream` call `stream[0]`, get a `Stream` back, and loop forever. `.skip(10).limit(10)` is what Java offers and is clearer. |
 |   | ~~`__reversed__`~~ | Refused. A stream has no length and is single-pass. |
 |   | ~~`__eq__`~~ | Refused; identity comparison stands. Comparing contents would mean consuming both. |
+
+### Building a stream from a source
+
+`Stream(source)` is the normalizing constructor and the idiomatic way to build a stream from something you already have: a `List`, `Generator`, `AsyncGenerator`, `Iterator`, `AsyncIterator`, or a bare object. It spreads any of those into one element per item — `Stream([1, 2, 3])` is a stream of three elements — while `dict`, `str`, `bytes`, `bytearray` and `memoryview` values, and anything with neither `__iter__` nor `__next__`, are treated as a single scalar element instead. It is not new and not modified by anything in this README; it is the same constructor every `Stream(...)` call below already uses, called out here because it has no counterpart in the parity tables that follow.
+
+That absence is deliberate rather than an oversight. The tables are total over `Stream`, `BaseStream`, `Collectors` and `Comparator`, and `Stream(source)` is none of those — its closest Java counterparts, `Collection.stream()` and `Arrays.stream(T[])`, are methods on types this library does not have. `Stream.of(*args: T)` in the table below is the true parity row: it matches Java's `of(T...)` exactly, treating every argument as one element regardless of arity. Spreading a single iterable's items - what `Stream.of()` did through 0.3.5 - is `Stream(source)`, not `Stream.of(source)`.
 
 ## API
 
@@ -185,7 +191,7 @@ decision rather than an independent judgement.
 |   | ~~flat_map_to_long(flat_mapper: FlatMapper)~~ | Stream      | instance | Not relevant. The interpreter automatically handles larger than 32bit numbers. | 
 | x | for_each(consumer: Callable[T]) | Any                         | instance | Performs an action for each element of this stream | 
 | x | for_each_ordered(consumer: Callable[T]) | Any               | instance | Performs an action for each element of this stream, in the encounter order of the stream if the stream has a defined encounter order. A pipeline on which `unordered()` is in effect has none, so there it is equivalent to `for_each()`. Both cases run under the stream's own executor: an ordered `parallel()` pipeline still races every operation and only the invocation of `consumer` is ordered, so an operation queued *upstream* of this one is not ordered by it | 
-|   | ~~generate(supplier: Callable[T])~~           | Stream        | static   | Not relevant. We can send in generators directly to `Stream.of()` already|
+|   | ~~generate(supplier: Callable[T])~~           | Stream        | static   | Not relevant. We can send in generators directly as a `Stream(...)` source already|
 |   | ~~is_ordered()~~ | bool | instance | Not relevant. Java exposes exactly one piece of pipeline introspection, `isParallel()`; the ordering characteristic lives in the package-private `StreamOpFlag.ORDERED` and is never readable by a caller. A caller influences ordering through `unordered()` and `sorted()`, and observes it through what the order-sensitive terminals do — so there is no accessor to be at parity with. Was public through 0.3.5; see the migration log. |
 | x | is_parallel() | bool | instance | Returns whether this stream, if a terminal operation were to be executed, would execute in parallel |
 | x | iterate(seed: T, nxt: Mapper[T, T]) | Stream | static | Returns an infinite sequential ordered Stream produced by iterative application of a function f to an initial element seed, producing a Stream consisting of seed, f(seed), f(f(seed)), etc. `nxt` may be sync or async, like every other user-supplied callable. |
@@ -198,9 +204,9 @@ decision rather than an independent judgement.
 | x | max(comparator: Comparator)             | T \| None | instance | Returns the maximum element of this stream according to the provided Comparator, or `None` if the stream is empty. Of two elements that compare equal the first in **encounter order** wins, on an ordered pipeline under `parallel()` as well as sequentially — so the answer matches the sequential one. On a pipeline declared `unordered()` which of two tied elements is returned is unspecified, as in Java; supply a total comparator (`comparing(k).then_comparing(t)`) if you need determinism without the ordering barrier. |
 | x | min(comparator: Comparator)             | T \| None | instance | Returns the minimum element of this stream according to the provided Comparator, or `None` if the stream is empty. Same tie-break rule as `max()` above. |
 | x | none_match(predicate: Predicate)        | bool | instance | Returns whether no elements of this stream match the provided predicate. |
-| x | of(*args: T)                            | Stream | static | Returns a sequential ordered stream whose elements are the specified values. **Diverges from Java, and the divergence is the primary documented idiom:** called with a *single* iterable argument it spreads that iterable, so `Stream.of([1, 2, 3])` is a stream of three elements — the form used throughout this README and the one `iterate()` is built on. Called with two or more arguments each is one element, so `Stream.of([1, 2], [3, 4])` is a stream of two lists. Java's `of(T...)` treats every argument atomically and has a separate one-argument `of(T)` overload; here the arity decides, and there is currently no way to express a stream of exactly one iterable. The scalar set (`dict`, `str`, `bytes`, `bytearray`, `memoryview`) is never spread whatever the arity — see the Migration entries below |
+| x | of(*args: T)                            | Stream | static | Returns a sequential ordered stream whose elements are the specified values, matching Java's `of(T...)`: every argument is one element, atomically, whatever its arity — `Stream.of([1, 2, 3])` is a stream of one element, the list. See [Building a stream from a source](#building-a-stream-from-a-source) for spreading a single iterable into its items. |
 | x | on_close(close_handler: CloseHandler) | Stream | instance | Registers a callable to run when `close()` is called, matching Java's `BaseStream.onClose()`. Unlike every intermediate operation, this mutates the receiver and returns it, and works on a consumed reference. The handler list is shared across every stage derived from one source, so one `close()` releases the resource once. |
-|   | ~~ordered()~~   | Stream   | instance | Does not exist in Java, and so is not missing here. Ordering is not something a caller turns on: it is a spliterator characteristic (`ORDERED`) contributed by the **source** — every snakestream source constructor produces an ordered stream, as `Stream.of()`, a `List` and `iterate()` do in Java — and from there it is only ever cleared by `unordered()` (`NOT_ORDERED`) or re-imposed by an op that defines an order, `sorted()` (`IS_ORDERED`). `BaseStream` therefore has `unordered()` and no counterpart, and `sorted()` already covers restoring what `unordered()` cleared. |
+|   | ~~ordered()~~   | Stream   | instance | Does not exist in Java, and so is not missing here. Ordering is not something a caller turns on: it is a spliterator characteristic (`ORDERED`) contributed by the **source** — every snakestream source constructor (`Stream(...)`, `Stream.of()`, `iterate()`) produces an ordered stream, as `Stream.of()`, a `List` and `iterate()` do in Java — and from there it is only ever cleared by `unordered()` (`NOT_ORDERED`) or re-imposed by an op that defines an order, `sorted()` (`IS_ORDERED`). `BaseStream` therefore has `unordered()` and no counterpart, and `sorted()` already covers restoring what `unordered()` cleared. |
 | x | parallel()     | Stream   | instance | Returns an equivalent stream that will execute in parallel. Applies to the **whole** pipeline, not only the operations declared after it, matching Java; the last mode switch before a terminal operation is the one that governs. **Consumes the receiver**, unlike Java's `parallel()`, which sets a flag on the source stage and returns `this` — use the returned stream, since the one it was called on now raises `IllegalStateException` ([see above](#about-parallel)). An ordered pipeline still delivers in encounter order: every operation runs concurrently across batches and only the handing of finished elements to the terminal is put back in order, as in Java. An operation that depends on position (`sorted`, `limit`, `skip`, `distinct`) likewise gets encounter order where the pipeline is ordered at that operation. Declaring `unordered()` opts out of both and is the faster path; terminals that observe nothing about order (`count()`, `for_each()`, `find_any()`, the `*_match()` family) pay nothing either way. `max()`/`min()` do observe it — their *value* is the same in any order but which of two tied elements they return is not — so on an ordered pipeline they take the delivery barrier too, and `unordered()` releases them from it |
 | x | peek(self, consumer: Consumer)          | Stream | instance | Returns a stream consisting of the elements of this stream, additionally performing the provided action on each element as elements are consumed from the resulting stream. |
 | x | reduce(identity: T \| R, accumulator: Accumulator) | T \| R | instance | Performs a reduction on the elements of this stream, using the provided identity value and an associative accumulation function, and returns the reduced value. |
@@ -219,7 +225,7 @@ decision rather than an independent judgement.
 
 `Collector` and `StreamingCollector` live in `snakestream.collector`; every factory in the table below lives in `snakestream.collectors`, the same split Java draws between the `Collector` interface and the `Collectors` class that holds the factories.
 
-`Collector(supplier, accumulator, combiner=None, finisher=None, characteristics=frozenset())` is the type every factory below returns, mirroring Java's `Collector<T,A,R>`: `supplier()` creates a fresh accumulation container, `accumulator(container, element)` mutates it per element (sync or async; its return value is ignored), and `finisher(container)` converts the finished container into the result, or the container itself is the result if `finisher` is omitted. `combiner(container, container)` merges two partial containers into one, left-biased in batch order, and is invoked under `.parallel()` wherever the collector supplies one and the source spans more than one batch (`parallel-reduction`); a collector with no `combiner` is never partitioned, and folds into a single container exactly as every collector did before this. `characteristics` is a `Characteristics` set - data, not a callable, so it is neither invoked nor awaited - defaulting to empty, so every existing `Collector(...)` call is unaffected. A `Collector` instance holds no other per-collection state, so the instance one of these factories returns is safe to reuse across streams and across concurrent collections. You can construct one directly for a custom reduction: `Stream.of([1, 2, 3]).collect(Collector(list, lambda c, e: c.append(e)))`.
+`Collector(supplier, accumulator, combiner=None, finisher=None, characteristics=frozenset())` is the type every factory below returns, mirroring Java's `Collector<T,A,R>`: `supplier()` creates a fresh accumulation container, `accumulator(container, element)` mutates it per element (sync or async; its return value is ignored), and `finisher(container)` converts the finished container into the result, or the container itself is the result if `finisher` is omitted. `combiner(container, container)` merges two partial containers into one, left-biased in batch order, and is invoked under `.parallel()` wherever the collector supplies one and the source spans more than one batch (`parallel-reduction`); a collector with no `combiner` is never partitioned, and folds into a single container exactly as every collector did before this. `characteristics` is a `Characteristics` set - data, not a callable, so it is neither invoked nor awaited - defaulting to empty, so every existing `Collector(...)` call is unaffected. A `Collector` instance holds no other per-collection state, so the instance one of these factories returns is safe to reuse across streams and across concurrent collections. You can construct one directly for a custom reduction: `Stream([1, 2, 3]).collect(Collector(list, lambda c, e: c.append(e)))`.
 
 `characteristics` is a declaration a collector makes about itself, not an instruction any operation performs. `collect()` is its only reader: under `parallel()` it reads `UNORDERED` to decide whether the collector is owed a reorder barrier. `UNORDERED` promises that any two orderings of the same elements collect to an **equal** result - `==` on the result's own type - and promises nothing about the iteration order of that result.
 
@@ -321,6 +327,7 @@ These are a list of the known breaking changes. Until release 1.0.0 focus will b
 - **0.3.5 -> next (not breaking):** `comparing(key_extractor)` (`snakestream.comparator`) is added, matching Java's `Comparator.comparing(keyExtractor)`. It returns a `Comparator`, accepted anywhere one already is - `sorted()`, `min()`, `max()`, `min_by()`, `max_by()` - with no signature changes on any of them. `sorted()` recognizes it and extracts each element's key exactly once instead of once per comparison, which for an async key extractor is the difference between O(n) and O(n log n) awaits; every other comparator-consuming operation uses it as an ordinary `Comparator`. No existing comparator path changes. See `openspec/changes/add-comparator-comparing`.
 - **0.3.5 -> next (not breaking):** `then_comparing()` and `reversed()` are added to the value `comparing()` returns, matching Java's `Comparator.thenComparing`/`Comparator.reversed`, letting a chain express a multi-key ordering with per-key direction (e.g. "department ascending, salary descending") and async key extractors, which a hand-written tuple key cannot. Sorting extracts every segment's key exactly once per element, concurrently across segments. No existing comparator path changes; every `comparing(f)` call with no chaining reaches exactly the code it reached before. The previously-private `_KeyComparator` (`snakestream.comparator`) is renamed to public `KeyComparator` so the chaining methods are visible to `ty`; it had no callers outside `comparator.py` and `sort.py`. See `openspec/changes/add-comparator-chaining`.
 - **0.3.5 -> next (not breaking):** `nulls_first(comparator=None)` and `nulls_last(comparator=None)` (`snakestream.comparator`) are added, matching Java's `Comparator.nullsFirst`/`nullsLast`, so `sorted()`, `min()`, `max()`, `min_by()` and `max_by()` can be told where `None` goes instead of raising `TypeError`. They also tolerate a `None` *extracted key*, not only a `None` element - a case Java has no direct route to. Given a `KeyComparator`, the result keeps `sorted()`'s decorate-sort-undecorate fast path; given any other comparator, or none, the result is a plain wrapping comparator. Null tolerance is opt-in per comparator: every existing `comparing(f)` call, and every hand-written comparator, reaches exactly the code it reached before, and a stream containing `None` with no tolerant comparator still raises `TypeError`. See `openspec/changes/add-comparator-null-ordering`.
+- **0.3.5 -> next:** `Stream.of(*args)` is now atomic at every arity, matching Java's `of(T...)`. Every argument is one element, whatever it is: `Stream.of([1, 2])` used to spread the single list into two elements and now yields one element, the list itself; `Stream.of([1, 2], [3, 4])` was and remains a stream of two lists, since arity never spread a multi-argument call. **This break is silent** — results change, nothing raises. Callers relying on the old single-argument spreading behavior must switch from `Stream.of(x)` to `Stream(x)` for any iterable `x`; `Stream.iterate()` makes the same switch internally. See `openspec/changes/make-stream-of-atomic`.
 - **0.2.4 -> 0.3.0:** `stream_of()` has been removed in favour of `Stream.of()` for getting closer to the java api.
 - **0.1.0 -> 0.2.0:** The `unique()` function has been renamed `distinct()`. So rename all imports of that function, and it should be OK
 - **0.0.5 -> 0.0.6:** The `stream()` function has been renamed `stream_of()`. So rename all imports of that function, and it should be OK

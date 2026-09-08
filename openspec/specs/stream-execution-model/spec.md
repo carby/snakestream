@@ -20,11 +20,11 @@ subclass SHALL exist for the purpose of encoding execution mode.
 `is_parallel()` SHALL report the mode from that value.
 
 #### Scenario: A sequentially-built stream reports sequential
-- **WHEN** `Stream.of([1, 2, 3]).is_parallel()` is called
+- **WHEN** `Stream([1, 2, 3]).is_parallel()` is called
 - **THEN** the result is `False`
 
 #### Scenario: A parallel stream reports parallel
-- **WHEN** `Stream.of([1, 2, 3]).parallel().is_parallel()` is called
+- **WHEN** `Stream([1, 2, 3]).parallel().is_parallel()` is called
 - **THEN** the result is `True`
 
 #### Scenario: Intermediate operations carry the executor forward

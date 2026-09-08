@@ -17,7 +17,7 @@ class _SortedContainer:
 @pytest.mark.asyncio
 async def test_to_collection_builds_a_set() -> None:
     # when
-    result = await Stream.of([1, 2, 3]).collect(to_collection(set))
+    result = await Stream([1, 2, 3]).collect(to_collection(set))
 
     # then
     assert result == {1, 2, 3}
@@ -26,7 +26,7 @@ async def test_to_collection_builds_a_set() -> None:
 @pytest.mark.asyncio
 async def test_to_collection_supports_a_custom_container() -> None:
     # when
-    result = await Stream.of([3, 1, 2]).collect(to_collection(_SortedContainer))
+    result = await Stream([3, 1, 2]).collect(to_collection(_SortedContainer))
 
     # then
     assert result.items == [1, 2, 3]
@@ -38,8 +38,8 @@ async def test_to_collection_each_call_gets_its_own_container() -> None:
     collector = to_collection(set)
 
     # when
-    first = await Stream.of([1, 2]).collect(collector)
-    second = await Stream.of([3, 4]).collect(collector)
+    first = await Stream([1, 2]).collect(collector)
+    second = await Stream([3, 4]).collect(collector)
 
     # then
     assert first == {1, 2}
@@ -49,7 +49,7 @@ async def test_to_collection_each_call_gets_its_own_container() -> None:
 @pytest.mark.asyncio
 async def test_to_collection_empty_stream() -> None:
     # when
-    result = await Stream.of([]).collect(to_collection(set))
+    result = await Stream([]).collect(to_collection(set))
 
     # then
     assert result == set()

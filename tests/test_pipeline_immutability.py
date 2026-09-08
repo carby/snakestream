@@ -6,7 +6,7 @@ from snakestream.stream import Stream
 
 
 def _fresh_stream() -> Stream:
-    return Stream.of([1, 2, 3])
+    return Stream([1, 2, 3])
 
 
 INTERMEDIATE_OPS = [
@@ -127,7 +127,7 @@ def test_concat_with_an_already_extended_first_argument_raises() -> None:
     a = _fresh_stream()
     a.map(lambda x: x)  # extends a into a new instance, invalidating a
     pulled: list[int] = []
-    b = Stream.of([1, 2]).peek(pulled.append)
+    b = Stream([1, 2]).peek(pulled.append)
 
     with pytest.raises(IllegalStateException):
         Stream.concat(a, b)
@@ -137,7 +137,7 @@ def test_concat_with_an_already_extended_first_argument_raises() -> None:
 
 def test_concat_with_an_already_extended_second_argument_raises() -> None:
     pulled: list[int] = []
-    a = Stream.of([1, 2]).peek(pulled.append)
+    a = Stream([1, 2]).peek(pulled.append)
     b = _fresh_stream()
     b.map(lambda x: x)  # extends b into a new instance, invalidating b
 
@@ -151,7 +151,7 @@ def test_concat_with_an_already_extended_second_argument_raises() -> None:
 async def test_concat_with_a_merely_consumed_argument_does_not_raise() -> None:
     a = _fresh_stream()
     first = await a.collect(to_list())  # terminally consumes a, without extending it
-    b = Stream.of([4, 5])
+    b = Stream([4, 5])
 
     result = await Stream.concat(a, b).collect(to_list())
 
@@ -168,7 +168,7 @@ async def test_flat_map_returning_an_already_extended_stream_raises() -> None:
     inner.map(lambda x: x)  # extends inner into a new instance, invalidating it
 
     with pytest.raises(IllegalStateException):
-        await Stream.of([1]).flat_map(lambda _: inner).collect(to_list())
+        await Stream([1]).flat_map(lambda _: inner).collect(to_list())
 
 
 def test_close_succeeds_after_receiver_invalidated(mocker) -> None:

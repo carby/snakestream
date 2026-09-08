@@ -8,7 +8,7 @@ Defines the contract for `Stream.collect(supplier, accumulator, combiner)`, the 
 `Stream.collect()` SHALL accept an overload taking exactly three positional arguments — `supplier`, `accumulator`, `combiner` — as an alternative to the existing single-arg `collect(collector)` form. `supplier` SHALL be called with no arguments exactly once to produce a fresh mutable result container. `accumulator` SHALL be called once per element pulled from the composed stream, as `accumulator(container, element)`, folding that element into the container. The call SHALL return the container once the composed stream is exhausted. Both `supplier` and `accumulator` MAY be sync or async callables, dispatched consistently with every other user-supplied callable in the codebase (`_maybe_await`).
 
 #### Scenario: Sync supplier and accumulator build a list
-- **WHEN** `Stream.of([1, 2, 3]).collect(list, list.append, list.extend)` is called
+- **WHEN** `Stream([1, 2, 3]).collect(list, list.append, list.extend)` is called
 - **THEN** the result is `[1, 2, 3]`
 
 #### Scenario: Async supplier and accumulator are awaited
@@ -43,7 +43,7 @@ than as the new container, so an existing `list.extend`-style combiner
 requires no change now that `combiner` is live.
 
 #### Scenario: `combiner` is never called, sequential
-- **WHEN** `Stream.of([1, 2, 3]).collect(list, list.append, combiner)` is called with a `combiner` that records its own invocations
+- **WHEN** `Stream([1, 2, 3]).collect(list, list.append, combiner)` is called with a `combiner` that records its own invocations
 - **THEN** the result is `[1, 2, 3]` and `combiner` was never called
 
 #### Scenario: A combiner returning the merged container merges correctly, parallel

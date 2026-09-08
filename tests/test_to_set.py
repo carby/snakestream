@@ -7,7 +7,7 @@ from snakestream.stream import Stream
 @pytest.mark.asyncio
 async def test_to_set_builds_set_from_stream_elements() -> None:
     # when
-    result = await Stream.of([1, 2, 2, 3]).collect(to_set())
+    result = await Stream([1, 2, 2, 3]).collect(to_set())
 
     # then
     assert result == {1, 2, 3}
@@ -16,7 +16,7 @@ async def test_to_set_builds_set_from_stream_elements() -> None:
 @pytest.mark.asyncio
 async def test_to_set_empty_stream_returns_empty_set() -> None:
     # when
-    result = await Stream.of([]).collect(to_set())
+    result = await Stream([]).collect(to_set())
 
     # then
     assert result == set()

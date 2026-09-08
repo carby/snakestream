@@ -9,7 +9,7 @@ from snakestream.exception import StreamBuildException
 
 @pytest.mark.asyncio
 async def test_user_defined_collector_all_sync() -> None:
-    actual = await Stream.of([1, 2, 3]).collect(Collector(list, lambda c, e: c.append(e)))
+    actual = await Stream([1, 2, 3]).collect(Collector(list, lambda c, e: c.append(e)))
     assert actual == [1, 2, 3]
 
 
@@ -24,19 +24,19 @@ async def test_user_defined_collector_all_async() -> None:
     async def finisher(container: list) -> int:
         return len(container)
 
-    actual = await Stream.of([1, 2, 3]).collect(Collector(supplier, accumulator, finisher=finisher))
+    actual = await Stream([1, 2, 3]).collect(Collector(supplier, accumulator, finisher=finisher))
     assert actual == 3
 
 
 @pytest.mark.asyncio
 async def test_collector_without_finisher_returns_container() -> None:
-    actual = await Stream.of([1, 2, 3]).collect(Collector(list, lambda c, e: c.append(e)))
+    actual = await Stream([1, 2, 3]).collect(Collector(list, lambda c, e: c.append(e)))
     assert actual == [1, 2, 3]
 
 
 @pytest.mark.asyncio
 async def test_collector_finisher_changes_result_type() -> None:
-    actual = await Stream.of([1, 2, 3]).collect(Collector(list, lambda c, e: c.append(e), finisher=len))
+    actual = await Stream([1, 2, 3]).collect(Collector(list, lambda c, e: c.append(e), finisher=len))
     assert actual == 3
 
 
@@ -46,7 +46,7 @@ async def test_collector_accumulator_return_value_is_ignored() -> None:
         container.append(element)
         return "ignored"
 
-    actual = await Stream.of([1, 2, 3]).collect(Collector(list, accumulate))
+    actual = await Stream([1, 2, 3]).collect(Collector(list, accumulate))
     assert actual == [1, 2, 3]
 
 
@@ -64,15 +64,15 @@ class _SyncCallReturningCoroutineAccumulator:
 
 @pytest.mark.asyncio
 async def test_collector_accumulator_sync_call_returning_coroutine() -> None:
-    actual = await Stream.of([1, 2, 3]).collect(Collector(list, _SyncCallReturningCoroutineAccumulator()))
+    actual = await Stream([1, 2, 3]).collect(Collector(list, _SyncCallReturningCoroutineAccumulator()))
     assert actual == [1, 2, 3]
 
 
 @pytest.mark.asyncio
 async def test_collector_instance_reused_sequentially() -> None:
     collector = Collector(list, lambda c, e: c.append(e))
-    first = await Stream.of([1, 2, 3]).collect(collector)
-    second = await Stream.of([4, 5]).collect(collector)
+    first = await Stream([1, 2, 3]).collect(collector)
+    second = await Stream([4, 5]).collect(collector)
     assert first == [1, 2, 3]
     assert second == [4, 5]
 
@@ -81,8 +81,8 @@ async def test_collector_instance_reused_sequentially() -> None:
 async def test_collector_instance_reused_concurrently() -> None:
     collector = Collector(list, lambda c, e: c.append(e))
     first, second = await asyncio.gather(
-        Stream.of([1, 2, 3]).collect(collector),
-        Stream.of([4, 5, 6]).collect(collector),
+        Stream([1, 2, 3]).collect(collector),
+        Stream([4, 5, 6]).collect(collector),
     )
     assert first == [1, 2, 3]
     assert second == [4, 5, 6]
@@ -91,7 +91,7 @@ async def test_collector_instance_reused_concurrently() -> None:
 @pytest.mark.asyncio
 async def test_collector_instance_reused_on_parallel_stream() -> None:
     collector = Collector(list, lambda c, e: c.append(e))
-    actual = await Stream.of([1, 2, 3, 4]).parallel().collect(collector)
+    actual = await Stream([1, 2, 3, 4]).parallel().collect(collector)
     assert sorted(actual) == [1, 2, 3, 4]
 
 
@@ -101,7 +101,7 @@ async def test_collector_combiner_not_invoked_sequential() -> None:
         raise AssertionError("combiner must not be called")
 
     collector = Collector(list, lambda c, e: c.append(e), combiner=raising_combiner)
-    actual = await Stream.of([1, 2, 3]).collect(collector)
+    actual = await Stream([1, 2, 3]).collect(collector)
     assert actual == [1, 2, 3]
 
 
@@ -119,7 +119,7 @@ async def test_collector_combiner_invoked_parallel() -> None:
         return a
 
     collector = Collector(list, lambda c, e: c.append(e), combiner=combiner)
-    actual = await Stream.of(list(range(50))).parallel().collect(collector)
+    actual = await Stream(list(range(50))).parallel().collect(collector)
     assert sorted(actual) == list(range(50))
     assert calls > 0
 
@@ -134,7 +134,7 @@ async def test_collect_rejects_plain_callable() -> None:
         return [x async for x in composition]
 
     with pytest.raises(StreamBuildException):
-        await Stream.of([1, 2, 3]).collect(not_a_collector)
+        await Stream([1, 2, 3]).collect(not_a_collector)
     assert consumed is False
 
 
@@ -158,13 +158,13 @@ async def test_partitioning_by_rejects_non_collector_downstream() -> None:
 
 @pytest.mark.asyncio
 async def test_grouping_by_with_async_accumulator_downstream() -> None:
-    result = await Stream.of([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2, summing_int(lambda x: x)))
+    result = await Stream([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2, summing_int(lambda x: x)))
     assert result == {1: 9, 0: 6}
 
 
 @pytest.mark.asyncio
 async def test_collect_to_generator_is_not_awaited() -> None:
-    it = Stream.of([1, 2, 3]).collect(to_generator)
+    it = Stream([1, 2, 3]).collect(to_generator)
     assert [x async for x in it] == [1, 2, 3]
 
 
@@ -180,14 +180,14 @@ async def test_to_generator_directly_callable() -> None:
 
 @pytest.mark.asyncio
 async def test_grouping_by_downstream_containers_are_isolated() -> None:
-    result = await Stream.of([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2, to_list()))
+    result = await Stream([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2, to_list()))
     result[1].append(999)
     assert result[0] == [2, 4]
 
 
 @pytest.mark.asyncio
 async def test_partitioning_by_downstream_containers_are_isolated() -> None:
-    result = await Stream.of([1, 2, 3, 4, 5]).collect(partitioning_by(lambda x: x % 2 == 0, to_list()))
+    result = await Stream([1, 2, 3, 4, 5]).collect(partitioning_by(lambda x: x % 2 == 0, to_list()))
     result[True].append(999)
     assert result[False] == [1, 3, 5]
 
@@ -195,7 +195,7 @@ async def test_partitioning_by_downstream_containers_are_isolated() -> None:
 @pytest.mark.asyncio
 async def test_to_list_is_a_factory() -> None:
     # when
-    actual = await Stream.of([1, 2, 3]).collect(to_list())
+    actual = await Stream([1, 2, 3]).collect(to_list())
     # then
     assert actual == [1, 2, 3]
 
@@ -205,7 +205,7 @@ async def test_collect_rejects_the_bare_to_list_name() -> None:
     # given: to_list is a factory, so the bare name is a function, not a
     # Collector - the break is loud, by the same rule that rejects any other
     # plain callable
-    stream = Stream.of([1, 2, 3])
+    stream = Stream([1, 2, 3])
 
     # when / then
     with pytest.raises(StreamBuildException):
@@ -219,8 +219,8 @@ async def test_one_to_list_collector_is_reusable_across_collections() -> None:
     collector = to_list()
 
     # when
-    first = await Stream.of([1, 2, 3]).collect(collector)
-    second = await Stream.of([4, 5]).collect(collector)
+    first = await Stream([1, 2, 3]).collect(collector)
+    second = await Stream([4, 5]).collect(collector)
 
     # then
     assert first == [1, 2, 3]
@@ -230,7 +230,7 @@ async def test_one_to_list_collector_is_reusable_across_collections() -> None:
 @pytest.mark.asyncio
 async def test_grouping_by_default_downstream_still_builds_lists() -> None:
     # when
-    actual = await Stream.of([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2))
+    actual = await Stream([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2))
     # then
     assert actual == {1: [1, 3, 5], 0: [2, 4]}
 
@@ -238,7 +238,7 @@ async def test_grouping_by_default_downstream_still_builds_lists() -> None:
 @pytest.mark.asyncio
 async def test_partitioning_by_default_downstream_still_builds_lists() -> None:
     # when
-    actual = await Stream.of([1, 2, 3, 4]).collect(partitioning_by(lambda x: x % 2 == 0))
+    actual = await Stream([1, 2, 3, 4]).collect(partitioning_by(lambda x: x % 2 == 0))
     # then
     assert actual == {False: [1, 3], True: [2, 4]}
 
@@ -256,14 +256,14 @@ def test_characteristics_does_not_define_identity_finish_or_concurrent() -> None
 async def test_collector_without_characteristics_reports_empty_set() -> None:
     collector = Collector(list, lambda c, e: c.append(e))
     assert collector.characteristics == frozenset()
-    assert await Stream.of([1, 2, 3]).collect(collector) == [1, 2, 3]
+    assert await Stream([1, 2, 3]).collect(collector) == [1, 2, 3]
 
 
 @pytest.mark.asyncio
 async def test_collector_with_unordered_reports_it_and_collects_unchanged() -> None:
     collector = Collector(list, lambda c, e: c.append(e), characteristics=(Characteristics.UNORDERED,))
     assert collector.characteristics == frozenset({Characteristics.UNORDERED})
-    assert await Stream.of([1, 2, 3]).collect(collector) == [1, 2, 3]
+    assert await Stream([1, 2, 3]).collect(collector) == [1, 2, 3]
 
 
 def test_collector_characteristics_normalizes_list_to_frozenset() -> None:

@@ -11,7 +11,7 @@ async def test_close_simple(mocker, int_2_letter) -> None:
     mock_callback1 = mocker.Mock()
     mock_callback2 = mocker.Mock()
 
-    stream = Stream.of([1, 2, 3, 4, 1, 2, 3, 4])
+    stream = Stream([1, 2, 3, 4, 1, 2, 3, 4])
 
     it = (
         await stream.map(lambda x: int_2_letter[x])
@@ -40,7 +40,7 @@ async def test_close_after_stream_switch(mocker, int_2_letter) -> None:
     mock_callback1 = mocker.Mock()
     mock_callback2 = mocker.Mock()
 
-    stream = Stream.of([1, 2, 3, 4, 1, 2, 3, 4])
+    stream = Stream([1, 2, 3, 4, 1, 2, 3, 4])
 
     await (
         stream.map(lambda x: int_2_letter[x])
@@ -64,7 +64,7 @@ async def test_close_after_sequential_switch(mocker, int_2_letter) -> None:
     mock_callback1 = mocker.Mock()
     mock_callback2 = mocker.Mock()
 
-    stream = Stream.of([1, 2, 3, 4, 1, 2, 3, 4])
+    stream = Stream([1, 2, 3, 4, 1, 2, 3, 4])
 
     await (
         stream.map(lambda x: int_2_letter[x])
@@ -89,7 +89,7 @@ def test_close_invokes_handlers_in_registration_order(mocker) -> None:
     mock_callback1 = mocker.Mock(side_effect=lambda: calls.append("first"))
     mock_callback2 = mocker.Mock(side_effect=lambda: calls.append("second"))
 
-    stream = Stream.of([1, 2, 3])
+    stream = Stream([1, 2, 3])
     stream.on_close(mock_callback1).on_close(mock_callback2)
 
     # when
@@ -100,7 +100,7 @@ def test_close_invokes_handlers_in_registration_order(mocker) -> None:
 
 
 def test_close_with_no_handlers_is_a_noop() -> None:
-    stream = Stream.of([1, 2, 3])
+    stream = Stream([1, 2, 3])
 
     # when / then
     stream.close()
@@ -124,7 +124,7 @@ def test_close_runs_remaining_handlers_after_one_raises(mocker) -> None:
     bad = mocker.Mock(side_effect=ValueError("boom"))
     good = mocker.Mock()
 
-    stream = Stream.of([1, 2, 3])
+    stream = Stream([1, 2, 3])
     stream.on_close(bad).on_close(good)
 
     # when
@@ -140,7 +140,7 @@ def test_close_with_multiple_raising_handlers_runs_all_and_raises_first(mocker) 
     bad_a = mocker.Mock(side_effect=ValueError("first"))
     bad_b = mocker.Mock(side_effect=ValueError("second"))
 
-    stream = Stream.of([1, 2, 3])
+    stream = Stream([1, 2, 3])
     stream.on_close(bad_a).on_close(bad_b)
 
     # when
@@ -157,7 +157,7 @@ def test_close_with_three_raising_handlers_notes_the_other_two(mocker) -> None:
     bad_b = mocker.Mock(side_effect=ValueError("second"))
     bad_c = mocker.Mock(side_effect=ValueError("third"))
 
-    stream = Stream.of([1, 2, 3])
+    stream = Stream([1, 2, 3])
     stream.on_close(bad_a).on_close(bad_b).on_close(bad_c)
 
     # when
@@ -176,7 +176,7 @@ def test_close_with_three_raising_handlers_notes_the_other_two(mocker) -> None:
 def test_close_with_a_single_raising_handler_gains_no_notes(mocker) -> None:
     bad = mocker.Mock(side_effect=ValueError("boom"))
 
-    stream = Stream.of([1, 2, 3])
+    stream = Stream([1, 2, 3])
     stream.on_close(bad)
 
     # when
@@ -191,7 +191,7 @@ def test_close_with_a_single_raising_handler_gains_no_notes(mocker) -> None:
 @pytest.mark.asyncio
 async def test_autoclose_simple(mocker, monkeypatch, int_2_letter):
     # given
-    stream = Stream.of([1, 2, 3, 4, 1, 2, 3, 4])
+    stream = Stream([1, 2, 3, 4, 1, 2, 3, 4])
     close_mock = mocker.Mock()
     monkeypatch.setattr(stream, "close", close_mock)
 

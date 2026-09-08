@@ -11,8 +11,8 @@ from snakestream.stream import Stream
 @pytest.mark.asyncio
 async def test_concat_simple() -> None:
     # when
-    a = Stream.of([1, 2, 3, 4])
-    b = Stream.of([5, 6, 7])
+    a = Stream([1, 2, 3, 4])
+    b = Stream([5, 6, 7])
 
     generator = Stream.concat(a, b).collect(to_generator)
 
@@ -32,8 +32,8 @@ async def test_concat_simple() -> None:
 @pytest.mark.asyncio
 async def test_concat_with_intermediaries() -> None:
     # when
-    a = Stream.of([1, 2, 3, 4]).filter(lambda x: x < 3)
-    b = Stream.of([5, 6, 7, 7]).distinct()
+    a = Stream([1, 2, 3, 4]).filter(lambda x: x < 3)
+    b = Stream([5, 6, 7, 7]).distinct()
 
     generator = Stream.concat(a, b).collect(to_generator)
 
@@ -51,7 +51,7 @@ async def test_concat_with_intermediaries() -> None:
 @pytest.mark.asyncio
 async def test_concat_returns_a_stream_without_await() -> None:
     # when
-    result = Stream.concat(Stream.of([1, 2]), Stream.of([3]))
+    result = Stream.concat(Stream([1, 2]), Stream([3]))
 
     # then
     assert isinstance(result, Stream)
@@ -61,7 +61,7 @@ async def test_concat_returns_a_stream_without_await() -> None:
 @pytest.mark.asyncio
 async def test_concat_result_is_not_awaitable() -> None:
     # when
-    result = Stream.concat(Stream.of([1, 2]), Stream.of([3]))
+    result = Stream.concat(Stream([1, 2]), Stream([3]))
 
     # then
     with pytest.raises(TypeError):
@@ -70,7 +70,7 @@ async def test_concat_result_is_not_awaitable() -> None:
 
 def test_concat_is_callable_outside_a_coroutine() -> None:
     # when
-    result = Stream.concat(Stream.of([1, 2]), Stream.of([3]))
+    result = Stream.concat(Stream([1, 2]), Stream([3]))
 
     # then
     assert isinstance(result, Stream)
@@ -79,7 +79,7 @@ def test_concat_is_callable_outside_a_coroutine() -> None:
 @pytest.mark.asyncio
 async def test_concat_with_an_empty_first_stream() -> None:
     # when
-    result = Stream.concat(Stream.empty(), Stream.of([1, 2, 3]))
+    result = Stream.concat(Stream.empty(), Stream([1, 2, 3]))
 
     # then
     assert await result.collect(to_list()) == [1, 2, 3]
@@ -88,7 +88,7 @@ async def test_concat_with_an_empty_first_stream() -> None:
 @pytest.mark.asyncio
 async def test_concat_with_an_empty_second_stream() -> None:
     # when
-    result = Stream.concat(Stream.of([1, 2, 3]), Stream.empty())
+    result = Stream.concat(Stream([1, 2, 3]), Stream.empty())
 
     # then
     assert await result.collect(to_list()) == [1, 2, 3]
@@ -101,8 +101,8 @@ async def test_concat_pulls_nothing_until_consumed() -> None:
 
     # when
     Stream.concat(
-        Stream.of([1, 2]).peek(seen.append),
-        Stream.of([3, 4]).peek(seen.append),
+        Stream([1, 2]).peek(seen.append),
+        Stream([3, 4]).peek(seen.append),
     )
 
     # then
@@ -116,8 +116,8 @@ async def test_concat_leaves_the_second_stream_untouched_until_the_first_is_done
     from_b: list[int] = []
 
     generator = Stream.concat(
-        Stream.of([1, 2]).peek(from_a.append),
-        Stream.of([3, 4]).peek(from_b.append),
+        Stream([1, 2]).peek(from_a.append),
+        Stream([3, 4]).peek(from_b.append),
     ).collect(to_generator)
 
     # when
@@ -136,8 +136,8 @@ def test_concat_carries_both_operands_close_handlers_in_order(mocker) -> None:
     b1 = mocker.Mock(side_effect=lambda: calls.append("b1"))
     b2 = mocker.Mock(side_effect=lambda: calls.append("b2"))
 
-    a = Stream.of([1, 2]).on_close(a1).on_close(a2)
-    b = Stream.of([3, 4]).on_close(b1).on_close(b2)
+    a = Stream([1, 2]).on_close(a1).on_close(a2)
+    b = Stream([3, 4]).on_close(b1).on_close(b2)
 
     # when
     Stream.concat(a, b).close()
@@ -149,8 +149,8 @@ def test_concat_carries_both_operands_close_handlers_in_order(mocker) -> None:
 def test_concat_with_only_one_side_having_handlers(mocker) -> None:
     b1 = mocker.Mock()
 
-    a = Stream.of([1, 2])
-    b = Stream.of([3, 4]).on_close(b1)
+    a = Stream([1, 2])
+    b = Stream([3, 4]).on_close(b1)
 
     # when
     Stream.concat(a, b).close()
@@ -160,8 +160,8 @@ def test_concat_with_only_one_side_having_handlers(mocker) -> None:
 
 
 def test_concat_with_neither_side_having_handlers() -> None:
-    a = Stream.of([1, 2])
-    b = Stream.of([3, 4])
+    a = Stream([1, 2])
+    b = Stream([3, 4])
 
     # when / then
     Stream.concat(a, b).close()
@@ -170,8 +170,8 @@ def test_concat_with_neither_side_having_handlers() -> None:
 def test_concat_does_not_pick_up_handlers_registered_after_concat(mocker) -> None:
     late_handler = mocker.Mock()
 
-    a = Stream.of([1, 2])
-    b = Stream.of([3, 4])
+    a = Stream([1, 2])
+    b = Stream([3, 4])
 
     concatenated = Stream.concat(a, b)
     a.on_close(late_handler)
@@ -187,8 +187,8 @@ def test_concat_raising_handler_on_a_does_not_skip_bs_handler(mocker) -> None:
     bad_a = mocker.Mock(side_effect=ValueError("boom"))
     good_b = mocker.Mock()
 
-    a = Stream.of([1, 2]).on_close(bad_a)
-    b = Stream.of([3, 4]).on_close(good_b)
+    a = Stream([1, 2]).on_close(bad_a)
+    b = Stream([3, 4]).on_close(good_b)
 
     # when
     with pytest.raises(ValueError, match="boom"):
@@ -211,51 +211,51 @@ def test_concat_raising_handler_on_a_does_not_skip_bs_handler(mocker) -> None:
 
 @pytest.mark.asyncio
 async def test_concat_of_two_parallel_streams_is_parallel() -> None:
-    assert Stream.concat(Stream.of([1, 2, 3]).parallel(), Stream.of([4, 5]).parallel()).is_parallel() is True
+    assert Stream.concat(Stream([1, 2, 3]).parallel(), Stream([4, 5]).parallel()).is_parallel() is True
 
 
 @pytest.mark.asyncio
 async def test_concat_is_parallel_when_only_one_operand_is() -> None:
-    assert Stream.concat(Stream.of([1, 2, 3]).parallel(), Stream.of([4, 5])).is_parallel() is True
-    assert Stream.concat(Stream.of([1, 2, 3]), Stream.of([4, 5]).parallel()).is_parallel() is True
+    assert Stream.concat(Stream([1, 2, 3]).parallel(), Stream([4, 5])).is_parallel() is True
+    assert Stream.concat(Stream([1, 2, 3]), Stream([4, 5]).parallel()).is_parallel() is True
 
 
 @pytest.mark.asyncio
 async def test_concat_of_two_sequential_streams_is_sequential() -> None:
-    assert Stream.concat(Stream.of([1, 2, 3]), Stream.of([4, 5])).is_parallel() is False
+    assert Stream.concat(Stream([1, 2, 3]), Stream([4, 5])).is_parallel() is False
 
 
 @pytest.mark.asyncio
 async def test_a_later_mode_switch_still_governs_a_concatenation() -> None:
     # the mode concat() derives is an ordinary executor, not a special status:
     # sequential() overrides it exactly as it overrides a parallel() call
-    c = Stream.concat(Stream.of([1, 2, 3]).parallel(), Stream.of([4, 5]).parallel())
+    c = Stream.concat(Stream([1, 2, 3]).parallel(), Stream([4, 5]).parallel())
     assert c.sequential().is_parallel() is False
 
 
 @pytest.mark.asyncio
 async def test_concat_of_two_ordered_streams_is_ordered() -> None:
-    assert Stream.concat(Stream.of([1, 2, 3]), Stream.of([4, 5]))._is_ordered() is True
+    assert Stream.concat(Stream([1, 2, 3]), Stream([4, 5]))._is_ordered() is True
 
 
 @pytest.mark.asyncio
 async def test_concat_is_unordered_when_either_operand_is() -> None:
-    assert Stream.concat(Stream.of([1, 2, 3]).unordered(), Stream.of([4, 5]))._is_ordered() is False
-    assert Stream.concat(Stream.of([1, 2, 3]), Stream.of([4, 5]).unordered())._is_ordered() is False
-    assert Stream.concat(Stream.of([1, 2, 3]).unordered(), Stream.of([4, 5]).unordered())._is_ordered() is False
+    assert Stream.concat(Stream([1, 2, 3]).unordered(), Stream([4, 5]))._is_ordered() is False
+    assert Stream.concat(Stream([1, 2, 3]), Stream([4, 5]).unordered())._is_ordered() is False
+    assert Stream.concat(Stream([1, 2, 3]).unordered(), Stream([4, 5]).unordered())._is_ordered() is False
 
 
 @pytest.mark.asyncio
 async def test_an_unordered_concatenation_stays_unordered_when_extended() -> None:
     # the characteristic is derived from the chain rather than stored, so ops
     # queued onto the result see it the way they see any positional answer
-    c = Stream.concat(Stream.of([1, 2, 3]).unordered(), Stream.of([4, 5]))
+    c = Stream.concat(Stream([1, 2, 3]).unordered(), Stream([4, 5]))
     assert c.map(lambda x: x).filter(lambda x: True)._is_ordered() is False
 
 
 @pytest.mark.asyncio
 async def test_concat_invalidates_the_first_operand() -> None:
-    a, b = Stream.of([1, 2, 3]), Stream.of([4, 5])
+    a, b = Stream([1, 2, 3]), Stream([4, 5])
     Stream.concat(a, b)
     with pytest.raises(IllegalStateException):
         await a.collect(to_list())
@@ -263,7 +263,7 @@ async def test_concat_invalidates_the_first_operand() -> None:
 
 @pytest.mark.asyncio
 async def test_concat_invalidates_the_second_operand() -> None:
-    a, b = Stream.of([1, 2, 3]), Stream.of([4, 5])
+    a, b = Stream([1, 2, 3]), Stream([4, 5])
     Stream.concat(a, b)
     with pytest.raises(IllegalStateException):
         b.map(lambda x: x)
@@ -277,7 +277,7 @@ async def test_draining_an_operand_after_concat_raises_rather_than_shortening() 
     # concatenation then yielded [4, 5] - a silently shortened result, no
     # exception anywhere. Java raises here; AbstractPipeline marks the operands
     # of concat linked, and a later operation on one throws.
-    a, b = Stream.of([1, 2, 3]), Stream.of([4, 5])
+    a, b = Stream([1, 2, 3]), Stream([4, 5])
     c = Stream.concat(a, b)
     with pytest.raises(IllegalStateException):
         await a.collect(to_list())
@@ -286,7 +286,7 @@ async def test_draining_an_operand_after_concat_raises_rather_than_shortening() 
 
 @pytest.mark.asyncio
 async def test_invalidation_fires_at_call_time() -> None:
-    a, b = Stream.of([1, 2, 3]), Stream.of([4, 5])
+    a, b = Stream([1, 2, 3]), Stream([4, 5])
     Stream.concat(a, b)
     # nothing has been pulled from the concatenation yet
     with pytest.raises(IllegalStateException):
@@ -295,7 +295,7 @@ async def test_invalidation_fires_at_call_time() -> None:
 
 @pytest.mark.asyncio
 async def test_the_same_operand_cannot_be_concatenated_twice() -> None:
-    a, b, c = Stream.of([1, 2, 3]), Stream.of([4, 5]), Stream.of([6])
+    a, b, c = Stream([1, 2, 3]), Stream([4, 5]), Stream([6])
     Stream.concat(a, b)
     with pytest.raises(IllegalStateException):
         Stream.concat(a, c)
@@ -303,7 +303,7 @@ async def test_the_same_operand_cannot_be_concatenated_twice() -> None:
 
 @pytest.mark.asyncio
 async def test_the_concatenated_stream_itself_is_unaffected_by_the_invalidation() -> None:
-    c = Stream.concat(Stream.of([1, 2, 3]), Stream.of([4, 5]))
+    c = Stream.concat(Stream([1, 2, 3]), Stream([4, 5]))
     assert await c.map(lambda x: x * 2).collect(to_list()) == [2, 4, 6, 8, 10]
 
 
@@ -325,7 +325,7 @@ async def test_an_unordered_concatenation_still_partitions_in_encounter_order() 
     # (parallel-reduction), so the operands' unordered() no longer buys back
     # race-order delivery here - see test_racing_delivery_order.py's own
     # pair of tests for the collector that still shows the old behaviour.
-    c = Stream.concat(Stream.of(source).unordered(), Stream.of([]).unordered())
+    c = Stream.concat(Stream(source).unordered(), Stream([]).unordered())
     seen = await c.parallel().map(slow_head).collect(to_list())
 
     assert seen == source
@@ -341,7 +341,7 @@ async def test_an_ordered_concatenation_still_delivers_in_encounter_order() -> N
         await asyncio.sleep(0.05 if n < 5 else 0.001)
         return n
 
-    c = Stream.concat(Stream.of(source), Stream.of([]))
+    c = Stream.concat(Stream(source), Stream([]))
     assert await c.parallel().map(slow_head).collect(to_list()) == source
 
 

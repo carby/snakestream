@@ -23,7 +23,7 @@ input_list = [
 @pytest.mark.asyncio
 async def test_ok() -> None:
     # when
-    it = await Stream.of(input_list).peek(lambda x: x).collect(to_list())
+    it = await Stream(input_list).peek(lambda x: x).collect(to_list())
     # then
     assert it == input_list
     assert it[0] is input_list[0]
@@ -42,7 +42,7 @@ async def test_ok_async_function() -> None:
         names.append(x.name)
 
     # when
-    it = await Stream.of(input_list).peek(some_func).collect(to_list())
+    it = await Stream(input_list).peek(some_func).collect(to_list())
     # then
     assert it == input_list
     assert it[0] is input_list[0]
@@ -63,7 +63,7 @@ async def test_ok_async_function() -> None:
 @pytest.mark.asyncio
 async def test_empty_stream() -> None:
     # when
-    it = await Stream.of([]).peek(lambda x: x).collect(to_list())
+    it = await Stream([]).peek(lambda x: x).collect(to_list())
     # then
     assert it == []
 
@@ -71,7 +71,7 @@ async def test_empty_stream() -> None:
 @pytest.mark.asyncio
 async def test_multiple_calls() -> None:
     # when
-    it = await Stream.of(input_list).peek(lambda x: x).peek(lambda x: x).collect(to_list())
+    it = await Stream(input_list).peek(lambda x: x).peek(lambda x: x).collect(to_list())
     # then
     assert it == input_list
     assert it[0] is input_list[0]
@@ -87,7 +87,7 @@ async def test_mutate_internal_state() -> None:
         x.name = x.name.lower()
 
     # when
-    it = await Stream.of(input_list).peek(lower_name).collect(to_list())
+    it = await Stream(input_list).peek(lower_name).collect(to_list())
     # then
     assert it == input_list
     assert it[0] is input_list[0]

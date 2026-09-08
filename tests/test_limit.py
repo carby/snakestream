@@ -20,7 +20,7 @@ async def test_limit_does_not_pull_past_nth_element() -> None:
 @pytest.mark.asyncio
 async def test_limit_exact_size_source() -> None:
     # when
-    lst = await Stream.of([0, 1, 2]).limit(3).collect(to_list())
+    lst = await Stream([0, 1, 2]).limit(3).collect(to_list())
 
     # then
     assert lst == [0, 1, 2]
@@ -29,7 +29,7 @@ async def test_limit_exact_size_source() -> None:
 @pytest.mark.asyncio
 async def test_limit_shorter_than_n_source() -> None:
     # when
-    lst = await Stream.of([0, 1]).limit(5).collect(to_list())
+    lst = await Stream([0, 1]).limit(5).collect(to_list())
 
     # then
     assert lst == [0, 1]
@@ -69,7 +69,7 @@ async def test_limit_parallel_shared_close_across_branches() -> None:
     # out from under each other
 
     # when
-    lst = await Stream.of(list(range(1000))).parallel().limit(10).collect(to_list())
+    lst = await Stream(list(range(1000))).parallel().limit(10).collect(to_list())
 
     # then: no exception escapes collect(), and the total across all branches
     # is exactly max_size
@@ -79,7 +79,7 @@ async def test_limit_parallel_shared_close_across_branches() -> None:
 @pytest.mark.asyncio
 async def test_limit_multiple() -> None:
     # when
-    lst = await Stream.of([[0, 1, 2], [3, 4], [5, 6, 7], [8, 9]]).limit(3).flat_map(Stream.of).limit(6).collect(to_list())
+    lst = await Stream([[0, 1, 2], [3, 4], [5, 6, 7], [8, 9]]).limit(3).flat_map(Stream).limit(6).collect(to_list())
 
     # then
     assert lst == [0, 1, 2, 3, 4, 5]
@@ -121,7 +121,7 @@ async def test_limit_zero_does_not_run_upstream_ops() -> None:
     seen: list[int] = []
 
     # when
-    lst = await Stream.of([1, 2, 3]).peek(seen.append).limit(0).collect(to_list())
+    lst = await Stream([1, 2, 3]).peek(seen.append).limit(0).collect(to_list())
 
     # then
     assert lst == []
@@ -139,7 +139,7 @@ async def test_limit_zero_does_not_pull_from_source() -> None:
             yield i
 
     # when
-    lst = await Stream.of(source()).limit(0).collect(to_list())
+    lst = await Stream(source()).limit(0).collect(to_list())
 
     # then
     assert lst == []
@@ -152,7 +152,7 @@ async def test_limit_zero_on_parallel_stream_yields_nothing() -> None:
     seen: list[int] = []
 
     # when
-    lst = await Stream.of([1, 2, 3, 4]).parallel().peek(seen.append).limit(0).collect(to_list())
+    lst = await Stream([1, 2, 3, 4]).parallel().peek(seen.append).limit(0).collect(to_list())
 
     # then
     assert lst == []
@@ -164,7 +164,7 @@ async def test_limit_zero_still_runs_the_full_sink_lifecycle() -> None:
     # given a chain that pulled nothing must still have been begun and ended:
     # sorted() flushes from end(), so an unended chain would silently swallow
     # a downstream terminal's result rather than returning an empty one
-    lst = await Stream.of([3, 1, 2]).sorted().limit(0).collect(to_list())
+    lst = await Stream([3, 1, 2]).sorted().limit(0).collect(to_list())
 
     # then
     assert lst == []
@@ -173,8 +173,8 @@ async def test_limit_zero_still_runs_the_full_sink_lifecycle() -> None:
 @pytest.mark.asyncio
 async def test_limit_zero_terminal_still_returns_its_empty_result() -> None:
     # when: a terminal driven over a chain that pulls nothing
-    total = await Stream.of([1, 2, 3]).limit(0).count()
-    found = await Stream.of([1, 2, 3]).limit(0).find_first()
+    total = await Stream([1, 2, 3]).limit(0).count()
+    found = await Stream([1, 2, 3]).limit(0).find_first()
 
     # then
     assert total == 0
@@ -197,7 +197,7 @@ async def _slow_head(n: int) -> int:
 @pytest.mark.asyncio
 async def test_parallel_limit_selects_the_first_n_in_encounter_order() -> None:
     # when
-    lst = await Stream.of(list(range(12))).parallel().map(_slow_head).limit(5).collect(to_list())
+    lst = await Stream(list(range(12))).parallel().map(_slow_head).limit(5).collect(to_list())
     # then the same five the sequential pipeline picks, not the five that
     # finished first
     assert lst == [0, 1, 2, 3, 4]
@@ -206,7 +206,7 @@ async def test_parallel_limit_selects_the_first_n_in_encounter_order() -> None:
 @pytest.mark.asyncio
 async def test_parallel_unordered_limit_selects_the_first_n_to_arrive() -> None:
     # when the caller has said any n will do
-    lst = await Stream.of(list(range(12))).parallel().unordered().map(_slow_head).limit(5).collect(to_list())
+    lst = await Stream(list(range(12))).parallel().unordered().map(_slow_head).limit(5).collect(to_list())
     # then still exactly five, chosen by the race
     assert len(lst) == 5
     assert lst != [0, 1, 2, 3, 4]

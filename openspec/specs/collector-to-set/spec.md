@@ -11,11 +11,11 @@ collector that builds a `set` from the composed stream's elements, matching
 Java's `Collectors.toSet()`.
 
 #### Scenario: builds a set from stream elements
-- **WHEN** `Stream.of([1, 2, 2, 3]).collect(to_set())` is called
+- **WHEN** `Stream([1, 2, 2, 3]).collect(to_set())` is called
 - **THEN** the result is `{1, 2, 3}`
 
 #### Scenario: empty stream yields an empty set
-- **WHEN** `Stream.of([]).collect(to_set())` is called
+- **WHEN** `Stream([]).collect(to_set())` is called
 - **THEN** the result is `set()`
 
 #### Scenario: takes no arguments

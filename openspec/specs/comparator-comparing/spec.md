@@ -25,15 +25,15 @@ on `Stream`, and the `min_by()` and `max_by()` collectors — with no change to
 those signatures.
 
 #### Scenario: sorted() orders by extracted key
-- **WHEN** `Stream.of([{"v": 3}, {"v": 1}, {"v": 2}]).sorted(comparing(lambda x: x["v"]))` is collected
+- **WHEN** `Stream([{"v": 3}, {"v": 1}, {"v": 2}]).sorted(comparing(lambda x: x["v"]))` is collected
 - **THEN** the result is `[{"v": 1}, {"v": 2}, {"v": 3}]`
 
 #### Scenario: min() selects the element with the least key
-- **WHEN** `Stream.of([{"v": 3}, {"v": 1}, {"v": 2}]).min(comparing(lambda x: x["v"]))` is awaited
+- **WHEN** `Stream([{"v": 3}, {"v": 1}, {"v": 2}]).min(comparing(lambda x: x["v"]))` is awaited
 - **THEN** the result is `{"v": 1}`
 
 #### Scenario: max() selects the element with the greatest key
-- **WHEN** `Stream.of([{"v": 3}, {"v": 1}, {"v": 2}]).max(comparing(lambda x: x["v"]))` is awaited
+- **WHEN** `Stream([{"v": 3}, {"v": 1}, {"v": 2}]).max(comparing(lambda x: x["v"]))` is awaited
 - **THEN** the result is `{"v": 3}`
 
 #### Scenario: min_by() and max_by() collectors accept it identically
@@ -115,7 +115,7 @@ Sorting with a `comparing()` comparator SHALL preserve the relative encounter
 order of elements whose extracted keys are equivalent.
 
 #### Scenario: elements with equal keys keep their encounter order
-- **WHEN** `Stream.of([("a", 1), ("b", 1), ("c", 0)]).sorted(comparing(lambda x: x[1]))` is collected
+- **WHEN** `Stream([("a", 1), ("b", 1), ("c", 0)]).sorted(comparing(lambda x: x[1]))` is collected
 - **THEN** the result is `[("c", 0), ("a", 1), ("b", 1)]`
 
 ### Requirement: Keys must be mutually comparable

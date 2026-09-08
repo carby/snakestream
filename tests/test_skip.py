@@ -7,7 +7,7 @@ from snakestream.stream import Stream
 @pytest.mark.asyncio
 async def test_skip_drops_first_n_of_longer_source() -> None:
     # when
-    lst = await Stream.of([0, 1, 2, 3, 4]).skip(2).collect(to_list())
+    lst = await Stream([0, 1, 2, 3, 4]).skip(2).collect(to_list())
 
     # then
     assert lst == [2, 3, 4]
@@ -16,7 +16,7 @@ async def test_skip_drops_first_n_of_longer_source() -> None:
 @pytest.mark.asyncio
 async def test_skip_shorter_than_n_source_yields_nothing() -> None:
     # when
-    lst = await Stream.of([0, 1]).skip(5).collect(to_list())
+    lst = await Stream([0, 1]).skip(5).collect(to_list())
 
     # then
     assert lst == []
@@ -25,7 +25,7 @@ async def test_skip_shorter_than_n_source_yields_nothing() -> None:
 @pytest.mark.asyncio
 async def test_skip_zero_is_noop() -> None:
     # when
-    lst = await Stream.of([0, 1, 2]).skip(0).collect(to_list())
+    lst = await Stream([0, 1, 2]).skip(0).collect(to_list())
 
     # then
     assert lst == [0, 1, 2]
@@ -34,7 +34,7 @@ async def test_skip_zero_is_noop() -> None:
 @pytest.mark.asyncio
 async def test_skip_exact_size_source_yields_nothing() -> None:
     # when
-    lst = await Stream.of([0, 1, 2]).skip(3).collect(to_list())
+    lst = await Stream([0, 1, 2]).skip(3).collect(to_list())
 
     # then
     assert lst == []
@@ -47,7 +47,7 @@ async def test_skip_async_source() -> None:
             yield i
 
     # when
-    lst = await Stream.of(gen()).skip(2).collect(to_list())
+    lst = await Stream(gen()).skip(2).collect(to_list())
 
     # then
     assert lst == [2, 3, 4]
@@ -56,11 +56,11 @@ async def test_skip_async_source() -> None:
 @pytest.mark.asyncio
 async def test_skip_state_not_shared_across_separate_streams() -> None:
     # given: a first stream drains its own skip() counter
-    await Stream.of([0, 1, 2]).skip(2).collect(to_list())
+    await Stream([0, 1, 2]).skip(2).collect(to_list())
 
     # when: a second, independently-built skip() stream should still drop
     # its own n elements, unaffected by the first stream's counter
-    second = await Stream.of([0, 1, 2, 3, 4]).skip(2).collect(to_list())
+    second = await Stream([0, 1, 2, 3, 4]).skip(2).collect(to_list())
 
     # then
     assert second == [2, 3, 4]
@@ -69,7 +69,7 @@ async def test_skip_state_not_shared_across_separate_streams() -> None:
 @pytest.mark.asyncio
 async def test_skip_state_fresh_on_second_composition() -> None:
     # given
-    stream = Stream.of([0, 1, 2, 3, 4]).skip(2)
+    stream = Stream([0, 1, 2, 3, 4]).skip(2)
     first = await stream.collect(to_list())
 
     # when
@@ -98,7 +98,7 @@ async def _slow_head(n: int) -> int:
 @pytest.mark.asyncio
 async def test_parallel_skip_drops_the_first_n_in_encounter_order() -> None:
     # when
-    lst = await Stream.of(list(range(12))).parallel().map(_slow_head).skip(5).collect(to_list())
+    lst = await Stream(list(range(12))).parallel().map(_slow_head).skip(5).collect(to_list())
     # then 0..4 are the ones dropped, as they are sequentially
     assert lst == [5, 6, 7, 8, 9, 10, 11]
 
@@ -106,7 +106,7 @@ async def test_parallel_skip_drops_the_first_n_in_encounter_order() -> None:
 @pytest.mark.asyncio
 async def test_parallel_unordered_skip_drops_the_first_n_to_arrive() -> None:
     # when
-    lst = await Stream.of(list(range(12))).parallel().unordered().map(_slow_head).skip(5).collect(to_list())
+    lst = await Stream(list(range(12))).parallel().unordered().map(_slow_head).skip(5).collect(to_list())
     # then exactly five dropped, but not 0..4
     assert len(lst) == 7
     assert sorted(lst) != [5, 6, 7, 8, 9, 10, 11]

@@ -68,7 +68,7 @@ def _with_op(stream: Stream, op_cls) -> Stream:
 @pytest.mark.asyncio
 async def test_an_order_preserving_chain_has_no_split_point() -> None:
     # given map/filter/peek, none of which reads position
-    chain = _chain(Stream.of(SOURCE).parallel().map(lambda x: x).filter(lambda x: True).peek(lambda x: None))
+    chain = _chain(Stream(SOURCE).parallel().map(lambda x: x).filter(lambda x: True).peek(lambda x: None))
     # then nothing has to see the whole stream, so the chain races end to end
     assert _op_split(chain) is None
 
@@ -76,14 +76,14 @@ async def test_an_order_preserving_chain_has_no_split_point() -> None:
 @pytest.mark.asyncio
 async def test_an_empty_chain_has_no_split_point() -> None:
     # then
-    assert _op_split(_chain(Stream.of(SOURCE).parallel())) is None
+    assert _op_split(_chain(Stream(SOURCE).parallel())) is None
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("op_cls", [LimitOp, SkipOp, DistinctOp])
 async def test_an_order_sensitive_op_at_an_ordered_position_splits(op_cls) -> None:
     # given the op queued after an order-preserving one
-    stream = _with_op(Stream.of(SOURCE).parallel().map(lambda x: x), op_cls)
+    stream = _with_op(Stream(SOURCE).parallel().map(lambda x: x), op_cls)
     # then it is the split point: it selects on position and the pipeline has
     # a position to speak of
     assert _op_split(_chain(stream)) == 1
@@ -93,7 +93,7 @@ async def test_an_order_sensitive_op_at_an_ordered_position_splits(op_cls) -> No
 @pytest.mark.parametrize("op_cls", [LimitOp, SkipOp, DistinctOp])
 async def test_an_order_sensitive_op_at_an_unordered_position_does_not_split(op_cls) -> None:
     # given the same op, with unordered() queued before it
-    stream = _with_op(Stream.of(SOURCE).parallel().unordered(), op_cls)
+    stream = _with_op(Stream(SOURCE).parallel().unordered(), op_cls)
     # then the caller has said any answer will do, so no barrier is inserted
     assert _op_split(_chain(stream)) is None
 
@@ -101,7 +101,7 @@ async def test_an_order_sensitive_op_at_an_unordered_position_does_not_split(op_
 @pytest.mark.asyncio
 async def test_a_sort_splits_even_at_an_unordered_position() -> None:
     # given the first clause of the split rule, which is the non-obvious one
-    chain = _chain(Stream.of(SOURCE).parallel().unordered().sorted(_asc))
+    chain = _chain(Stream(SOURCE).parallel().unordered().sorted(_asc))
     # then: a sort claims its output is ordered, so it must see the whole
     # stream to make that claim true - being at an unordered position is
     # exactly what it is entitled to change
@@ -112,7 +112,7 @@ async def test_a_sort_splits_even_at_an_unordered_position() -> None:
 @pytest.mark.asyncio
 async def test_the_first_split_point_wins_over_a_later_one() -> None:
     # given a sort at an unordered position followed by a limit
-    chain = _chain(Stream.of(SOURCE).parallel().unordered().sorted(_asc).limit(3))
+    chain = _chain(Stream(SOURCE).parallel().unordered().sorted(_asc).limit(3))
     # then it splits at the sort, not at the limit: splitting at the limit
     # would take the three smallest of a wrongly-merged sort
     assert _op_split(chain) == 1
@@ -125,7 +125,7 @@ async def test_the_first_split_point_wins_over_a_later_one() -> None:
 @pytest.mark.asyncio
 async def test_an_order_observing_terminal_splits_at_the_end_of_the_chain() -> None:
     # given an ordered chain that no operation in it needs order for
-    chain = _chain(Stream.of(SOURCE).parallel().map(lambda x: x).filter(lambda x: True))
+    chain = _chain(Stream(SOURCE).parallel().map(lambda x: x).filter(lambda x: True))
     # then the split is past the last op: everything races and only delivery is
     # reordered, which is the whole difference between this and a mid-chain
     # barrier
@@ -135,7 +135,7 @@ async def test_an_order_observing_terminal_splits_at_the_end_of_the_chain() -> N
 @pytest.mark.asyncio
 async def test_an_order_blind_terminal_does_not_split() -> None:
     # given the same chain, asked for by count()/for_each()/any_match()
-    chain = _chain(Stream.of(SOURCE).parallel().map(lambda x: x).filter(lambda x: True))
+    chain = _chain(Stream(SOURCE).parallel().map(lambda x: x).filter(lambda x: True))
     # then nothing is owed and nothing is paid
     assert split_point(chain, OrderDemand.NONE, True) is None
 
@@ -143,7 +143,7 @@ async def test_an_order_blind_terminal_does_not_split() -> None:
 @pytest.mark.asyncio
 async def test_an_unordered_pipeline_does_not_split_for_its_terminal() -> None:
     # given a pipeline the caller declared unordered
-    chain = _chain(Stream.of(SOURCE).parallel().unordered().map(lambda x: x))
+    chain = _chain(Stream(SOURCE).parallel().unordered().map(lambda x: x))
     # then the terminal's demand goes unmet by the caller's own declaration
     assert split_point(chain, OrderDemand.IF_ORDERED, True) is None
 
@@ -151,7 +151,7 @@ async def test_an_unordered_pipeline_does_not_split_for_its_terminal() -> None:
 @pytest.mark.asyncio
 async def test_an_operations_split_wins_over_the_terminals() -> None:
     # given both clauses live at once
-    chain = _chain(Stream.of(SOURCE).parallel().map(lambda x: x).limit(3))
+    chain = _chain(Stream(SOURCE).parallel().map(lambda x: x).limit(3))
     # then the operation's index wins: it is earlier, and everything past it
     # arrives in order anyway
     assert split_point(chain, OrderDemand.IF_ORDERED, True) == 1
@@ -160,7 +160,7 @@ async def test_an_operations_split_wins_over_the_terminals() -> None:
 @pytest.mark.asyncio
 async def test_the_terminal_clause_reads_the_carried_ordering_seed() -> None:
     # given a chain that says nothing about ordering, as a resumed tail is
-    chain = _chain(Stream.of(SOURCE).parallel().map(lambda x: x))
+    chain = _chain(Stream(SOURCE).parallel().map(lambda x: x))
     # then it splits or not on what the ops before the split had decided
     assert split_point(chain, OrderDemand.IF_ORDERED, True) == len(chain)
     assert split_point(chain, OrderDemand.IF_ORDERED, False) is None
@@ -172,7 +172,7 @@ async def test_the_terminal_clause_reads_the_carried_ordering_seed() -> None:
 @pytest.mark.asyncio
 async def test_limit_selects_the_first_n_in_encounter_order() -> None:
     # when
-    res = await Stream.of(SOURCE).parallel().map(_slow_head).limit(SLOW_HEAD).collect(to_list())
+    res = await Stream(SOURCE).parallel().map(_slow_head).limit(SLOW_HEAD).collect(to_list())
     # then the five slow elements, not the five that finished first
     assert res == [0, 1, 2, 3, 4]
 
@@ -180,7 +180,7 @@ async def test_limit_selects_the_first_n_in_encounter_order() -> None:
 @pytest.mark.asyncio
 async def test_skip_drops_the_first_n_in_encounter_order() -> None:
     # when
-    res = await Stream.of(SOURCE).parallel().map(_slow_head).skip(SLOW_HEAD).collect(to_list())
+    res = await Stream(SOURCE).parallel().map(_slow_head).skip(SLOW_HEAD).collect(to_list())
     # then
     assert res == [5, 6, 7, 8, 9, 10, 11]
 
@@ -194,7 +194,7 @@ async def test_sorted_sorts_across_branches_over_an_async_source() -> None:
             yield i
 
     # when
-    res = await Stream.of(descending()).parallel().sorted(_asc).collect(to_list())
+    res = await Stream(descending()).parallel().sorted(_asc).collect(to_list())
     # then one sort over the whole stream, not one per branch's subset
     assert res == list(range(1, 13))
 
@@ -206,7 +206,7 @@ async def test_sorted_sorts_across_branches_over_a_sync_source() -> None:
     # requirement being honoured, not one branch happening to take everything
     seen: list[int] = []
 
-    res = await Stream.of(list(range(12, 0, -1))).parallel().peek(seen.append).sorted(_asc).collect(to_list())
+    res = await Stream(list(range(12, 0, -1))).parallel().peek(seen.append).sorted(_asc).collect(to_list())
 
     # then
     assert res == list(range(1, 13))
@@ -238,7 +238,7 @@ async def test_distinct_keeps_the_earliest_encountered_of_each_equal_group() -> 
         return e
 
     # when
-    res = await Stream.of(source).parallel().map(slow_head).distinct().collect(to_list())
+    res = await Stream(source).parallel().map(slow_head).distinct().collect(to_list())
 
     # then the survivors are the first of each group in encounter order
     assert [e.tag for e in res] == [0, 1]
@@ -250,7 +250,7 @@ async def test_distinct_keeps_the_earliest_encountered_of_each_equal_group() -> 
 @pytest.mark.asyncio
 async def test_an_unordered_limit_takes_the_first_n_to_arrive() -> None:
     # when
-    res = await Stream.of(SOURCE).parallel().unordered().map(_slow_head).limit(SLOW_HEAD).collect(to_list())
+    res = await Stream(SOURCE).parallel().unordered().map(_slow_head).limit(SLOW_HEAD).collect(to_list())
     # then still five elements of the source, but selected by arrival: the
     # cheap tail overtakes the slow head
     assert len(res) == SLOW_HEAD
@@ -261,7 +261,7 @@ async def test_an_unordered_limit_takes_the_first_n_to_arrive() -> None:
 @pytest.mark.asyncio
 async def test_an_unordered_skip_drops_the_first_n_to_arrive() -> None:
     # when
-    res = await Stream.of(SOURCE).parallel().unordered().map(_slow_head).skip(SLOW_HEAD).collect(to_list())
+    res = await Stream(SOURCE).parallel().unordered().map(_slow_head).skip(SLOW_HEAD).collect(to_list())
     # then exactly n dropped, but not the first n in source order
     assert len(res) == len(SOURCE) - SLOW_HEAD
     assert sorted(res) != [5, 6, 7, 8, 9, 10, 11]
@@ -270,7 +270,7 @@ async def test_an_unordered_skip_drops_the_first_n_to_arrive() -> None:
 @pytest.mark.asyncio
 async def test_an_unordered_distinct_keeps_an_arbitrary_representative() -> None:
     # when
-    res = await Stream.of([1, 1, 2, 2, 3, 3]).parallel().unordered().distinct().collect(to_list())
+    res = await Stream([1, 1, 2, 2, 3, 3]).parallel().unordered().distinct().collect(to_list())
     # then the cardinality guarantee holds; which member survived does not
     assert sorted(res) == [1, 2, 3]
 
@@ -285,14 +285,14 @@ async def test_an_unordered_pipeline_pays_no_head_of_line_delay() -> None:
     loop = asyncio.get_running_loop()
 
     # when the ordered form is asked for its first element
-    ordered = Stream.of(list(range(40))).parallel().map(one_slow_element).distinct().iterator()
+    ordered = Stream(list(range(40))).parallel().map(one_slow_element).distinct().iterator()
     start = loop.time()
     assert await anext(ordered) == 0
     ordered_wait = loop.time() - start
     await ordered.aclose()
 
     # and the unordered form is asked for its first
-    unordered = Stream.of(list(range(40))).parallel().unordered().map(one_slow_element).distinct().iterator()
+    unordered = Stream(list(range(40))).parallel().unordered().map(one_slow_element).distinct().iterator()
     start = loop.time()
     first = await anext(unordered)
     unordered_wait = loop.time() - start
@@ -307,7 +307,7 @@ async def test_an_unordered_pipeline_pays_no_head_of_line_delay() -> None:
 @pytest.mark.asyncio
 async def test_unordered_applies_only_to_ops_queued_after_it() -> None:
     # when the limit is queued before unordered()
-    res = await Stream.of(SOURCE).parallel().map(_slow_head).limit(SLOW_HEAD).unordered().collect(to_list())
+    res = await Stream(SOURCE).parallel().map(_slow_head).limit(SLOW_HEAD).unordered().collect(to_list())
     # then it is still at an ordered position and still *selects* the first
     # five in encounter order. Delivery is a separate question and the caller
     # answered it: unordered() at the end of the chain means the collector is
@@ -318,7 +318,7 @@ async def test_unordered_applies_only_to_ops_queued_after_it() -> None:
 @pytest.mark.asyncio
 async def test_a_sort_re_imposes_the_requirement_for_what_follows() -> None:
     # when
-    res = await Stream.of(list(range(12, 0, -1))).parallel().unordered().sorted(_asc).limit(3).collect(to_list())
+    res = await Stream(list(range(12, 0, -1))).parallel().unordered().sorted(_asc).limit(3).collect(to_list())
     # then the limit selects on the sorted encounter order, which it could only
     # do because the sort restored the characteristic
     assert res == [1, 2, 3]
@@ -330,7 +330,7 @@ async def test_a_sort_re_imposes_the_requirement_for_what_follows() -> None:
 @pytest.mark.asyncio
 async def test_an_order_sensitive_op_queued_before_parallel_is_still_honoured() -> None:
     # when .parallel() is declared last, so the whole chain runs in parallel
-    res = await Stream.of(SOURCE).map(_slow_head).limit(SLOW_HEAD).parallel().collect(to_list())
+    res = await Stream(SOURCE).map(_slow_head).limit(SLOW_HEAD).parallel().collect(to_list())
     # then
     assert res == [0, 1, 2, 3, 4]
 
@@ -338,7 +338,7 @@ async def test_an_order_sensitive_op_queued_before_parallel_is_still_honoured() 
 @pytest.mark.asyncio
 async def test_a_sort_queued_before_parallel_is_still_honoured() -> None:
     # when
-    res = await Stream.of(list(range(12, 0, -1))).sorted(_asc).parallel().collect(to_list())
+    res = await Stream(list(range(12, 0, -1))).sorted(_asc).parallel().collect(to_list())
     # then
     assert res == list(range(1, 13))
 
@@ -346,7 +346,7 @@ async def test_a_sort_queued_before_parallel_is_still_honoured() -> None:
 @pytest.mark.asyncio
 async def test_a_barrier_is_not_a_third_mode() -> None:
     # given a pipeline that inserts one
-    stream = Stream.of(SOURCE).parallel().sorted(_asc)
+    stream = Stream(SOURCE).parallel().sorted(_asc)
     # then it still reports the executor it carries
     assert stream.is_parallel() is True
     assert await stream.collect(to_list()) == SOURCE
@@ -370,7 +370,7 @@ async def test_closing_while_a_branch_is_blocked_on_the_window_does_not_hang() -
         return n
 
     before = len(asyncio.all_tasks())
-    agen = Stream.of(endless()).parallel().map(one_slow_element).distinct().iterator()
+    agen = Stream(endless()).parallel().map(one_slow_element).distinct().iterator()
     pull = asyncio.create_task(anext(agen))
     await asyncio.sleep(0.05)
     pull.cancel()
@@ -421,7 +421,7 @@ async def test_a_short_circuiting_terminal_is_charged_the_climb_not_the_ceiling(
         mock.patch("snakestream.execution.batch", spy_batch),
         mock.patch("snakestream.execution.asyncio.to_thread", synchronous_dispatch),
     ):
-        result = await Stream.of(endless()).parallel().any_match(lambda n: n == 17)
+        result = await Stream(endless()).parallel().any_match(lambda n: n == 17)
 
     assert result is True
     assert sizes_requested == [1, 1, 1, 1, 8, 8, 8, 8]
@@ -440,7 +440,7 @@ async def test_breaking_out_of_iterator_early_is_charged_the_climb_not_the_ceili
             yield i
             i += 1
 
-    agen = Stream.of(endless()).parallel().peek(calls.append).iterator()
+    agen = Stream(endless()).parallel().peek(calls.append).iterator()
     count = 0
     async for _ in agen:
         count += 1
@@ -506,7 +506,7 @@ async def test_an_ordered_limit_over_an_unbounded_source_terminates() -> None:
 
     # when
     res = await asyncio.wait_for(
-        Stream.of(endless()).parallel().map(lambda x: x).limit(5).collect(to_list()),
+        Stream(endless()).parallel().map(lambda x: x).limit(5).collect(to_list()),
         timeout=5,
     )
 
@@ -543,8 +543,8 @@ async def test_a_barrier_does_not_change_how_the_shared_source_is_closed() -> No
     unordered = _CountingSource(200)
 
     # when
-    res = await Stream.of(ordered).parallel().limit(4).collect(to_list())
-    await Stream.of(unordered).parallel().unordered().limit(4).collect(to_list())
+    res = await Stream(ordered).parallel().limit(4).collect(to_list())
+    await Stream(unordered).parallel().unordered().limit(4).collect(to_list())
 
     # then the selection is the ordered one, and closing is untouched: the
     # shared source is closed exactly once regardless of whether a barrier
@@ -567,7 +567,7 @@ async def test_a_generator_source_behind_a_barrier_runs_its_finally_once() -> No
             closed.append(True)
 
     # when
-    res = await Stream.of(source()).parallel().limit(4).collect(to_list())
+    res = await Stream(source()).parallel().limit(4).collect(to_list())
 
     # then
     assert res == [0, 1, 2, 3]
@@ -594,7 +594,7 @@ class _NoCloseSource:
 @pytest.mark.asyncio
 async def test_a_source_with_no_aclose_still_races_behind_a_barrier() -> None:
     # when
-    res = await Stream.of(_NoCloseSource(10)).parallel().sorted(_asc).collect(to_list())
+    res = await Stream(_NoCloseSource(10)).parallel().sorted(_asc).collect(to_list())
     # then no AttributeError from the close path
     assert res == list(range(10))
 
@@ -607,7 +607,7 @@ async def test_every_element_appears_exactly_once_behind_a_barrier() -> None:
     # given repeated but distinguishable elements
     source = [_Equal(i % 4, i) for i in range(24)]
     # when: skip() admits everything past the first four
-    res = await Stream.of(source).parallel().skip(4).collect(to_list())
+    res = await Stream(source).parallel().skip(4).collect(to_list())
     # then nothing lost, nothing duplicated
     assert [e.tag for e in res] == list(range(4, 24))
 
@@ -616,7 +616,7 @@ async def test_every_element_appears_exactly_once_behind_a_barrier() -> None:
 async def test_a_flat_map_upstream_of_a_barrier_keeps_every_output() -> None:
     # given a head op that turns one source element into several - the case a
     # per-element tag has no answer for
-    res = await Stream.of([1, 2, 3]).parallel().flat_map(lambda x: Stream.of([x, x * 10])).limit(6).collect(to_list())
+    res = await Stream([1, 2, 3]).parallel().flat_map(lambda x: Stream([x, x * 10])).limit(6).collect(to_list())
     # then every output of group 0, then group 1, then group 2
     assert res == [1, 10, 2, 20, 3, 30]
 
@@ -624,7 +624,7 @@ async def test_a_flat_map_upstream_of_a_barrier_keeps_every_output() -> None:
 @pytest.mark.asyncio
 async def test_a_filter_upstream_of_a_barrier_does_not_stall_the_merge() -> None:
     # given a head op that drops elements, leaving groups with no output at all
-    res = await Stream.of(list(range(20))).parallel().filter(lambda x: x % 5 == 0).limit(3).collect(to_list())
+    res = await Stream(list(range(20))).parallel().filter(lambda x: x % 5 == 0).limit(3).collect(to_list())
     # then the empty groups advanced the merge rather than holding it
     assert res == [0, 5, 10]
 
@@ -641,7 +641,7 @@ async def test_an_error_upstream_of_a_barrier_propagates_rather_than_hanging() -
     # merge on the group that never arrives
     with pytest.raises(ValueError, match="boom"):
         await asyncio.wait_for(
-            Stream.of(list(range(20))).parallel().map(boom).limit(10).collect(to_list()),
+            Stream(list(range(20))).parallel().map(boom).limit(10).collect(to_list()),
             timeout=5,
         )
 
@@ -650,7 +650,7 @@ async def test_an_error_upstream_of_a_barrier_propagates_rather_than_hanging() -
 async def test_a_cancelling_head_op_stops_its_branch_without_stalling_the_merge() -> None:
     # given a limit at an unordered position - so it stays in the raced head
     # and cancels there - with a sort behind it forcing a barrier
-    res = await Stream.of(list(range(40))).parallel().unordered().limit(6).sorted(_asc).collect(to_list())
+    res = await Stream(list(range(40))).parallel().unordered().limit(6).sorted(_asc).collect(to_list())
 
     # then the head's cancellation ended each branch cleanly and the sort still
     # saw every element the limit admitted
@@ -664,7 +664,7 @@ async def test_a_head_cancelled_before_its_first_pull_yields_nothing() -> None:
     # from begin() and the branch must not pull even once
     seen: list[int] = []
 
-    res = await Stream.of(list(range(20))).parallel().unordered().peek(seen.append).limit(0).sorted(_asc).collect(to_list())
+    res = await Stream(list(range(20))).parallel().unordered().peek(seen.append).limit(0).sorted(_asc).collect(to_list())
 
     # then
     assert res == []
@@ -698,7 +698,7 @@ async def _jittered(pair):
 @pytest.mark.parametrize("run", range(3))
 async def test_a_racing_sort_is_stable(run) -> None:
     # when
-    it = await Stream.of(_TIED).parallel().map(_jittered).sorted(_by_second).collect(to_list())
+    it = await Stream(_TIED).parallel().map(_jittered).sorted(_by_second).collect(to_list())
     # then
     assert it == _SORTED_BY_SECOND
 
@@ -707,7 +707,7 @@ async def test_a_racing_sort_is_stable(run) -> None:
 @pytest.mark.parametrize("run", range(3))
 async def test_a_sort_on_an_unordered_pipeline_is_stable(run) -> None:
     # when
-    it = await Stream.of(_TIED).parallel().unordered().map(_jittered).sorted(_by_second).collect(to_list())
+    it = await Stream(_TIED).parallel().unordered().map(_jittered).sorted(_by_second).collect(to_list())
     # then: the sort still saw the whole stream, in encounter order
     assert it == _SORTED_BY_SECOND
 
@@ -718,7 +718,7 @@ async def test_an_unordered_sort_sorts_the_whole_stream_not_per_branch_subsets()
     source = [(chr(97 + i), (7 * i) % 13) for i in range(24)]
 
     # when
-    it = await Stream.of(source).parallel().unordered().sorted(lambda x, y: x[1] - y[1]).collect(to_list())
+    it = await Stream(source).parallel().unordered().sorted(lambda x, y: x[1] - y[1]).collect(to_list())
 
     # then
     assert [pair[1] for pair in it] == sorted(pair[1] for pair in source)

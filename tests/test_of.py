@@ -38,7 +38,7 @@ class AsyncIteratorImpl:
 @pytest.mark.asyncio
 async def test_input_list() -> None:
     # when
-    it = Stream.of([1, 2, 3, 4]).collect(to_generator)
+    it = Stream([1, 2, 3, 4]).collect(to_generator)
     # then
     assert await it.__anext__() == 1
     assert await it.__anext__() == 2
@@ -55,7 +55,7 @@ async def test_input_list() -> None:
 @pytest.mark.asyncio
 async def test_input_async_generator() -> None:
     # when
-    it = Stream.of(async_generator()).collect(to_generator)
+    it = Stream(async_generator()).collect(to_generator)
 
     # then
     assert await it.__anext__() == 1
@@ -74,7 +74,7 @@ async def test_input_async_generator() -> None:
 @pytest.mark.asyncio
 async def test_input_async_iterator() -> None:
     # when
-    it = Stream.of(AsyncIteratorImpl(5)).collect(to_generator)
+    it = Stream(AsyncIteratorImpl(5)).collect(to_generator)
 
     # then
     assert await it.__anext__() == 0
@@ -90,24 +90,31 @@ async def test_input_async_iterator() -> None:
         pytest.fail("stream should be exhausted")
 
 
+# The scalar-set tests below are written against Stream(...), not Stream.of(...).
+# After of() became atomic (design.md, Decision 3), Stream.of(x) agrees with
+# Stream(x) for every scalar x by construction - of() no longer spreads
+# anything - so a scenario stated against of() would hold whatever
+# normalization does and guard nothing.
+
+
 @pytest.mark.asyncio
 async def test_null_input() -> None:
     # when
-    it = await Stream.of(None).collect(to_list())
+    it = await Stream(None).collect(to_list())
     assert it == [None]
 
 
 @pytest.mark.asyncio
 async def test_single_var_input() -> None:
     # when
-    it = await Stream.of(1).collect(to_list())
+    it = await Stream(1).collect(to_list())
     assert it == [1]
 
 
 @pytest.mark.asyncio
 async def test_single_generator_input() -> None:
     # when
-    it = await Stream.of(generator()).collect(to_list())
+    it = await Stream(generator()).collect(to_list())
     assert it == [1, 2, 3, 4, 5]
 
 
@@ -122,7 +129,7 @@ async def test_single_empty_stream_no_ref() -> None:
 @pytest.mark.asyncio
 async def test_single_empty_list() -> None:
     # when
-    actual = await Stream.of([]).collect(to_list())
+    actual = await Stream([]).collect(to_list())
 
     assert actual == []
 
@@ -130,7 +137,7 @@ async def test_single_empty_list() -> None:
 @pytest.mark.asyncio
 async def test_single_empty_dict() -> None:
     # when
-    actual = await Stream.of({}).collect(to_list())
+    actual = await Stream({}).collect(to_list())
 
     assert actual == [{}]
 
@@ -144,7 +151,7 @@ def test_kwargs_rejected() -> None:
 @pytest.mark.asyncio
 async def test_single_str_input() -> None:
     # when
-    actual = await Stream.of("abc").collect(to_list())
+    actual = await Stream("abc").collect(to_list())
 
     assert actual == ["abc"]
 
@@ -152,7 +159,7 @@ async def test_single_str_input() -> None:
 @pytest.mark.asyncio
 async def test_single_bytes_input() -> None:
     # when
-    actual = await Stream.of(b"ab").collect(to_list())
+    actual = await Stream(b"ab").collect(to_list())
 
     assert actual == [b"ab"]
 
@@ -160,7 +167,7 @@ async def test_single_bytes_input() -> None:
 @pytest.mark.asyncio
 async def test_single_populated_dict() -> None:
     # when
-    actual = await Stream.of({"a": 1, "b": 2}).collect(to_list())
+    actual = await Stream({"a": 1, "b": 2}).collect(to_list())
 
     assert actual == [{"a": 1, "b": 2}]
 
@@ -210,7 +217,7 @@ async def test_single_bytearray_input() -> None:
     source = bytearray(b"ab")
 
     # when
-    actual = await Stream.of(source).collect(to_list())
+    actual = await Stream(source).collect(to_list())
 
     # then: one element, the bytearray itself, not the ints 97 and 98
     assert [source] == actual
@@ -223,7 +230,7 @@ async def test_single_memoryview_input() -> None:
     source = memoryview(b"ab")
 
     # when
-    actual = await Stream.of(source).collect(to_list())
+    actual = await Stream(source).collect(to_list())
 
     # then: one element, the memoryview itself, not the ints 97 and 98
     assert len(actual) == 1
@@ -234,9 +241,41 @@ async def test_single_memoryview_input() -> None:
 async def test_the_three_binary_types_agree() -> None:
     # given: the same two bytes, immutable, mutable, and as a view
     # when
-    as_bytes = await Stream.of(b"ab").collect(to_list())
-    as_bytearray = await Stream.of(bytearray(b"ab")).collect(to_list())
-    as_memoryview = await Stream.of(memoryview(b"ab")).collect(to_list())
+    as_bytes = await Stream(b"ab").collect(to_list())
+    as_bytearray = await Stream(bytearray(b"ab")).collect(to_list())
+    as_memoryview = await Stream(memoryview(b"ab")).collect(to_list())
 
     # then: how the buffer is spelled does not change the element count
     assert 1 == len(as_bytes) == len(as_bytearray) == len(as_memoryview)
+
+
+@pytest.mark.asyncio
+async def test_single_list_argument_is_atomic() -> None:
+    # when
+    actual = await Stream.of([1, 2]).collect(to_list())
+
+    # then: one element, the list itself, not the integers 1 and 2
+    assert actual == [[1, 2]]
+
+
+@pytest.mark.asyncio
+async def test_single_generator_argument_is_not_advanced() -> None:
+    # given
+    g = generator()
+
+    # when
+    actual = await Stream.of(g).collect(to_list())
+
+    # then: one element, the generator object itself, never advanced
+    assert actual == [g]
+
+
+@pytest.mark.asyncio
+async def test_arity_does_not_change_meaning() -> None:
+    # when
+    one = await Stream.of([1, 2]).collect(to_list())
+    two = await Stream.of([1, 2], [3, 4]).collect(to_list())
+
+    # then: adding an argument adds an element, changes nothing already present
+    assert one == [[1, 2]]
+    assert two == [[1, 2], [3, 4]]

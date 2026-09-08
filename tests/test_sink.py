@@ -605,7 +605,7 @@ async def test_real_driving_loop_honours_cancellation_reported_at_begin() -> Non
             pulled.append(i)
             yield i
 
-    stream = Stream.of(source())
+    stream = Stream(source())
     stream._chain = [_CancelledFromBeginOp()]
 
     # when

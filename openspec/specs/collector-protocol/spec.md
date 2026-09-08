@@ -37,7 +37,7 @@ every `Collector` constructed without it — in this library or in user code —
 behaves exactly as it did before this part existed.
 
 #### Scenario: A user-defined Collector collects a stream
-- **WHEN** `Stream.of([1, 2, 3]).collect(Collector(list, lambda c, e: c.append(e)))` is awaited
+- **WHEN** `Stream([1, 2, 3]).collect(Collector(list, lambda c, e: c.append(e)))` is awaited
 - **THEN** the result is `[1, 2, 3]`
 
 #### Scenario: The finisher converts the container
@@ -209,7 +209,7 @@ collections SHALL still produce two independent results, since a `Collector`
 holds no per-collection state.
 
 #### Scenario: A library collector is accepted
-- **WHEN** `Stream.of([1, 2, 3]).collect(counting())` is awaited
+- **WHEN** `Stream([1, 2, 3]).collect(counting())` is awaited
 - **THEN** the result is `3`
 
 #### Scenario: The factories are importable from `snakestream.collectors`
@@ -221,11 +221,11 @@ holds no per-collection state.
 - **THEN** `ImportError` is raised — the factory module is `snakestream.collectors`
 
 #### Scenario: `to_list()` is a factory like every other collector
-- **WHEN** `Stream.of([1, 2, 3]).collect(to_list())` is awaited
+- **WHEN** `Stream([1, 2, 3]).collect(to_list())` is awaited
 - **THEN** the result is `[1, 2, 3]`
 
 #### Scenario: `to_list` is usable without being called
-- **WHEN** `Stream.of([1, 2, 3]).collect(to_list)` is awaited, passing the bare factory rather than calling it
+- **WHEN** `Stream([1, 2, 3]).collect(to_list)` is awaited, passing the bare factory rather than calling it
 - **THEN** it is not: `StreamBuildException` is raised, and the stream is not consumed
 
 #### Scenario: One returned `to_list()` collector is reusable
@@ -237,7 +237,7 @@ holds no per-collection state.
 - **THEN** `StreamBuildException` is raised, and the stream is not consumed
 
 #### Scenario: The 3-arg form is unaffected
-- **WHEN** `Stream.of([1, 2, 3]).collect(list, list.append, list.extend)` is awaited
+- **WHEN** `Stream([1, 2, 3]).collect(list, list.append, list.extend)` is awaited
 - **THEN** the result is `[1, 2, 3]`, exactly as before
 
 ### Requirement: `to_generator` is the one non-`Collector` collector
@@ -254,7 +254,7 @@ Because it is a `StreamingCollector` value rather than a factory,
 the `Collector` type, and SHALL NOT move to `snakestream.collectors`.
 
 #### Scenario: `collect(to_generator)` yields lazily
-- **WHEN** `Stream.of([1, 3, 4, 5, 6]).filter(p).map(f).collect(to_generator)` is called
+- **WHEN** `Stream([1, 3, 4, 5, 6]).filter(p).map(f).collect(to_generator)` is called
 - **THEN** an `AsyncGenerator` is returned, not awaited, and iterating it yields the mapped elements in order
 
 #### Scenario: `to_generator` does not need awaiting

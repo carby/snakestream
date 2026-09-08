@@ -17,7 +17,7 @@ async def _slower_for_earlier(x: int) -> int:
 @pytest.mark.asyncio
 async def test_find_first_returns_first_element() -> None:
     # when
-    it = await Stream.of([4, 1, 3, 2]).find_first()
+    it = await Stream([4, 1, 3, 2]).find_first()
 
     # then
     assert it == 4
@@ -26,7 +26,7 @@ async def test_find_first_returns_first_element() -> None:
 @pytest.mark.asyncio
 async def test_find_first_empty_stream() -> None:
     # when
-    it = await Stream.of([]).find_first()
+    it = await Stream([]).find_first()
 
     # then
     assert it is None
@@ -42,7 +42,7 @@ async def test_find_first_only_pulls_first_element() -> None:
         return n
 
     # when
-    it = await Stream.of([4, 1, 3, 2]).map(track).find_first()
+    it = await Stream([4, 1, 3, 2]).map(track).find_first()
 
     # then
     assert it == 4
@@ -64,7 +64,7 @@ async def _delay_by_position(n: int) -> int:
 @pytest.mark.asyncio
 async def test_find_first_on_ordered_parallel_stream_returns_true_first_element() -> None:
     # when
-    it = await Stream.of(values).parallel().map(_delay_by_position).find_first()
+    it = await Stream(values).parallel().map(_delay_by_position).find_first()
 
     # then: despite the first element having the longest delay, an ordered
     # ParallelStream still reports the true first-encounter-order element
@@ -74,7 +74,7 @@ async def test_find_first_on_ordered_parallel_stream_returns_true_first_element(
 @pytest.mark.asyncio
 async def test_find_first_on_ordered_parallel_stream_empty_source() -> None:
     # when
-    it = await Stream.of([]).parallel().find_first()
+    it = await Stream([]).parallel().find_first()
 
     # then
     assert it is None
@@ -85,7 +85,7 @@ async def test_find_first_on_unordered_parallel_stream_still_finds_the_first() -
     # given: the same reordering-pressure chain as the ordered test above, on
     # a stream declared unordered
     # when
-    it = await Stream.of(values).parallel().unordered().map(_delay_by_position).find_first()
+    it = await Stream(values).parallel().unordered().map(_delay_by_position).find_first()
 
     # then: unordered() does not relax find_first(). Java's findFirst() finds
     # the leftmost element on an unordered parallel stream too - the javadoc
@@ -119,7 +119,7 @@ async def test_find_any_remains_the_unordered_alternative() -> None:
 
     # when
     it = await asyncio.wait_for(
-        Stream.of(endless()).parallel().map(one_slow_element).find_any(),
+        Stream(endless()).parallel().map(one_slow_element).find_any(),
         timeout=0.2,
     )
 
@@ -140,7 +140,7 @@ async def test_find_first_after_unordered_and_sorted_returns_the_smallest() -> N
             yield i
 
     # when: run repeatedly - the wrong answer was nondeterministic
-    results = [await Stream.of(descending()).parallel().unordered().sorted(lambda a, b: a - b).find_first() for _ in range(10)]
+    results = [await Stream(descending()).parallel().unordered().sorted(lambda a, b: a - b).find_first() for _ in range(10)]
 
     # then
     assert results == [1] * 10
@@ -169,8 +169,8 @@ async def test_a_dropping_chain_is_faster_in_parallel() -> None:
         return found, time.perf_counter() - started
 
     # when
-    par, par_t = await run(Stream.of(_SOURCE).parallel())
-    seq, seq_t = await run(Stream.of(_SOURCE).sequential())
+    par, par_t = await run(Stream(_SOURCE).parallel())
+    seq, seq_t = await run(Stream(_SOURCE).sequential())
 
     # then the same element, sooner - the predicate runs across all branches
     assert par == seq == _MATCH_AT
@@ -192,8 +192,8 @@ async def test_a_non_dropping_chain_is_no_slower_in_parallel() -> None:
         return found, time.perf_counter() - started
 
     # when
-    par, par_t = await run(Stream.of(_SOURCE).parallel())
-    seq, seq_t = await run(Stream.of(_SOURCE).sequential())
+    par, par_t = await run(Stream(_SOURCE).parallel())
+    seq, seq_t = await run(Stream(_SOURCE).sequential())
 
     # then
     assert par == seq == 0
@@ -206,7 +206,7 @@ async def test_always_survives_a_split() -> None:
     # IF_ORDERED demand would be released by that unordered(); ALWAYS is not,
     # so the resumed race splits again at delivery
     it = await (
-        Stream.of([5, 3, 8, 1, 9, 2]).parallel().sorted(lambda a, b: a - b).unordered().map(_slower_for_earlier).find_first()
+        Stream([5, 3, 8, 1, 9, 2]).parallel().sorted(lambda a, b: a - b).unordered().map(_slower_for_earlier).find_first()
     )
 
     # then the leftmost element of the sorted order, not of the arrival order
@@ -219,7 +219,7 @@ async def test_find_first_no_longer_overrides_unordered_for_a_positional_op() ->
     # limit() there already answers arbitrarily under every other terminal;
     # find_first() used to suppress that for the whole pipeline by going
     # sequential, and no longer does
-    it = await Stream.of(_SOURCE).parallel().unordered().limit(8).find_first()
+    it = await Stream(_SOURCE).parallel().unordered().limit(8).find_first()
 
     # then find_first() still returns the leftmost element *of what limit
     # produced* - which is all the specs promise once the subset is arbitrary
@@ -242,7 +242,7 @@ async def test_a_parallel_find_first_may_process_more_than_one_element() -> None
         return x
 
     # when
-    it = await Stream.of(_SOURCE).parallel().map(timed).find_first()
+    it = await Stream(_SOURCE).parallel().map(timed).find_first()
 
     # then the right answer, and more than one element processed to get it -
     # bounded by the first round's read-ahead, which the ramp seeds at one
@@ -265,7 +265,7 @@ async def test_a_sequential_find_first_processes_exactly_one() -> None:
         return x
 
     # when
-    it = await Stream.of(_SOURCE).sequential().map(timed).find_first()
+    it = await Stream(_SOURCE).sequential().map(timed).find_first()
 
     # then exactly one, which is where `== 1` is safe to assert
     assert it == 0
@@ -288,7 +288,7 @@ async def test_a_parallel_find_first_terminates_and_leaves_no_pending_tasks() ->
     before = len(asyncio.all_tasks())
 
     # when
-    it = await Stream.of(forever()).parallel().map(lambda x: x).find_first()
+    it = await Stream(forever()).parallel().map(lambda x: x).find_first()
 
     # then it returned rather than hanging, and nothing was left running
     assert it == 0

@@ -15,7 +15,7 @@ from snakestream.exception import StreamException
 async def test_sorted() -> None:
     outset = [1, 5, 3, 4, 5, 2]
 
-    actual = await Stream.of(outset).sorted().collect(to_list())
+    actual = await Stream(outset).sorted().collect(to_list())
 
     assert sorted(outset) == actual
 
@@ -24,7 +24,7 @@ async def test_sorted() -> None:
 async def test_sorted_reverse() -> None:
     outset = [1, 5, 3, 4, 5, 2]
 
-    actual = await Stream.of(outset).sorted(reverse=True).collect(to_list())
+    actual = await Stream(outset).sorted(reverse=True).collect(to_list())
 
     assert sorted(outset, reverse=True) == actual
 
@@ -44,7 +44,7 @@ async def test_sorted_comparator() -> None:
             return -1
         return 0
 
-    actual = await Stream.of(outset).sorted(comparator=compare).collect(to_list())
+    actual = await Stream(outset).sorted(comparator=compare).collect(to_list())
 
     assert sorted(outset, key=lambda x: x["x"]) == actual
 
@@ -65,7 +65,7 @@ async def test_sorted_async_comparator_and_reverse() -> None:
             return 1
         return -1
 
-    actual = await Stream.of(outset).sorted(comparator=compare_async, reverse=True).collect(to_list())
+    actual = await Stream(outset).sorted(comparator=compare_async, reverse=True).collect(to_list())
 
     assert actual == [
         {"x": 3, "y": 7},
@@ -78,7 +78,7 @@ async def test_sorted_async_comparator_and_reverse() -> None:
 @pytest.mark.asyncio
 async def test_sorted_matches_builtin_sorted(values: list[int]) -> None:
     # when
-    actual = await Stream.of(values).sorted().collect(to_list())
+    actual = await Stream(values).sorted().collect(to_list())
 
     # then
     assert actual == sorted(values)
@@ -92,7 +92,7 @@ def _compare_by_abs(a: int, b: int) -> int:
 @pytest.mark.asyncio
 async def test_sorted_comparator_matches_cmp_to_key(values: list[int]) -> None:
     # when
-    actual = await Stream.of(values).sorted(comparator=_compare_by_abs).collect(to_list())
+    actual = await Stream(values).sorted(comparator=_compare_by_abs).collect(to_list())
 
     # then
     assert actual == sorted(values, key=functools.cmp_to_key(_compare_by_abs))
@@ -105,7 +105,7 @@ async def test_sorted_async_comparator_matches_cmp_to_key(values: list[int]) -> 
         return _compare_by_abs(a, b)
 
     # when
-    actual = await Stream.of(values).sorted(comparator=async_compare_by_abs).collect(to_list())
+    actual = await Stream(values).sorted(comparator=async_compare_by_abs).collect(to_list())
 
     # then
     assert actual == sorted(values, key=functools.cmp_to_key(_compare_by_abs))
@@ -116,7 +116,7 @@ async def test_sorted_rejects_bool_comparator() -> None:
     outset = [3, 1, 2]
     # when / then
     with pytest.raises(TypeError):
-        await Stream.of(outset).sorted(comparator=lambda a, b: a > b).collect(to_list())
+        await Stream(outset).sorted(comparator=lambda a, b: a > b).collect(to_list())
 
 
 @pytest.mark.asyncio
@@ -128,7 +128,7 @@ async def test_sorted_rejects_async_bool_comparator() -> None:
     outset = [3, 1, 2]
     # when / then
     with pytest.raises(TypeError):
-        await Stream.of(outset).sorted(comparator=async_compare).collect(to_list())
+        await Stream(outset).sorted(comparator=async_compare).collect(to_list())
 
 
 @pytest.mark.asyncio
@@ -138,14 +138,14 @@ async def test_sorted_rejects_non_int_on_a_later_comparison() -> None:
     outset = [3, 1, 2.5]
     # when / then
     with pytest.raises(TypeError):
-        await Stream.of(outset).sorted(comparator=lambda a, b: a - b).collect(to_list())
+        await Stream(outset).sorted(comparator=lambda a, b: a - b).collect(to_list())
 
 
 @pytest.mark.asyncio
 async def test_bool_comparator_rejection_is_caught_as_a_library_exception() -> None:
     outset = [3, 1, 2]
     with pytest.raises(StreamException) as excinfo:
-        await Stream.of(outset).sorted(comparator=lambda a, b: a > b).collect(to_list())
+        await Stream(outset).sorted(comparator=lambda a, b: a > b).collect(to_list())
     assert isinstance(excinfo.value, TypeError)
 
 
@@ -153,7 +153,7 @@ async def test_bool_comparator_rejection_is_caught_as_a_library_exception() -> N
 async def test_non_int_non_bool_comparator_return_is_rejected_naming_the_type() -> None:
     outset = [3, 1, 2]
     with pytest.raises(TypeError, match="str"):
-        await Stream.of(outset).sorted(comparator=lambda a, b: "gt" if a > b else "le").collect(to_list())
+        await Stream(outset).sorted(comparator=lambda a, b: "gt" if a > b else "le").collect(to_list())
 
 
 # --- under the racing executor ----------------------------------------------
@@ -173,7 +173,7 @@ async def test_parallel_sorted_sorts_the_whole_stream_over_an_async_source() -> 
             yield i
 
     # when
-    actual = await Stream.of(descending()).parallel().sorted(_asc).collect(to_list())
+    actual = await Stream(descending()).parallel().sorted(_asc).collect(to_list())
 
     # then
     assert actual == list(range(1, 13))
@@ -186,7 +186,7 @@ async def test_parallel_sorted_sorts_the_whole_stream_over_a_sync_source() -> No
     # honoured, not one branch happening to take every element
     seen: list[int] = []
 
-    actual = await Stream.of(list(range(12, 0, -1))).parallel().peek(seen.append).sorted(_asc).collect(to_list())
+    actual = await Stream(list(range(12, 0, -1))).parallel().peek(seen.append).sorted(_asc).collect(to_list())
 
     # then
     assert actual == list(range(1, 13))
@@ -215,7 +215,7 @@ def _by_second(x, y):
 @pytest.mark.asyncio
 async def test_sync_comparator_sort_is_stable() -> None:
     # when
-    it = await Stream.of(_STABILITY_SOURCE).sorted(_by_second).collect(to_list())
+    it = await Stream(_STABILITY_SOURCE).sorted(_by_second).collect(to_list())
     # then
     assert it == [("b", 3), ("a", 5), ("c", 5)]
 
@@ -227,7 +227,7 @@ async def test_async_comparator_sort_is_stable() -> None:
         return x[1] - y[1]
 
     # when
-    it = await Stream.of(_STABILITY_SOURCE).sorted(_async_by_second).collect(to_list())
+    it = await Stream(_STABILITY_SOURCE).sorted(_async_by_second).collect(to_list())
     # then
     assert it == [("b", 3), ("a", 5), ("c", 5)]
 
@@ -235,7 +235,7 @@ async def test_async_comparator_sort_is_stable() -> None:
 @pytest.mark.asyncio
 async def test_key_comparator_sort_is_stable() -> None:
     # when
-    it = await Stream.of(_STABILITY_SOURCE).sorted(comparing(lambda pair: pair[1])).collect(to_list())
+    it = await Stream(_STABILITY_SOURCE).sorted(comparing(lambda pair: pair[1])).collect(to_list())
     # then
     assert it == [("b", 3), ("a", 5), ("c", 5)]
 
@@ -247,7 +247,7 @@ async def test_reversed_key_comparator_is_stable_rather_than_reversing_ties() ->
     ordering = comparing(lambda pair: pair[1]).reversed()
 
     # when
-    it = await Stream.of(_STABILITY_SOURCE).sorted(ordering).collect(to_list())
+    it = await Stream(_STABILITY_SOURCE).sorted(ordering).collect(to_list())
 
     # then
     assert it == [("a", 5), ("c", 5), ("b", 3)]

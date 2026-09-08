@@ -7,7 +7,7 @@ from snakestream.collector import to_generator
 @pytest.mark.asyncio
 async def test_mixed_chain(int_2_letter) -> None:
     # when
-    it = Stream.of([1, 2, 3, 4, 5, 6]).filter(lambda x: 3 < x < 6).map(lambda x: int_2_letter[x]).collect(to_generator)
+    it = Stream([1, 2, 3, 4, 5, 6]).filter(lambda x: 3 < x < 6).map(lambda x: int_2_letter[x]).collect(to_generator)
 
     # then
     assert await it.__anext__() == "d"

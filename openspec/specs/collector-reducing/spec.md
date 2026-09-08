@@ -15,15 +15,15 @@ an empty stream in this project's `T | None` convention). Mirrors
 `Stream.reduce(accumulator)`'s existing semantics exactly.
 
 #### Scenario: folds elements with the first as seed
-- **WHEN** `Stream.of([1, 2, 3, 4]).collect(reducing(lambda a, b: a + b))` is called
+- **WHEN** `Stream([1, 2, 3, 4]).collect(reducing(lambda a, b: a + b))` is called
 - **THEN** the result is `10`
 
 #### Scenario: empty stream yields None
-- **WHEN** `Stream.of([]).collect(reducing(lambda a, b: a + b))` is called
+- **WHEN** `Stream([]).collect(reducing(lambda a, b: a + b))` is called
 - **THEN** the result is `None`
 
 #### Scenario: single-element stream returns that element without calling the operator
-- **WHEN** `Stream.of([5]).collect(reducing(lambda a, b: a + b))` is called
+- **WHEN** `Stream([5]).collect(reducing(lambda a, b: a + b))` is called
 - **THEN** the result is `5`
 
 ### Requirement: `reducing(identity, binary_operator)` collector factory
@@ -35,11 +35,11 @@ from `identity` and returns `T` (never `None`, even for an empty stream —
 `Stream.reduce(identity, accumulator)`'s existing semantics exactly.
 
 #### Scenario: folds elements starting from identity
-- **WHEN** `Stream.of([1, 2, 3]).collect(reducing(10, lambda a, b: a + b))` is called
+- **WHEN** `Stream([1, 2, 3]).collect(reducing(10, lambda a, b: a + b))` is called
 - **THEN** the result is `16`
 
 #### Scenario: empty stream returns identity unchanged
-- **WHEN** `Stream.of([]).collect(reducing(10, lambda a, b: a + b))` is called
+- **WHEN** `Stream([]).collect(reducing(10, lambda a, b: a + b))` is called
 - **THEN** the result is `10`
 
 ### Requirement: `reducing(identity, mapper, binary_operator)` collector factory
@@ -52,11 +52,11 @@ BinaryOperator<U> op)` — argument order is identity, then mapper, then fold
 operator, matching Java exactly.
 
 #### Scenario: maps then folds starting from identity
-- **WHEN** `Stream.of(["a", "bb", "ccc"]).collect(reducing(0, len, lambda a, b: a + b))` is called
+- **WHEN** `Stream(["a", "bb", "ccc"]).collect(reducing(0, len, lambda a, b: a + b))` is called
 - **THEN** the result is `6`
 
 #### Scenario: empty stream returns identity unchanged
-- **WHEN** `Stream.of([]).collect(reducing(0, len, lambda a, b: a + b))` is called
+- **WHEN** `Stream([]).collect(reducing(0, len, lambda a, b: a + b))` is called
 - **THEN** the result is `0`
 
 #### Scenario: async mapper and async binary_operator are both awaited

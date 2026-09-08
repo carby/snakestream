@@ -15,12 +15,12 @@ from snakestream.exception import (
 @pytest.mark.asyncio
 async def test_build_error_is_caught_by_the_base() -> None:
     with pytest.raises(StreamException):
-        await Stream.of([1, 2, 3]).collect(lambda c: c)
+        await Stream([1, 2, 3]).collect(lambda c: c)
 
 
 @pytest.mark.asyncio
 async def test_reuse_error_is_caught_by_the_base() -> None:
-    stream = Stream.of([1, 2, 3])
+    stream = Stream([1, 2, 3])
     stream.map(lambda x: x)
     with pytest.raises(StreamException):
         stream.map(lambda x: x)
@@ -29,7 +29,7 @@ async def test_reuse_error_is_caught_by_the_base() -> None:
 @pytest.mark.asyncio
 async def test_existing_leaf_catch_still_works() -> None:
     with pytest.raises(StreamBuildException):
-        await Stream.of([1, 2, 3]).collect(lambda c: c)
+        await Stream([1, 2, 3]).collect(lambda c: c)
 
 
 def test_base_is_not_a_value_error() -> None:
@@ -53,20 +53,20 @@ def test_both_leaves_report_the_base_as_an_ancestor() -> None:
 @pytest.mark.asyncio
 async def test_bool_comparator_rejection_is_caught_by_stream_build_exception() -> None:
     with pytest.raises(StreamBuildException):
-        await Stream.of([3, 1, 2]).sorted(lambda a, b: a > b).collect(to_list())
+        await Stream([3, 1, 2]).sorted(lambda a, b: a > b).collect(to_list())
 
 
 @pytest.mark.asyncio
 async def test_bool_comparator_rejection_is_caught_by_the_library_base() -> None:
     with pytest.raises(StreamException):
-        await Stream.of([3, 1, 2]).sorted(lambda a, b: a > b).collect(to_list())
+        await Stream([3, 1, 2]).sorted(lambda a, b: a > b).collect(to_list())
 
 
 @pytest.mark.asyncio
 async def test_bool_comparator_rejection_propagates_uncaught_past_value_error() -> None:
     with pytest.raises(TypeError):  # noqa: PT012
         try:
-            await Stream.of([3, 1, 2]).sorted(lambda a, b: a > b).collect(to_list())
+            await Stream([3, 1, 2]).sorted(lambda a, b: a > b).collect(to_list())
         except ValueError:  # pragma: no cover - the point is that this never matches
             pytest.fail("ComparatorContractException must not derive from ValueError")
 

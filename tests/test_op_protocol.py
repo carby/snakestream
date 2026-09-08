@@ -75,7 +75,7 @@ def test_stateful_op_makes_a_fresh_empty_container_each_call(op) -> None:
 @pytest.mark.asyncio
 async def test_state_map_holds_entries_only_for_stateful_ops() -> None:
     # given a chain mixing stateful and stateless ops
-    stream = Stream.of([1, 2, 3]).parallel().map(lambda x: x).distinct().filter(lambda x: True).limit(2)
+    stream = Stream([1, 2, 3]).parallel().map(lambda x: x).distinct().filter(lambda x: True).limit(2)
     chain = stream._chain
     # when the state map is built the way _parallel() builds it
     state_map = {}
@@ -103,7 +103,7 @@ async def test_a_stateless_ops_sink_begins_on_an_empty_state_map() -> None:
 @pytest.mark.asyncio
 async def test_shared_state_still_reaches_the_sinks_of_a_parallel_chain() -> None:
     # given a chain whose correctness depends on the state map built above
-    it = await Stream.of([1, 1, 2, 2, 3, 3]).parallel().distinct().collect(to_list())
+    it = await Stream([1, 1, 2, 2, 3, 3]).parallel().distinct().collect(to_list())
     # then every duplicate was seen by whichever branch pulled it
     assert sorted(it) == [1, 2, 3]
 

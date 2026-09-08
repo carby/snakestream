@@ -12,7 +12,7 @@ async def _async_len(s: str) -> int:
 @pytest.mark.asyncio
 async def test_summarizing_int_basic_values() -> None:
     # when
-    result = await Stream.of(["a", "bb", "ccc"]).collect(summarizing_int(len))
+    result = await Stream(["a", "bb", "ccc"]).collect(summarizing_int(len))
 
     # then
     assert result.count == 3
@@ -25,8 +25,8 @@ async def test_summarizing_int_basic_values() -> None:
 @pytest.mark.asyncio
 async def test_summarizing_long_matches_summarizing_int() -> None:
     # when
-    long_result = await Stream.of([1, 2, 3]).collect(summarizing_long(lambda x: x))
-    int_result = await Stream.of([1, 2, 3]).collect(summarizing_int(lambda x: x))
+    long_result = await Stream([1, 2, 3]).collect(summarizing_long(lambda x: x))
+    int_result = await Stream([1, 2, 3]).collect(summarizing_int(lambda x: x))
 
     # then
     assert long_result == int_result
@@ -35,7 +35,7 @@ async def test_summarizing_long_matches_summarizing_int() -> None:
 @pytest.mark.asyncio
 async def test_summarizing_double_coerces_to_float() -> None:
     # when
-    result = await Stream.of([1, 2, 3]).collect(summarizing_double(lambda x: x))
+    result = await Stream([1, 2, 3]).collect(summarizing_double(lambda x: x))
 
     # then
     assert result.sum == 6.0
@@ -49,7 +49,7 @@ async def test_summarizing_double_coerces_to_float() -> None:
 @pytest.mark.asyncio
 async def test_summarizing_int_async_mapper() -> None:
     # when
-    result = await Stream.of(["a", "bb", "ccc"]).collect(summarizing_int(_async_len))
+    result = await Stream(["a", "bb", "ccc"]).collect(summarizing_int(_async_len))
 
     # then
     assert result.sum == 6
@@ -58,7 +58,7 @@ async def test_summarizing_int_async_mapper() -> None:
 @pytest.mark.asyncio
 async def test_summarizing_int_empty_stream() -> None:
     # when
-    result = await Stream.of([]).collect(summarizing_int(len))
+    result = await Stream([]).collect(summarizing_int(len))
 
     # then
     assert result.count == 0
@@ -82,8 +82,8 @@ def test_summarizing_double_does_not_report_unordered() -> None:
 @pytest.mark.asyncio
 async def test_summarizing_int_is_order_invariant_in_every_field() -> None:
     # given the same elements in two different orders
-    forward = await Stream.of(["a", "bb", "ccc", "dddd"]).collect(summarizing_int(len))
-    backward = await Stream.of(["dddd", "ccc", "bb", "a"]).collect(summarizing_int(len))
+    forward = await Stream(["a", "bb", "ccc", "dddd"]).collect(summarizing_int(len))
+    backward = await Stream(["dddd", "ccc", "bb", "a"]).collect(summarizing_int(len))
 
     # then the whole NamedTuple compares equal, which is the claim UNORDERED
     # makes, and every field is equal individually - including average, the one

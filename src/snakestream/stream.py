@@ -409,8 +409,6 @@ class Stream[T]:
 
     @staticmethod
     def of(*args: T) -> Stream[T]:
-        if len(args) == 1:
-            return Stream(args[0])
         return Stream(list(args))
 
     @staticmethod
@@ -481,7 +479,7 @@ class Stream[T]:
                 seed = cast(T, r)
                 yield seed
 
-        return Stream.of(_make_iterator(seed, nxt))
+        return Stream(_make_iterator(seed, nxt))
 
     # Intermediaries
     def filter(self, predicate: Predicate[T]) -> Stream[T]:

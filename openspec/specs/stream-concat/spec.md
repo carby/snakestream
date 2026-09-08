@@ -50,8 +50,8 @@ before they reach the concatenated stream.
 #### Scenario: Inputs carrying intermediate operations
 
 - **WHEN** `Stream.concat(a, b)` is consumed, where `a` is
-  `Stream.of([1, 2, 3, 4]).filter(lambda x: x < 3)` and `b` is
-  `Stream.of([5, 6, 7, 7]).distinct()`
+  `Stream([1, 2, 3, 4]).filter(lambda x: x < 3)` and `b` is
+  `Stream([5, 6, 7, 7]).distinct()`
 - **THEN** the elements produced are exactly `1, 2, 5, 6, 7`, in that order
 
 #### Scenario: Empty input on either side

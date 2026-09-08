@@ -15,15 +15,15 @@ and `False` always present, matching Java's
 downstream to `toList()`).
 
 #### Scenario: splits elements into true/false lists
-- **WHEN** `Stream.of([1, 2, 3, 4, 5]).collect(partitioning_by(lambda x: x % 2 == 0))` is called
+- **WHEN** `Stream([1, 2, 3, 4, 5]).collect(partitioning_by(lambda x: x % 2 == 0))` is called
 - **THEN** the result is `{True: [2, 4], False: [1, 3, 5]}`
 
 #### Scenario: empty stream still yields both keys with empty lists
-- **WHEN** `Stream.of([]).collect(partitioning_by(lambda x: True))` is called
+- **WHEN** `Stream([]).collect(partitioning_by(lambda x: True))` is called
 - **THEN** the result is `{True: [], False: []}`
 
 #### Scenario: one empty partition still appears as a key
-- **WHEN** `Stream.of([1, 2, 3]).collect(partitioning_by(lambda x: x > 100))` is called
+- **WHEN** `Stream([1, 2, 3]).collect(partitioning_by(lambda x: x > 100))` is called
 - **THEN** the result is `{True: [], False: [1, 2, 3]}`
 
 #### Scenario: async predicate is awaited
@@ -45,11 +45,11 @@ being absent. Passing a callable that is not a `Collector` as `downstream`
 SHALL raise `StreamBuildException`.
 
 #### Scenario: downstream collector reduces each partition
-- **WHEN** `Stream.of([1, 2, 3, 4, 5]).collect(partitioning_by(lambda x: x % 2 == 0, counting()))` is called
+- **WHEN** `Stream([1, 2, 3, 4, 5]).collect(partitioning_by(lambda x: x % 2 == 0, counting()))` is called
 - **THEN** the result is `{True: 2, False: 3}`
 
 #### Scenario: downstream still runs on an empty partition
-- **WHEN** `Stream.of([1, 3, 5]).collect(partitioning_by(lambda x: x % 2 == 0, counting()))` is called
+- **WHEN** `Stream([1, 3, 5]).collect(partitioning_by(lambda x: x % 2 == 0, counting()))` is called
 - **THEN** the result is `{True: 0, False: 3}`, the empty `True` partition finishing to the downstream collector's empty-input result
 
 #### Scenario: each partition gets its own downstream container

@@ -15,7 +15,7 @@ from snakestream import Stream
 @pytest.mark.asyncio
 async def test_reduce_no_identity_empty_stream_returns_none() -> None:
     # when
-    it = await Stream.of([]).reduce(lambda a, b: a + b)
+    it = await Stream([]).reduce(lambda a, b: a + b)
 
     # then
     assert it is None
@@ -31,7 +31,7 @@ async def test_reduce_no_identity_single_element_never_calls_accumulator() -> No
         return a + b
 
     # when
-    it = await Stream.of([7]).reduce(accumulator)
+    it = await Stream([7]).reduce(accumulator)
 
     # then: the lone element seeds the fold and is returned as-is
     assert it == 7
@@ -41,7 +41,7 @@ async def test_reduce_no_identity_single_element_never_calls_accumulator() -> No
 @pytest.mark.asyncio
 async def test_reduce_with_identity_empty_stream_returns_identity() -> None:
     # when
-    it = await Stream.of([]).reduce(42, lambda a, b: a + b)
+    it = await Stream([]).reduce(42, lambda a, b: a + b)
 
     # then
     assert it == 42
@@ -50,7 +50,7 @@ async def test_reduce_with_identity_empty_stream_returns_identity() -> None:
 @pytest.mark.asyncio
 async def test_reduce_with_falsy_identity_is_not_mistaken_for_unseeded() -> None:
     # when
-    it = await Stream.of([1, 2, 3]).reduce(0, lambda a, b: a + b)
+    it = await Stream([1, 2, 3]).reduce(0, lambda a, b: a + b)
 
     # then
     assert it == 6
@@ -64,7 +64,7 @@ async def test_reduce_no_identity_async_accumulator() -> None:
         return a + b
 
     # when
-    it = await Stream.of([1, 2, 3, 4]).reduce(accumulator)
+    it = await Stream([1, 2, 3, 4]).reduce(accumulator)
 
     # then
     assert it == 10
@@ -79,7 +79,7 @@ async def test_any_match_stops_pulling_after_the_match() -> None:
     seen = []
 
     # when
-    it = await Stream.of([1, 2, 3, 4]).peek(seen.append).any_match(lambda n: n == 1)
+    it = await Stream([1, 2, 3, 4]).peek(seen.append).any_match(lambda n: n == 1)
 
     # then
     assert it is True
@@ -92,7 +92,7 @@ async def test_find_first_stops_pulling_after_the_first_element() -> None:
     seen = []
 
     # when
-    it = await Stream.of([1, 2, 3, 4]).peek(seen.append).find_first()
+    it = await Stream([1, 2, 3, 4]).peek(seen.append).find_first()
 
     # then
     assert it == 1
@@ -105,7 +105,7 @@ async def test_find_any_stops_pulling_after_the_first_element() -> None:
     seen = []
 
     # when
-    it = await Stream.of([1, 2, 3, 4]).peek(seen.append).find_any()
+    it = await Stream([1, 2, 3, 4]).peek(seen.append).find_any()
 
     # then
     assert it == 1
@@ -118,7 +118,7 @@ async def test_all_match_stops_pulling_at_the_first_failure() -> None:
     seen = []
 
     # when
-    it = await Stream.of([1, 2, 3, 4]).peek(seen.append).all_match(lambda n: n < 2)
+    it = await Stream([1, 2, 3, 4]).peek(seen.append).all_match(lambda n: n < 2)
 
     # then
     assert it is False
@@ -131,7 +131,7 @@ async def test_none_match_stops_pulling_at_the_first_match() -> None:
     seen = []
 
     # when
-    it = await Stream.of([1, 2, 3, 4]).peek(seen.append).none_match(lambda n: n == 2)
+    it = await Stream([1, 2, 3, 4]).peek(seen.append).none_match(lambda n: n == 2)
 
     # then
     assert it is False
@@ -147,10 +147,10 @@ async def test_non_short_circuiting_terminals_pull_everything() -> None:
     for_min = []
 
     # when
-    count = await Stream.of([1, 2, 3, 4]).peek(for_count.append).count()
-    await Stream.of([1, 2, 3, 4]).peek(for_each.append).for_each(lambda n: None)
-    await Stream.of([1, 2, 3, 4]).peek(for_reduce.append).reduce(0, lambda a, b: a + b)
-    await Stream.of([1, 2, 3, 4]).peek(for_min.append).min(lambda a, b: a - b)
+    count = await Stream([1, 2, 3, 4]).peek(for_count.append).count()
+    await Stream([1, 2, 3, 4]).peek(for_each.append).for_each(lambda n: None)
+    await Stream([1, 2, 3, 4]).peek(for_reduce.append).reduce(0, lambda a, b: a + b)
+    await Stream([1, 2, 3, 4]).peek(for_min.append).min(lambda a, b: a - b)
 
     # then
     assert count == 4
@@ -167,7 +167,7 @@ async def test_short_circuiting_terminal_still_runs_end_on_a_buffering_op() -> N
     seen = []
 
     # when
-    it = await Stream.of([4, 1, 3, 2]).sorted().peek(seen.append).find_first()
+    it = await Stream([4, 1, 3, 2]).sorted().peek(seen.append).find_first()
 
     # then
     assert it == 1
@@ -193,7 +193,7 @@ async def test_any_match_stops_flat_map_mid_expansion() -> None:
         return Stream(tracked_inner(n))
 
     # when
-    it = await Stream.of([5]).flat_map(mapper).any_match(lambda n: n == 0)
+    it = await Stream([5]).flat_map(mapper).any_match(lambda n: n == 0)
 
     # then: the answer is settled on the inner stream's first element, and the
     # abandoned inner generator is closed
@@ -219,7 +219,7 @@ async def test_find_first_takes_exactly_one_inner_element() -> None:
         return Stream(tracked_inner(n))
 
     # when
-    it = await Stream.of([5, 6]).flat_map(mapper).find_first()
+    it = await Stream([5, 6]).flat_map(mapper).find_first()
 
     # then: one element out of the first inner stream, no second outer element
     assert it == 0
@@ -246,7 +246,7 @@ async def test_for_each_ordered_stays_in_source_order_on_a_parallel_stream() -> 
     seen = []
 
     # when
-    await Stream.of(values).parallel().map(_delay_by_position).for_each_ordered(seen.append)
+    await Stream(values).parallel().map(_delay_by_position).for_each_ordered(seen.append)
 
     # then
     assert seen == values
@@ -256,7 +256,7 @@ async def test_for_each_ordered_stays_in_source_order_on_a_parallel_stream() -> 
 async def test_ordered_parallel_find_first_returns_the_true_first_element() -> None:
     # when: the first element carries the longest delay, so a racing drive
     # would surface a later one first
-    it = await Stream.of(values).parallel().map(_delay_by_position).find_first()
+    it = await Stream(values).parallel().map(_delay_by_position).find_first()
 
     # then
     assert it == values[0]
@@ -265,7 +265,7 @@ async def test_ordered_parallel_find_first_returns_the_true_first_element() -> N
 @pytest.mark.asyncio
 async def test_unordered_parallel_find_first_still_returns_the_true_first() -> None:
     # when
-    it = await Stream.of(values).parallel().unordered().map(_delay_by_position).find_first()
+    it = await Stream(values).parallel().unordered().map(_delay_by_position).find_first()
 
     # then: unordered() does not relax find_first()'s guarantee. It clears the
     # requirement to honour encounter order, never the ability - the source
@@ -280,7 +280,7 @@ async def test_unordered_parallel_find_first_still_returns_the_true_first() -> N
 @pytest.mark.asyncio
 async def test_parallel_count_matches_sequential() -> None:
     # when
-    it = await Stream.of(list(range(50))).parallel().map(lambda n: n * 2).count()
+    it = await Stream(list(range(50))).parallel().map(lambda n: n * 2).count()
 
     # then
     assert it == 50
@@ -289,7 +289,7 @@ async def test_parallel_count_matches_sequential() -> None:
 @pytest.mark.asyncio
 async def test_parallel_reduce_sees_every_element_once() -> None:
     # when
-    it = await Stream.of(list(range(50))).parallel().reduce(0, lambda a, b: a + b)
+    it = await Stream(list(range(50))).parallel().reduce(0, lambda a, b: a + b)
 
     # then
     assert it == sum(range(50))
@@ -301,7 +301,7 @@ async def test_parallel_for_each_sees_every_element_once() -> None:
     seen = []
 
     # when
-    await Stream.of(list(range(50))).parallel().for_each(seen.append)
+    await Stream(list(range(50))).parallel().for_each(seen.append)
 
     # then
     assert sorted(seen) == list(range(50))
@@ -315,7 +315,7 @@ async def test_parallel_any_match_short_circuits_and_tears_down_cleanly(recwarn)
         return n
 
     # when
-    it = await Stream.of(list(range(50))).parallel().map(slow).any_match(lambda n: n >= 0)
+    it = await Stream(list(range(50))).parallel().map(slow).any_match(lambda n: n >= 0)
 
     # then: settled on the first arrival, with the abandoned racing branches
     # cancelled and gathered rather than left to warn
@@ -331,8 +331,8 @@ async def test_parallel_min_max_match_sequential() -> None:
         return a - b
 
     # when
-    smallest = await Stream.of([4, 1, 7, 2]).parallel().min(comparator)
-    largest = await Stream.of([4, 1, 7, 2]).parallel().max(comparator)
+    smallest = await Stream([4, 1, 7, 2]).parallel().min(comparator)
+    largest = await Stream([4, 1, 7, 2]).parallel().max(comparator)
 
     # then
     assert smallest == 1
@@ -347,7 +347,7 @@ async def test_terminals_still_reject_a_superseded_stream() -> None:
     from snakestream.exception import IllegalStateException
 
     # given
-    stream = Stream.of([1, 2, 3])
+    stream = Stream([1, 2, 3])
     stream.map(lambda n: n)
 
     # when / then
@@ -427,7 +427,7 @@ async def test_source_is_closed_when_the_drive_raises() -> None:
 
     # when
     with pytest.raises(ValueError, match="boom"):
-        await Stream.of(tracked_source()).map(boom).to_array()
+        await Stream(tracked_source()).map(boom).to_array()
 
     # then: the source is closed on the exception path, not only on the
     # exhausted and short-circuited ones

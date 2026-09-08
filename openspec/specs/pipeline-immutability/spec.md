@@ -22,7 +22,7 @@ lifecycle operation rather than a pipeline stage.
 - **THEN** `s2 is not s`, and a subsequent call on `s` raises `IllegalStateException`
 
 #### Scenario: Chaining still works without holding intermediate references
-- **WHEN** a fluent chain like `Stream.of([1, 2, 3]).map(f).filter(g).collect(to_list())` is awaited, with no intermediate result bound to a variable
+- **WHEN** a fluent chain like `Stream([1, 2, 3]).map(f).filter(g).collect(to_list())` is awaited, with no intermediate result bound to a variable
 - **THEN** it produces the same result as before this change
 
 ### Requirement: Mode switches return a new instance and invalidate the old reference

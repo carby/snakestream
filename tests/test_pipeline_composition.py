@@ -6,7 +6,7 @@ from snakestream.stream import Stream
 @pytest.mark.asyncio
 async def test_composition_does_not_shrink_chain() -> None:
     # given
-    stream = Stream.of([1, 2, 3]).map(lambda x: x * 2).filter(lambda x: x > 0)
+    stream = Stream([1, 2, 3]).map(lambda x: x * 2).filter(lambda x: x > 0)
     chain_len_before = len(stream._chain)
 
     # when
@@ -19,7 +19,7 @@ async def test_composition_does_not_shrink_chain() -> None:
 @pytest.mark.asyncio
 async def test_second_terminal_op_reuses_same_chain() -> None:
     # given
-    stream = Stream.of([1, 2, 3]).map(lambda x: x * 2)
+    stream = Stream([1, 2, 3]).map(lambda x: x * 2)
     chain_len_before = len(stream._chain)
 
     # when

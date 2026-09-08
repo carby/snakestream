@@ -12,7 +12,7 @@ from snakestream.stream import Stream
 @pytest.mark.asyncio
 async def test_grouping_by_no_downstream_buckets_into_lists() -> None:
     # when
-    result = await Stream.of([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2))
+    result = await Stream([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2))
 
     # then
     assert result == {1: [1, 3, 5], 0: [2, 4]}
@@ -21,7 +21,7 @@ async def test_grouping_by_no_downstream_buckets_into_lists() -> None:
 @pytest.mark.asyncio
 async def test_grouping_by_empty_stream_returns_empty_dict() -> None:
     # when
-    result = await Stream.of([]).collect(grouping_by(lambda x: x))
+    result = await Stream([]).collect(grouping_by(lambda x: x))
 
     # then
     assert result == {}
@@ -30,7 +30,7 @@ async def test_grouping_by_empty_stream_returns_empty_dict() -> None:
 @pytest.mark.asyncio
 async def test_grouping_by_only_produced_keys_present() -> None:
     # when
-    result = await Stream.of([1, 1, 1]).collect(grouping_by(lambda x: x))
+    result = await Stream([1, 1, 1]).collect(grouping_by(lambda x: x))
 
     # then
     assert result == {1: [1, 1, 1]}
@@ -43,7 +43,7 @@ async def test_grouping_by_async_classifier_is_awaited() -> None:
         return x % 2
 
     # when
-    result = await Stream.of([1, 2, 3, 4, 5]).collect(grouping_by(async_classifier))
+    result = await Stream([1, 2, 3, 4, 5]).collect(grouping_by(async_classifier))
 
     # then
     assert result == {1: [1, 3, 5], 0: [2, 4]}
@@ -52,7 +52,7 @@ async def test_grouping_by_async_classifier_is_awaited() -> None:
 @pytest.mark.asyncio
 async def test_grouping_by_with_counting_downstream() -> None:
     # when
-    result = await Stream.of([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2, counting()))
+    result = await Stream([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2, counting()))
 
     # then
     assert result == {1: 3, 0: 2}
@@ -61,7 +61,7 @@ async def test_grouping_by_with_counting_downstream() -> None:
 @pytest.mark.asyncio
 async def test_grouping_by_with_joining_downstream() -> None:
     # when
-    result = await Stream.of(["a", "bb", "ccc", "dd"]).collect(grouping_by(len, joining(", ")))
+    result = await Stream(["a", "bb", "ccc", "dd"]).collect(grouping_by(len, joining(", ")))
 
     # then
     assert result == {1: "a", 2: "bb, dd", 3: "ccc"}
@@ -70,7 +70,7 @@ async def test_grouping_by_with_joining_downstream() -> None:
 @pytest.mark.asyncio
 async def test_grouping_by_only_present_keys_get_downstream_reduced_entry() -> None:
     # when
-    result = await Stream.of(["a", "bb", "bbb"]).collect(grouping_by(len, counting()))
+    result = await Stream(["a", "bb", "bbb"]).collect(grouping_by(len, counting()))
 
     # then
     assert result == {1: 1, 2: 1, 3: 1}
@@ -102,8 +102,8 @@ async def test_grouping_by_into_a_set_collects_equal_in_either_order() -> None:
     backward = list(reversed(forward))
 
     # when
-    one = await Stream.of(forward).collect(grouping_by(lambda n: n % 3, to_set()))
-    other = await Stream.of(backward).collect(grouping_by(lambda n: n % 3, to_set()))
+    one = await Stream(forward).collect(grouping_by(lambda n: n % 3, to_set()))
+    other = await Stream(backward).collect(grouping_by(lambda n: n % 3, to_set()))
 
     # then the declared characteristic is true of the behaviour
     assert one == other
@@ -112,7 +112,7 @@ async def test_grouping_by_into_a_set_collects_equal_in_either_order() -> None:
 @pytest.mark.asyncio
 async def test_grouping_by_with_a_map_factory_returns_the_callers_type() -> None:
     # given the 3-arg form, whose second argument chooses the result container
-    result = await Stream.of([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2, OrderedDict, counting()))
+    result = await Stream([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2, OrderedDict, counting()))
 
     # then the caller's mapping reaches the caller intact, not copied into a dict
     assert isinstance(result, OrderedDict)
@@ -123,7 +123,7 @@ async def test_grouping_by_with_a_map_factory_returns_the_callers_type() -> None
 async def test_grouping_by_map_factory_survives_a_downstream_finisher() -> None:
     # given a downstream that has a finisher, which is where a rebuild into
     # dict would have destroyed the caller's type
-    result = await Stream.of(["a", "bb", "ccc", "dd"]).collect(grouping_by(len, OrderedDict, joining(", ")))
+    result = await Stream(["a", "bb", "ccc", "dd"]).collect(grouping_by(len, OrderedDict, joining(", ")))
 
     # then each key's finished value is in the mapping, and it is still an OrderedDict
     assert isinstance(result, OrderedDict)
@@ -136,8 +136,8 @@ async def test_grouping_by_calls_its_map_factory_once_per_collection() -> None:
     collector = grouping_by(lambda x: x % 2, OrderedDict, to_list())
 
     # when
-    first = await Stream.of([1, 2]).collect(collector)
-    second = await Stream.of([3]).collect(collector)
+    first = await Stream([1, 2]).collect(collector)
+    second = await Stream([3]).collect(collector)
 
     # then each collection got its own mapping
     assert first is not second
@@ -148,7 +148,7 @@ async def test_grouping_by_calls_its_map_factory_once_per_collection() -> None:
 @pytest.mark.asyncio
 async def test_grouping_by_with_a_map_factory_over_an_empty_stream() -> None:
     # when
-    result = await Stream.of([]).collect(grouping_by(lambda x: x, OrderedDict, to_list()))
+    result = await Stream([]).collect(grouping_by(lambda x: x, OrderedDict, to_list()))
 
     # then the caller's type survives even with no groups to put in it
     assert isinstance(result, OrderedDict)
@@ -163,7 +163,7 @@ async def test_grouping_by_awaits_an_async_map_factory() -> None:
         return OrderedDict()
 
     # when
-    result = await Stream.of([1, 2, 3]).collect(grouping_by(lambda x: x % 2, make, to_list()))
+    result = await Stream([1, 2, 3]).collect(grouping_by(lambda x: x % 2, make, to_list()))
 
     # then
     assert isinstance(result, OrderedDict)
@@ -185,7 +185,7 @@ async def test_grouping_by_two_argument_call_still_binds_downstream() -> None:
     """The regression pair for arity dispatch: Java puts map_factory second, and
     a two-argument call must still read its second argument as the downstream."""
     # when
-    result = await Stream.of([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2, counting()))
+    result = await Stream([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2, counting()))
 
     # then the Collector went to downstream, not to map_factory
     assert result == {1: 3, 0: 2}
@@ -195,7 +195,7 @@ async def test_grouping_by_two_argument_call_still_binds_downstream() -> None:
 @pytest.mark.asyncio
 async def test_grouping_by_one_argument_call_is_unchanged() -> None:
     # when
-    result = await Stream.of([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2))
+    result = await Stream([1, 2, 3, 4, 5]).collect(grouping_by(lambda x: x % 2))
 
     # then
     assert result == {1: [1, 3, 5], 0: [2, 4]}

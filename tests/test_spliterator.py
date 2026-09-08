@@ -19,7 +19,7 @@ async def test_spliterator_returns_without_consuming() -> None:
             pulled.append(i)
             yield i
 
-    sp = Stream.of(source()).map(lambda x: x).spliterator()
+    sp = Stream(source()).map(lambda x: x).spliterator()
 
     assert isinstance(sp, Spliterator)
     assert pulled == []
@@ -27,7 +27,7 @@ async def test_spliterator_returns_without_consuming() -> None:
 
 @pytest.mark.asyncio
 async def test_traversing_a_spliterator_matches_collect() -> None:
-    chain = lambda: Stream.of([1, 2, 3, 4]).map(lambda x: x * 2).filter(lambda x: x > 2)  # noqa: E731
+    chain = lambda: Stream([1, 2, 3, 4]).map(lambda x: x * 2).filter(lambda x: x > 2)  # noqa: E731
 
     sp = chain().spliterator()
     seen = []
@@ -39,7 +39,7 @@ async def test_traversing_a_spliterator_matches_collect() -> None:
 
 @pytest.mark.asyncio
 async def test_spliterator_does_not_consume_or_mutate_chain() -> None:
-    stream = Stream.of([1, 2, 3]).map(lambda x: x * 2)
+    stream = Stream([1, 2, 3]).map(lambda x: x * 2)
     chain_len_before = len(stream._chain)
 
     stream.spliterator()
@@ -52,7 +52,7 @@ async def test_spliterator_does_not_consume_or_mutate_chain() -> None:
 
 @pytest.mark.asyncio
 async def test_try_advance_invokes_action_once_and_returns_true() -> None:
-    sp = Stream.of([1, 2, 3]).spliterator()
+    sp = Stream([1, 2, 3]).spliterator()
     seen = []
 
     advanced = await sp.try_advance(seen.append)
@@ -63,7 +63,7 @@ async def test_try_advance_invokes_action_once_and_returns_true() -> None:
 
 @pytest.mark.asyncio
 async def test_try_advance_on_exhausted_spliterator_returns_false() -> None:
-    sp = Stream.of([]).spliterator()
+    sp = Stream([]).spliterator()
     seen = []
 
     advanced = await sp.try_advance(seen.append)
@@ -74,7 +74,7 @@ async def test_try_advance_on_exhausted_spliterator_returns_false() -> None:
 
 @pytest.mark.asyncio
 async def test_try_advance_accepts_an_async_action() -> None:
-    sp = Stream.of([1]).spliterator()
+    sp = Stream([1]).spliterator()
     seen = []
 
     async def action(x):
@@ -92,7 +92,7 @@ async def test_try_advance_on_an_unsized_source_leaves_size_unknown() -> None:
         yield 1
         yield 2
 
-    sp = Stream.of(gen()).spliterator()
+    sp = Stream(gen()).spliterator()
     seen = []
 
     advanced = await sp.try_advance(seen.append)
@@ -107,7 +107,7 @@ async def test_try_advance_on_an_unsized_source_leaves_size_unknown() -> None:
 
 @pytest.mark.asyncio
 async def test_a_split_covers_a_contiguous_prefix() -> None:
-    sp = Stream.of(list(range(10))).spliterator()
+    sp = Stream(list(range(10))).spliterator()
 
     split = await sp.try_split()
     assert split is not None
@@ -124,7 +124,7 @@ async def test_a_split_covers_a_contiguous_prefix() -> None:
 @pytest.mark.asyncio
 async def test_splits_and_the_remainder_reconstitute_the_stream() -> None:
     source = list(range(50))
-    sp = Stream.of(source).spliterator()
+    sp = Stream(source).spliterator()
 
     splits = []
     while (split := await sp.try_split()) is not None:
@@ -140,7 +140,7 @@ async def test_splits_and_the_remainder_reconstitute_the_stream() -> None:
 
 @pytest.mark.asyncio
 async def test_splitting_terminates() -> None:
-    sp = Stream.of(list(range(5))).spliterator()
+    sp = Stream(list(range(5))).spliterator()
 
     async def loop_until_none():
         count = 0
@@ -158,7 +158,7 @@ async def test_splitting_terminates() -> None:
 @pytest.mark.asyncio
 async def test_a_split_stops_at_the_batch_size_leaving_a_remainder() -> None:
     source = list(range(BATCH_SIZE + 5))
-    sp = Stream.of(source).spliterator()
+    sp = Stream(source).spliterator()
 
     split = await sp.try_split()
 
@@ -173,7 +173,7 @@ async def test_an_unsized_source_is_split_by_draining_a_batch() -> None:
         for i in range(5):
             yield i
 
-    sp = Stream.of(gen()).spliterator()
+    sp = Stream(gen()).spliterator()
 
     split = await sp.try_split()
 
@@ -191,7 +191,7 @@ async def test_an_unsized_source_is_split_by_draining_a_batch() -> None:
 
 @pytest.mark.asyncio
 async def test_a_sized_source_reports_its_length_without_pulling() -> None:
-    sp = Stream.of([1, 2, 3]).spliterator()
+    sp = Stream([1, 2, 3]).spliterator()
 
     assert sp.estimate_size() == 3
 
@@ -202,14 +202,14 @@ async def test_an_unsized_source_reports_the_unknown_value() -> None:
         yield 1
         yield 2
 
-    sp = Stream.of(gen()).spliterator()
+    sp = Stream(gen()).spliterator()
 
     assert sp.estimate_size() is None
 
 
 @pytest.mark.asyncio
 async def test_a_cardinality_changing_op_clears_the_size_hint() -> None:
-    sp = Stream.of([1, 2, 3, 4]).filter(lambda x: x % 2 == 0).spliterator()
+    sp = Stream([1, 2, 3, 4]).filter(lambda x: x % 2 == 0).spliterator()
 
     assert sp.estimate_size() is None
 
@@ -219,21 +219,21 @@ async def test_a_cardinality_changing_op_clears_the_size_hint() -> None:
 
 @pytest.mark.asyncio
 async def test_an_ordered_streams_spliterator_reports_ordered() -> None:
-    sp = Stream.of([1, 2, 3]).spliterator()
+    sp = Stream([1, 2, 3]).spliterator()
 
     assert Characteristics.ORDERED in sp.characteristics()
 
 
 @pytest.mark.asyncio
 async def test_an_unordered_streams_spliterator_does_not_report_ordered() -> None:
-    sp = Stream.of([1, 2, 3]).unordered().spliterator()
+    sp = Stream([1, 2, 3]).unordered().spliterator()
 
     assert Characteristics.ORDERED not in sp.characteristics()
 
 
 @pytest.mark.asyncio
 async def test_a_split_reports_characteristics_consistent_with_its_parent() -> None:
-    sp = Stream.of(list(range(10))).spliterator()
+    sp = Stream(list(range(10))).spliterator()
     parent_characteristics = sp.characteristics()
 
     split = await sp.try_split()
@@ -247,7 +247,7 @@ async def test_an_unsized_streams_spliterator_does_not_report_sized() -> None:
     async def gen():
         yield 1
 
-    sp = Stream.of(gen()).spliterator()
+    sp = Stream(gen()).spliterator()
 
     assert Characteristics.SIZED not in sp.characteristics()
 
@@ -257,7 +257,7 @@ async def test_an_unsized_streams_spliterator_does_not_report_sized() -> None:
 
 @pytest.mark.asyncio
 async def test_for_each_remaining_consumes_only_what_is_left() -> None:
-    sp = Stream.of([1, 2, 3, 4]).spliterator()
+    sp = Stream([1, 2, 3, 4]).spliterator()
     first = []
     await sp.try_advance(first.append)
 
@@ -271,7 +271,7 @@ async def test_for_each_remaining_consumes_only_what_is_left() -> None:
 
 @pytest.mark.asyncio
 async def test_for_each_remaining_accepts_an_async_action() -> None:
-    sp = Stream.of([1, 2, 3]).spliterator()
+    sp = Stream([1, 2, 3]).spliterator()
     seen = []
 
     async def action(x):
@@ -288,7 +288,7 @@ async def test_for_each_remaining_awaits_a_plain_def_returning_a_coroutine() -> 
     # returns a coroutine (an async-def __call__ is the case it does catch);
     # the one-time isawaitable() safety net inside for_each_remaining's loop
     # is what still awaits it, matching callable_dispatch.py's canonical shape
-    sp = Stream.of([1, 2, 3]).spliterator()
+    sp = Stream([1, 2, 3]).spliterator()
     seen = []
 
     async def _record(x):

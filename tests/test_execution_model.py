@@ -19,18 +19,18 @@ from snakestream.ordering import OrderDemand
 
 @pytest.mark.asyncio
 async def test_a_sequentially_built_stream_reports_sequential() -> None:
-    assert Stream.of([1, 2, 3]).is_parallel() is False
+    assert Stream([1, 2, 3]).is_parallel() is False
 
 
 @pytest.mark.asyncio
 async def test_a_parallel_stream_reports_parallel() -> None:
-    assert Stream.of([1, 2, 3]).parallel().is_parallel() is True
+    assert Stream([1, 2, 3]).parallel().is_parallel() is True
 
 
 @pytest.mark.asyncio
 async def test_intermediate_operations_carry_the_executor_forward() -> None:
     # when
-    s = Stream.of([1, 2, 3]).parallel().map(lambda x: x).filter(lambda x: True)
+    s = Stream([1, 2, 3]).parallel().map(lambda x: x).filter(lambda x: True)
     # then
     assert s.is_parallel() is True
 
@@ -120,7 +120,7 @@ async def test_a_mode_switch_does_not_compose_the_queued_chain() -> None:
     seen = []
 
     # when
-    it = await Stream.of([1, 2, 3]).peek(seen.append).sequential().collect(to_list())
+    it = await Stream([1, 2, 3]).peek(seen.append).sequential().collect(to_list())
 
     # then: the op still ran, and the switch left it queued rather than
     # freezing it into a composed source
@@ -131,7 +131,7 @@ async def test_a_mode_switch_does_not_compose_the_queued_chain() -> None:
 @pytest.mark.asyncio
 async def test_a_mode_switch_returns_a_distinct_object_and_consumes_the_receiver() -> None:
     # given
-    s = Stream.of([1, 2, 3])
+    s = Stream([1, 2, 3])
 
     # when
     p = s.parallel()
@@ -146,7 +146,7 @@ async def test_a_mode_switch_returns_a_distinct_object_and_consumes_the_receiver
 async def test_a_stateful_op_declared_before_parallel_stays_globally_correct() -> None:
     # when: distinct() is declared before the switch, so it now runs across
     # racing branches rather than in a frozen sequential pass
-    it = await Stream.of([1, 2, 3] * 10).distinct().parallel().collect(to_list())
+    it = await Stream([1, 2, 3] * 10).distinct().parallel().collect(to_list())
     # then
     assert sorted(it) == [1, 2, 3]
 
@@ -169,7 +169,7 @@ async def test_an_ordinary_terminal_follows_the_streams_executor() -> None:
 
     # when
     started = time.time()
-    await Stream.of(list(range(8))).parallel().map(slow).count()
+    await Stream(list(range(8))).parallel().map(slow).count()
     elapsed = time.time() - started
 
     # then count() raced, rather than forcing an ordered drive
@@ -184,7 +184,7 @@ async def test_for_each_ordered_follows_the_streams_executor_when_ordered() -> N
 
     # when
     started = time.time()
-    await Stream.of([1, 2, 3, 4]).parallel().map(_delayed).for_each_ordered(seen.append)
+    await Stream([1, 2, 3, 4]).parallel().map(_delayed).for_each_ordered(seen.append)
     elapsed = time.time() - started
 
     # then the consumer saw encounter order, and the chain still raced - the
@@ -200,7 +200,7 @@ async def test_for_each_ordered_follows_the_streams_executor_when_unordered() ->
     seen: list[int] = []
 
     # when
-    await Stream.of([1, 2, 3, 4]).parallel().unordered().map(_delayed).for_each_ordered(seen.append)
+    await Stream([1, 2, 3, 4]).parallel().unordered().map(_delayed).for_each_ordered(seen.append)
 
     # then every element exactly once, under the stream's own executor, with no
     # barrier engaged - so no order is promised
@@ -210,7 +210,7 @@ async def test_for_each_ordered_follows_the_streams_executor_when_unordered() ->
 @pytest.mark.asyncio
 async def test_find_first_on_an_ordered_parallel_stream_follows_the_executor() -> None:
     # when
-    it = await Stream.of([1, 2, 3, 4]).parallel().map(_delayed).find_first()
+    it = await Stream([1, 2, 3, 4]).parallel().map(_delayed).find_first()
     # then: the true first element, not the first to arrive - and obtained
     # under the racing executor, not by dropping to a sequential drive
     assert it == 1
@@ -220,7 +220,7 @@ async def test_find_first_on_an_ordered_parallel_stream_follows_the_executor() -
 async def test_find_first_holds_when_the_op_is_declared_before_parallel() -> None:
     # when: the map runs under the racing executor here as it does for every
     # ordinary terminal - find_first() no longer overrides that
-    it = await Stream.of([1, 2, 3, 4]).map(_delayed).parallel().find_first()
+    it = await Stream([1, 2, 3, 4]).map(_delayed).parallel().find_first()
     # then
     assert it == 1
 
@@ -228,7 +228,7 @@ async def test_find_first_holds_when_the_op_is_declared_before_parallel() -> Non
 @pytest.mark.asyncio
 async def test_find_first_on_an_unordered_stream_is_not_released_by_it() -> None:
     # when
-    it = await Stream.of([1, 2, 3, 4]).parallel().unordered().map(_delayed).find_first()
+    it = await Stream([1, 2, 3, 4]).parallel().unordered().map(_delayed).find_first()
     # then the true first element, not any element. This assertion used to be
     # `it in [1, 2, 3, 4]` with a comment saying find_first() behaves as
     # find_any() here - which contradicted both the stream-find-first
@@ -243,8 +243,8 @@ async def test_find_first_on_an_unordered_stream_is_not_released_by_it() -> None
 @pytest.mark.asyncio
 async def test_both_executors_produce_the_same_elements() -> None:
     # when
-    seq = await Stream.of(list(range(20))).map(lambda x: x * 2).collect(to_list())
-    par = await Stream.of(list(range(20))).parallel().map(lambda x: x * 2).collect(to_list())
+    seq = await Stream(list(range(20))).map(lambda x: x * 2).collect(to_list())
+    par = await Stream(list(range(20))).parallel().map(lambda x: x * 2).collect(to_list())
     # then: same elements, subject only to each mode's ordering guarantee
     assert sorted(par) == seq
 
@@ -288,8 +288,8 @@ async def test_fork_join_falls_through_to_the_generic_value_for_a_non_partitioni
         async def accept(self, element):
             self._container.append(element)
 
-    fused = await Stream.of([1, 2, 3, 4, 5]).parallel().reduce(0, lambda a, b: a + b)
-    generic = await Stream.of([1, 2, 3, 4, 5])._evaluate(_NeverPartitions(), OrderDemand.NONE)
+    fused = await Stream([1, 2, 3, 4, 5]).parallel().reduce(0, lambda a, b: a + b)
+    generic = await Stream([1, 2, 3, 4, 5])._evaluate(_NeverPartitions(), OrderDemand.NONE)
 
     assert fused == 15
     assert generic == [1, 2, 3, 4, 5]
