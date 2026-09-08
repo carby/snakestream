@@ -81,21 +81,30 @@ and from `b` only once `a` is exhausted.
 
 ### Requirement: The concatenated stream carries both operands' close handlers
 
-The stream returned by `Stream.concat(a, b)` SHALL be constructed with the
-close handlers registered on `a`, in their registration order, followed by
-those registered on `b`, in their registration order. Calling `close()` on the
-concatenated stream SHALL therefore invoke every handler registered on either
-input, matching Java's `Stream.concat`, whose result closes both inputs.
+The stream returned by `Stream.concat(a, b)` SHALL carry the close handlers
+registered on `a`, in their registration order, followed by those registered on
+`b`, in their registration order. Calling `close()` on the concatenated stream
+SHALL therefore invoke every handler registered on either input, matching
+Java's `Stream.concat`, whose result closes both inputs.
 
-Handlers SHALL be taken as they stand when `concat()` is called. Registering a
-handler on `a` or `b` after `concat()` has returned SHALL NOT retroactively add
-it to the concatenated stream, consistent with the concatenated stream being an
-ordinary `Stream` constructed with an explicit `close_handlers` list per the
-`stream-close-handling` capability.
+Handlers SHALL be taken as they stand when `concat()` is called, and the
+concatenated stream SHALL own its handler list rather than share either
+operand's. The list is therefore independent in **both** directions:
+registering a handler on `a` or `b` after `concat()` has returned SHALL NOT
+retroactively add it to the concatenated stream, and registering a handler on
+the concatenated stream SHALL NOT add it to `a` or `b`.
 
-The existing rules of that capability apply unchanged to the concatenated
-stream: every handler runs, in order; a raising handler does not prevent later
-handlers from running; and the first exception raised is the one propagated.
+The second direction is stated because it is the one a plausible implementation
+loses silently. Assigning an operand's list to the concatenation, rather than
+building a new list from both, satisfies every other guarantee here while
+aliasing the two — and nothing else in this capability would fail.
+
+The existing rules of the `stream-close-handling` capability apply unchanged to
+the concatenated stream: every handler runs, in order; a raising handler does not
+prevent later handlers from running; and the first exception raised is the one
+propagated. That capability has no constructor argument for close handlers, so
+the concatenation obtains its handlers from its operands rather than from a
+caller.
 
 #### Scenario: Handlers from both inputs run
 
@@ -126,6 +135,12 @@ handlers from running; and the first exception raised is the one propagated.
 - **WHEN** `Stream.concat(a, b)` is called and a close handler is then
   registered on `a`, after which the concatenated stream's `close()` is called
 - **THEN** the handler registered after `concat()` is not invoked
+
+#### Scenario: Registering on the concatenation does not affect the operands
+
+- **WHEN** `Stream.concat(a, b)` is called and a close handler is then
+  registered on the concatenated stream, after which `close()` is called on `a`
+- **THEN** the handler registered on the concatenation is not invoked
 
 #### Scenario: A raising handler on one input does not skip the other's
 

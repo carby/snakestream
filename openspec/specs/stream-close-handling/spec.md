@@ -1,6 +1,6 @@
 ## Purpose
 
-Defines the `on_close()`/`close()` close-handler contract on `Stream`, regardless of execution mode — Java's AutoClose equivalent. Covers registering close handlers, invoking them on `close()`, initializing a stream's close handlers at construction time (including via an explicit `close_handlers` argument), and carrying registered handlers across `sequential()`/`parallel()` mode switches.
+Defines the `on_close()`/`close()` close-handler contract on `Stream`, regardless of execution mode — Java's AutoClose equivalent. Covers registering close handlers, invoking them on `close()`, and carrying registered handlers across `sequential()`/`parallel()` mode switches.
 
 ## Requirements
 
@@ -65,19 +65,31 @@ This SHALL be unconditional. `BaseException.add_note()` has existed since Python
 - **WHEN** `close()` is called with two raising handlers on any interpreter the distribution supports
 - **THEN** the first exception is raised carrying a note for the second, with no version-dependent path that would raise it unmodified
 
-### Requirement: A stream constructed with initial close handlers uses them
+### Requirement: A stream is constructed with no close handlers
 
-`Stream(source, close_handlers)` SHALL initialize the new stream's close handlers to the given list. `Stream(source)` (no `close_handlers` argument, or `None`) SHALL initialize the new stream with an empty list of close handlers. This holds whichever executor the resulting stream carries.
+`Stream(source)` SHALL initialize the new stream with an empty list of close
+handlers. There SHALL be no constructor argument for supplying handlers at
+construction time: `on_close()` is the only way to register one, and it works on
+a consumed reference, so nothing a caller could express through a constructor
+argument is lost.
 
-#### Scenario: Constructing with an explicit close_handlers list
+This holds whichever executor the resulting stream carries, and for every static
+factory that constructs a stream (`of()`, `empty()`, `iterate()`,
+`StreamBuilder.build()`).
 
-- **WHEN** `Stream(source, [handler])` is constructed
-- **THEN** `close()` on the resulting stream invokes `handler`
+A stream assembled from other streams — `Stream.concat(a, b)` — is the one case
+that starts with a non-empty list, and it takes those handlers from its operands
+rather than from its caller; see the `stream-concat` capability.
 
-#### Scenario: Constructing with no close_handlers argument
+#### Scenario: Constructing a stream registers no handlers
 
-- **WHEN** `Stream(source)` is constructed without a `close_handlers` argument
+- **WHEN** `Stream(source)` is constructed
 - **THEN** `close()` on the resulting stream invokes nothing, and `on_close()` can still be used afterward to register handlers
+
+#### Scenario: A handler argument is rejected
+
+- **WHEN** `Stream(source, [handler])` is called
+- **THEN** a `TypeError` is raised by Python's argument binding, rather than the handler being silently accepted or ignored
 
 ### Requirement: Close handlers propagate across sequential()/parallel() mode switches
 

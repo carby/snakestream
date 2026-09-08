@@ -39,8 +39,8 @@ async def test_intermediate_operations_carry_the_executor_forward() -> None:
 async def test_a_user_subclass_survives_a_mode_switch() -> None:
     # given: the documented use case of subclassing Stream to wrap a resource
     class MyStream(Stream):
-        def __init__(self, source, close_handlers=None) -> None:
-            super().__init__(source, close_handlers)
+        def __init__(self, source) -> None:
+            super().__init__(source)
             self.resource = object()
 
     # when
@@ -67,8 +67,8 @@ async def test_a_subclass_constructor_runs_once_per_pipeline() -> None:
     runs = []
 
     class CountingStream(Stream):
-        def __init__(self, source, close_handlers=None) -> None:
-            super().__init__(source, close_handlers)
+        def __init__(self, source) -> None:
+            super().__init__(source)
             runs.append(1)
 
     # when a pipeline is built out of it
@@ -77,7 +77,7 @@ async def test_a_subclass_constructor_runs_once_per_pipeline() -> None:
     # then the constructor ran once, at the caller's `CountingStream(...)`, and
     # not once per stage. Before derive-without-reinit this reported five: one
     # explicit, plus one for each of the four derivations, because _derive()
-    # built the next stage with type(self)(source, close_handlers).
+    # re-entered the constructor to build the next stage.
     assert len(runs) == 1
 
 
@@ -90,8 +90,8 @@ async def test_a_resource_acquired_in_the_constructor_is_acquired_once() -> None
     opened, closed = [], []
 
     class ConnStream(Stream):
-        def __init__(self, source, close_handlers=None) -> None:
-            super().__init__(source, close_handlers)
+        def __init__(self, source) -> None:
+            super().__init__(source)
             self.conn = object()
             opened.append(self.conn)
 
@@ -414,9 +414,9 @@ async def test_sync_and_scalar_sources_race_identically(make_source) -> None:
 # --- a subclass may define any constructor signature -----------------------
 #
 # Derivation copies rather than constructs, so nothing forces a subclass to
-# accept the base class's (source, close_handlers) parameters. That freedom is
-# the point of the change as much as the resource churn is: it is what makes
-# the resource-wrapping subclass CLAUDE.md documents actually writable.
+# accept the base class's (source) parameter. That freedom is the point of the
+# change as much as the resource churn is: it is what makes the
+# resource-wrapping subclass CLAUDE.md documents actually writable.
 
 
 @pytest.mark.asyncio
@@ -452,8 +452,8 @@ async def test_a_subclass_taking_no_arguments_at_all_can_be_extended() -> None:
 async def test_subclass_state_is_shared_across_a_pipelines_stages() -> None:
     # given a subclass holding mutable state
     class StatefulStream(Stream):
-        def __init__(self, source, close_handlers=None) -> None:
-            super().__init__(source, close_handlers)
+        def __init__(self, source) -> None:
+            super().__init__(source)
             self.seen = []
 
     original = StatefulStream([1, 2, 3])
