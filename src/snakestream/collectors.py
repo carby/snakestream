@@ -15,7 +15,7 @@ from snakestream.callable_dispatch import classify_step, is_async_callable, mayb
 from snakestream.collector import Characteristics, Collector
 from snakestream.comparator import is_new_extremum
 from snakestream.exception import IllegalStateException, StreamBuildException
-from snakestream.sink import UNSET, Box, unseeded
+from snakestream.sink import UNSET, unseeded
 from snakestream.type import (
     C,
     M,
@@ -101,23 +101,32 @@ def joining(delimiter: str = "", prefix: str = "", suffix: str = "") -> Collecto
     return Collector(list, list.append, combiner=_extend_list, finisher=_finish)
 
 
+@dataclass(slots=True)
+class _Box:
+    """A mutable single-value box. Lets a fixed accumulator function rebind a
+    scalar accumulation by mutating this in place, since it cannot rebind a
+    local of its caller's."""
+
+    value: Any = None
+
+
 def counting() -> Collector[Any, Any, int]:
     # Declares UNORDERED (see _ORDER_BLIND): counting the same elements in any
     # order gives the same int, so the declaration is true of the behaviour and
     # not merely asserted. min_by/max_by are excluded for good - collector-min-max
     # requires them not to declare it, because they return an *element* and so
     # have a tie to break, which counting does not.
-    def _accumulate(container: Box, element: Any) -> None:
+    def _accumulate(container: _Box, element: Any) -> None:
         container.value += 1
 
-    def _combine(a: Box, b: Box) -> Box:
+    def _combine(a: _Box, b: _Box) -> _Box:
         a.value += b.value
         return a
 
-    def _finish(container: Box) -> int:
+    def _finish(container: _Box) -> int:
         return container.value
 
-    return Collector(lambda: Box(0), _accumulate, combiner=_combine, finisher=_finish, characteristics=_ORDER_BLIND)
+    return Collector(lambda: _Box(0), _accumulate, combiner=_combine, finisher=_finish, characteristics=_ORDER_BLIND)
 
 
 # summing_int/summing_long and averaging_int/averaging_long/averaging_double

@@ -206,7 +206,7 @@ async def test_limit_skip_distinct_stay_correct_under_concurrent_batch_access() 
     # This raises the odds of catching a race; it cannot prove one absent.
     # A flaky failure here on a future change is real signal - do not read a
     # green run as license to remove a lock (_GuardedCounter's own docstring
-    # explains why Box, elsewhere in this codebase, correctly has none, which
+    # explains why _Box, elsewhere in this codebase, correctly has none, which
     # invites exactly that inverse edit) or to move `await downstream.accept
     # (element)` inside the `with state.lock:` block, which would serialise
     # the batches it is meant to let run concurrently, or deadlock them.
