@@ -111,6 +111,47 @@ def _null_sign(a: Any, b: Any, placement: NullPlacement) -> int:
     return -1 if b is None else 1
 
 
+def _extract_pair_sync(a: Any, b: Any, extractor: KeyExtractor | None, nulls: NullPlacement) -> tuple[Any, Any]:
+    """Both operands' keys, or the operands themselves. One call per segment
+    rather than two, so the async twin below allocates one coroutine per
+    segment instead of a pair.
+
+    Three cases collapse into one expression per side. A bare comparator
+    segment (`extractor is None`) compares the elements themselves. A tolerant
+    segment passes a `None` element straight through without ever calling the
+    extractor, which is what makes a null element sort by placement rather
+    than crash inside user code. Everything else extracts.
+
+    `NullPlacement.ABSENT` deliberately does **not** pass `None` through: it is
+    the intolerant comparator every `comparing()` call builds, and calling the
+    extractor on `None` - and raising out of it - is the behaviour it has
+    always had.
+
+    Returning `Any` is load-bearing. It is what lets both callers share one
+    unconditional `nulls is not ABSENT and (ea is None or eb is None)` guard;
+    the compound condition no type checker can narrow through costs nothing
+    when there is nothing left to narrow."""
+    return (
+        a if extractor is None or (a is None and nulls is not NullPlacement.ABSENT) else extractor(a),
+        b if extractor is None or (b is None and nulls is not NullPlacement.ABSENT) else extractor(b),
+    )
+
+
+async def _extract_pair_async(
+    a: Any, b: Any, extractor: KeyExtractor | None, nulls: NullPlacement, is_async: bool
+) -> tuple[Any, Any]:
+    """`_extract_pair_sync`'s twin, awaiting the extractor only when `is_async`
+    says this segment's needs it. Falls straight through to the sync helper
+    when it does not, so a sync extractor on an otherwise-async chain pays one
+    call rather than a second dispatch."""
+    if not is_async:
+        return _extract_pair_sync(a, b, extractor, nulls)
+    return (
+        a if extractor is None or (a is None and nulls is not NullPlacement.ABSENT) else await extractor(a),
+        b if extractor is None or (b is None and nulls is not NullPlacement.ABSENT) else await extractor(b),
+    )
+
+
 def _segment_sign_sync(
     extractor: KeyExtractor | None, comparator: Comparator | None, a: Any, b: Any, nulls: NullPlacement
 ) -> int:
@@ -121,25 +162,20 @@ def _segment_sign_sync(
     needs to tell them apart: it selects natural ordering,
     `(ea > eb) - (ea < eb)`, returned **before** the `type(sign) is not int`
     guard below, since natural ordering always produces an int and only a
-    user-supplied comparator can fail that check (Decision 3). `extractor is
-    None` means the elements themselves are what gets compared - a bare
-    comparator segment. A both-`None` tie folds into the ordinary
-    `sign == 0` no-op the caller's loop already treats as "continue" -
-    `_null_sign()` decides that case itself along with the one-sided ones, so
-    there is nothing here to tell apart. The null check is folded into the
-    `else:` below rather than shared unconditionally after the branch, because a shared,
-    unconditional `nulls is not ABSENT and (...)` guard is a compound
-    condition the type checker cannot narrow through - it would need
-    `cast("Any", ...)` on every read of `ea`/`eb` from here down to satisfy
-    it, which is the real cost this shape avoids, not an extra branch."""
-    if nulls is NullPlacement.ABSENT:
-        ea = a if extractor is None else cast("Any", extractor(a))
-        eb = b if extractor is None else cast("Any", extractor(b))
-    else:
-        ea = a if extractor is None else (None if a is None else cast("Any", extractor(a)))
-        eb = b if extractor is None else (None if b is None else cast("Any", extractor(b)))
-        if ea is None or eb is None:
-            return _null_sign(ea, eb, nulls)
+    user-supplied comparator can fail that check (Decision 3).
+
+    Which operands to extract from is `_extract_pair_sync`'s question, not
+    this one's, so the `nulls is ABSENT` split this function used to open with
+    is gone and the null check is shared unconditionally afterward. It reads
+    `ea`/`eb` rather than `a`/`b` on purpose: an extractor that *returns*
+    `None` for a non-`None` element makes a null key, which a tolerant
+    comparator places exactly as it places a null element. A both-`None` tie
+    folds into the ordinary `sign == 0` no-op the caller's loop already treats
+    as "continue" - `_null_sign()` decides that case itself along with the
+    one-sided ones, so there is nothing here to tell apart."""
+    ea, eb = _extract_pair_sync(a, b, extractor, nulls)
+    if nulls is not NullPlacement.ABSENT and (ea is None or eb is None):
+        return _null_sign(ea, eb, nulls)
     if comparator is None:
         return (ea > eb) - (ea < eb)
     sign = comparator(ea, eb)
@@ -158,26 +194,16 @@ async def _segment_sign_async(  # noqa: PLR0913, PLR0917
     nulls: NullPlacement,
     is_async: bool,
 ) -> int:
-    """`_segment_sign_sync`'s async twin, awaiting the extractor only when
-    `is_async` says this segment's extractor needs it. The comparator is
-    never awaited - it is always sync, per Decision 2/3 of this change and
-    `_reject_async_comparator`'s construction-time check. See
-    `_segment_sign_sync` for why the null check sits inside the `else:`
-    rather than being shared unconditionally afterward."""
-    if nulls is NullPlacement.ABSENT:
-        if extractor is None:
-            ea, eb = a, b
-        else:
-            ea = await extractor(a) if is_async else cast("Any", extractor(a))
-            eb = await extractor(b) if is_async else cast("Any", extractor(b))
-    else:
-        if extractor is None:
-            ea, eb = a, b
-        else:
-            ea = None if a is None else (await extractor(a) if is_async else cast("Any", extractor(a)))
-            eb = None if b is None else (await extractor(b) if is_async else cast("Any", extractor(b)))
-        if ea is None or eb is None:
-            return _null_sign(ea, eb, nulls)
+    """`_segment_sign_sync`'s async twin. The comparator is never awaited - it
+    is always sync, per Decision 2/3 of this change and
+    `_reject_async_comparator`'s construction-time check - so the await is
+    `_extract_pair_async`'s alone and everything below it is the sync twin
+    line for line. See `_segment_sign_sync` for why the null check is shared
+    rather than split, and `_extract_pair_sync` for why `ABSENT` is the one
+    placement that does not pass `None` through."""
+    ea, eb = await _extract_pair_async(a, b, extractor, nulls, is_async)
+    if nulls is not NullPlacement.ABSENT and (ea is None or eb is None):
+        return _null_sign(ea, eb, nulls)
     if comparator is None:
         return (ea > eb) - (ea < eb)
     sign = comparator(ea, eb)
