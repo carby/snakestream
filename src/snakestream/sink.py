@@ -12,7 +12,6 @@ from __future__ import annotations
 import re
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from typing import Any, ClassVar
 from collections.abc import Callable
 
@@ -35,15 +34,6 @@ def unseeded(container: Any) -> Any:
     boxes rather than sinks and so cannot share a base class with them - see
     design Decision 3 of collapse-unseeded-accumulation-rule."""
     return None if container is UNSET else container
-
-
-@dataclass(slots=True)
-class Box:
-    """A mutable single-value box. Lets a fixed accumulator function rebind a
-    scalar accumulation by mutating this in place, since it cannot rebind a
-    local of its caller's."""
-
-    value: Any = None
 
 
 class Sink[T](ABC):

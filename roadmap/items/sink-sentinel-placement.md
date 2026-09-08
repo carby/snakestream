@@ -4,7 +4,7 @@ title = "`UNSET` and `unseeded()` sit in `sink.py` on rejected reasoning"
 bucket = "later"
 rank = 5
 filed = 2026-09-03
-updated = 2026-09-06
+updated = 2026-09-08
 blocked_on = "whether `UNSET` stays one sentinel or becomes two — a two-symbol concern module and a one-sentinel-plus-one-rule module are different judgements"
 
 [refs]
@@ -25,8 +25,9 @@ did to `_split_point()`.
 were never one question — `UNSET` has three importing modules, `unseeded()` and
 `Box` have one each — and `Box`'s home follows from that count rather than from
 judgement, so it is now
-[`move-box-into-collectors`](move-box-into-collectors.md). What remains is the
-placement of two names, not three.
+`move-box-into-collectors`, which shipped on 2026-09-08 (see
+[`decisions.md`](../decisions.md)). What remains is the placement of two names,
+not three.
 
 **The quoted justification is stale and cannot be argued against as written.**
 `UNSET`'s comment says it lives in `sink.py` "because both [`terminals.py` and

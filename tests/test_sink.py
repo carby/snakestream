@@ -1,7 +1,8 @@
 import pytest
 
+from dataclasses import dataclass
+
 from snakestream.sink import (
-    Box,
     GeneratorBridgeSink,
     IntermediateSink,
     Op,
@@ -265,6 +266,15 @@ async def test_two_chains_from_one_op_share_one_state_instance_via_shared_map() 
 # --- The StatefulOp/StatefulSink bases --------------------------------------
 
 
+@dataclass(slots=True)
+class _ValueBox:
+    """A mutable single-value container, so these fixtures can exercise the
+    StatefulOp/StatefulSink sharing protocol without importing one from
+    collectors.py, which this module does not otherwise depend on."""
+
+    value: int = 0
+
+
 class _CountingStatefulSink(StatefulSink):
     async def accept(self, element) -> None:
         self._state.value += 1
@@ -274,8 +284,8 @@ class _CountingStatefulSink(StatefulSink):
 class _CountingStatefulOp(StatefulOp):
     _sink_cls = _CountingStatefulSink
 
-    def make_shared_state(self) -> Box:
-        return Box(0)
+    def make_shared_state(self) -> _ValueBox:
+        return _ValueBox(0)
 
 
 @pytest.mark.asyncio
@@ -301,7 +311,7 @@ async def test_fallback_state_comes_from_the_ops_own_factory() -> None:
 async def test_stateful_base_sink_uses_the_state_supplied_in_the_map() -> None:
     op = _CountingStatefulOp()
     sink = op.link(_RecordingTerminalSink())
-    shared = Box(10)
+    shared = _ValueBox(10)
 
     await _drive(sink, [1, 2], {op: shared})
 
@@ -320,20 +330,6 @@ async def test_two_stateful_base_sinks_from_one_op_share_one_counter() -> None:
     await _drive(sink_b, [1, 1], state_map)
 
     assert state_map[op].value == 3
-
-
-def test_box_holds_the_value_it_is_given_and_instances_are_independent() -> None:
-    first = Box(0)
-    second = Box(0)
-
-    assert first.value == 0
-    assert second.value == 0
-
-    first.value += 1
-
-    assert first.value == 1
-    assert second.value == 0
-    assert Box(7).value == 7
 
 
 def test_stateless_op_hands_its_args_to_its_sink() -> None:
@@ -368,8 +364,8 @@ def test_stateful_op_hands_itself_then_its_args_to_its_sink() -> None:
     class _ArgsOp(StatefulOp):
         _sink_cls = _ArgsSink
 
-        def make_shared_state(self) -> Box:
-            return Box(0)
+        def make_shared_state(self) -> _ValueBox:
+            return _ValueBox(0)
 
     op = _ArgsOp("a", 2)
     sink = op.link(_RecordingTerminalSink())

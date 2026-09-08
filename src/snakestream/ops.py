@@ -201,8 +201,9 @@ class _GuardedCounter:
     event loop, no await between the two - but under fork/join each sink
     sharing this counter runs its batch's chain on its own thread, so the
     same compound operation is a genuine data race without a real lock.
-    Kept out of Box (sink.py), which collectors also build per composition
-    and never share across threads - the lock would be dead weight there."""
+    Kept out of _Box (collectors.py), which collectors also build per
+    composition and never share across threads - the lock would be dead
+    weight there."""
 
     value: int = 0
     lock: threading.Lock = field(default_factory=threading.Lock)
