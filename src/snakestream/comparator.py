@@ -98,13 +98,17 @@ class NullPlacement(Enum):
     LAST = auto()
 
 
-def _null_sign(a_is_none: bool, placement: NullPlacement) -> int:
-    """The sign a null-vs-non-null pair contributes, before any descending
-    negation. `a_is_none` picks which side is `None`; the other side, by the
-    caller's contract, is not (a "both None" pair falls through to the next
-    segment instead of calling this)."""
-    at_front = -1 if placement is NullPlacement.FIRST else 1
-    return at_front if a_is_none else -at_front
+def _null_sign(a: Any, b: Any, placement: NullPlacement) -> int:
+    """The sign a pair with at least one `None` side contributes, before any
+    descending negation. Every case is decided here rather than split with the
+    caller: a both-`None` pair is a tie and returns 0, and a one-sided pair
+    sorts the `None` to whichever end `placement` names. The caller's only
+    contract is that it does not call this when neither side is `None`."""
+    if a is None and b is None:
+        return 0
+    if placement is NullPlacement.FIRST:
+        return -1 if a is None else 1
+    return -1 if b is None else 1
 
 
 def _segment_sign_sync(
@@ -121,9 +125,9 @@ def _segment_sign_sync(
     None` means the elements themselves are what gets compared - a bare
     comparator segment. A both-`None` tie folds into the ordinary
     `sign == 0` no-op the caller's loop already treats as "continue" -
-    `_null_sign()` only ever returns nonzero, so this is the one case that
-    needs to be told apart. The null check is folded into the `else:` below
-    rather than shared unconditionally after the branch, because a shared,
+    `_null_sign()` decides that case itself along with the one-sided ones, so
+    there is nothing here to tell apart. The null check is folded into the
+    `else:` below rather than shared unconditionally after the branch, because a shared,
     unconditional `nulls is not ABSENT and (...)` guard is a compound
     condition the type checker cannot narrow through - it would need
     `cast("Any", ...)` on every read of `ea`/`eb` from here down to satisfy
@@ -135,7 +139,7 @@ def _segment_sign_sync(
         ea = a if extractor is None else (None if a is None else cast("Any", extractor(a)))
         eb = b if extractor is None else (None if b is None else cast("Any", extractor(b)))
         if ea is None or eb is None:
-            return 0 if ea is None and eb is None else _null_sign(ea is None, nulls)
+            return _null_sign(ea, eb, nulls)
     if comparator is None:
         return (ea > eb) - (ea < eb)
     sign = comparator(ea, eb)
@@ -173,7 +177,7 @@ async def _segment_sign_async(  # noqa: PLR0913, PLR0917
             ea = None if a is None else (await extractor(a) if is_async else cast("Any", extractor(a)))
             eb = None if b is None else (await extractor(b) if is_async else cast("Any", extractor(b)))
         if ea is None or eb is None:
-            return 0 if ea is None and eb is None else _null_sign(ea is None, nulls)
+            return _null_sign(ea, eb, nulls)
     if comparator is None:
         return (ea > eb) - (ea < eb)
     sign = comparator(ea, eb)
@@ -384,17 +388,13 @@ class _NullsComparator:
         return self._compare_sync(a, b)
 
     def _compare_sync(self, a: Any, b: Any) -> int:
-        if a is None and b is None:
-            return 0
         if a is None or b is None:
-            return _null_sign(a is None, self._placement)
+            return _null_sign(a, b, self._placement)
         return cast("int", self._comparator(a, b))
 
     async def _compare_async(self, a: Any, b: Any) -> int:
-        if a is None and b is None:
-            return 0
         if a is None or b is None:
-            return _null_sign(a is None, self._placement)
+            return _null_sign(a, b, self._placement)
         return await cast("Any", self._comparator)(a, b)
 
 
