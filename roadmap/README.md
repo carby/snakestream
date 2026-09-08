@@ -48,9 +48,10 @@ bucket.
 
 *Empty.*
 
-### Later (1)
+### Later (2)
 
 1. [Java 9 additions — six, not four](items/java-9-additions.md) — filed 2026-08-20<br>  **Blocked on:** whether Java 9 becomes a tracked parity effort, gets cherry-picked for independent merit, or stays opportunistic with Java 8 as the destination
+2. [`spliterator()` is a one-way door, and the naive way back fails silently](items/spliterator-round-trip.md) — filed 2026-09-08<br>  **Blocked on:** which of four answers the one-way door gets - spread a `Spliterator` source, add a static for it, reject it loudly, or narrow the promise instead
 
 <!-- END INDEX -->
 
