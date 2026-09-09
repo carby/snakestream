@@ -1,5 +1,14 @@
 # Benchmark findings
 
+**Findings 1-3 and Correctness/Gates below are the prototype's own figures**,
+taken from `prototype.diff` before implementation - the shape `_build_compare`
+still carrying the `C901` finding and `comparator.py` still carrying the stale
+`_norm` docstrings. **"As implemented" is the shipped shape**: `prototype.diff`
+applied, then `_build_compare_tolerant` split out to clear `C901` (task 2.3),
+then the docstring and roadmap close-out tasks. The two tables differ only in
+which file produced them; the mechanism and direction are identical, which is
+the whole point of recording both rather than overwriting one.
+
 Two harnesses ship with this change, both kept rather than deleted so the
 figures design.md and proposal.md cite can be reproduced.
 
@@ -94,7 +103,7 @@ break-even is ~11 comparisons on a sync chain and ~5 on an async one.
 past a dozen elements is pure win. `sorted()` is unaffected either way - it
 reads `.segments` and never enters `__call__`.
 
-## Correctness
+## Correctness (prototype)
 
 The prototype was validated against the verbatim baseline across **26 comparator
 shapes x 49 input pairs = 1274 comparisons**, comparing both the returned sign
@@ -104,9 +113,66 @@ reverse-before and reverse-after chaining, bare comparator segments, chains
 mixing sync and async segments, contract violations, and the construction-time
 async-comparator rejection. **Zero mismatches.** `.segments` keeps its shape.
 
-## Gates
+## Gates (prototype)
 
 `ty check` passes clean on the prototype. `ruff format --check` clean.
 `ruff check` reports one finding to resolve during implementation:
 `C901 _build_compare is too complex (11 > 10)`, the nested closures counting
 toward the enclosing function.
+
+## As implemented
+
+Same machine (WSL2), same protocol as above, run against the shipped file
+(`_build_compare_tolerant` split out, `_norm` docstrings rewritten). `comp_plan`
+below is `src/snakestream/comparator.py` as committed, not the prototype diff.
+
+### Per-comparison (task 5.1), min ns/cmp, `bench_specialize.py`
+
+| shape | baseline | plan d(min) | plan d(med) | null floor d(min) |
+|---|---|---|---|---|
+| sync, one key segment | 267.1 | **-15.20%** (-40.6 ns) | -15.63% | -1.65% |
+| sync, comparator segment | 293.9 | **-11.80%** (-34.7 ns) | -11.62% | -0.66% |
+| sync, two-segment chain | 265.2 | **-14.90%** (-39.5 ns) | -14.71% | -0.83% |
+| sync tolerant, 10% None | 274.9 | **-10.88%** (-29.9 ns) | -10.80% | -1.46% |
+| async cheap, one key segment | 542.6 | **-18.35%** (-99.5 ns) | -18.61% | +0.77% |
+| async cheap tolerant, 10% None | 552.6 | **-16.28%** (-89.9 ns) | -15.71% | +0.07% |
+| async cheap, mixed chain | 548.5 | **-19.17%** (-105.2 ns) | -18.67% | -0.52% |
+| async canonical, one key segment | 3822.4 | **-5.56%** (-212.7 ns) | -4.16% | -1.30% |
+| async canonical tolerant, 10% None | 3615.9 | **-4.40%** (-159.0 ns) | -3.89% | +0.05% |
+
+Negative in all nine shapes, min and median agreeing, outside the null floor in
+every row - unchanged conclusion from the prototype's Finding 2, same
+mechanism, slightly different magnitudes (this run, this moment on the same
+machine; see design.md Risks on treating any of these as portable).
+
+### Construction (task 5.2), min of 60 rounds x 20,000 builds, ns/build
+
+| shape | baseline | plan | d ns | d % | null d% |
+|---|---|---|---|---|---|
+| `comparing(f)` | 1723.6 | 2019.1 | +295.5 | +17.14% | +1.01% |
+| `comparing(f, cmp)` | 3140.3 | 3607.6 | +467.2 | +14.88% | -1.50% |
+| 3-segment chain | 19841.0 | 21944.2 | +2103.2 | +10.60% | +0.53% |
+| `nulls_first(comparing(f))` | 3605.5 | 4365.5 | +760.0 | +21.08% | -2.34% |
+| `comparing(async f)` | 837.7 | 1251.5 | +413.8 | +49.40% | -0.52% |
+
+Every shape lands inside design.md Decision 4's accepted range (+10% to ~+50%);
+absolute deltas differ from the prototype's (which used a different, also
+WSL2, run) but the range and the conclusion do not. Per-comparison savings here
+are ~30-40ns sync, ~90-210ns async, so break-even stays ~11 comparisons on a
+sync chain, less on an async one - `min()`/`max()`/`min_by()`/`max_by()`
+perform n-1 over a stream, so anything past a dozen elements is pure win.
+`sorted()` is unaffected either way - it reads `.segments` and never enters
+`__call__`.
+
+### Correctness (as implemented)
+
+Re-run against `comp_baseline.py` with `comp_plan.py` taken from the shipped
+`comparator.py`: **26 comparator shapes x 49 input pairs = 1274 comparisons**,
+comparing both the returned sign and the exception type raised. **Zero
+mismatches.**
+
+### Gates (as implemented)
+
+`uv run ruff check .`, `uv run ruff format --check .` and `uv run ty check src`
+all pass clean - the `C901` finding is resolved by `_build_compare_tolerant`
+(task 2.3), not carried into the shipped file.
