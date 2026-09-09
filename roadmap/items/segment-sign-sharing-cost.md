@@ -2,7 +2,7 @@
 id = "segment-sign-sharing-cost"
 title = "Sharing anything between the segment-sign twins measures ~3%"
 bucket = "now"
-rank = 2
+rank = 1
 filed = 2026-09-08
 gate = "a shape that de-duplicates without paying the ~3%, or a measurement on other hardware that overturns it - not a tidier version of the same call"
 
