@@ -22,7 +22,7 @@ from snakestream.ops import (
     UnorderedOp,
 )
 from snakestream.ordering import OrderDemand, is_ordered
-from snakestream.sink import UNSET, Op, TerminalSink
+from snakestream.sink import Op, TerminalSink
 from snakestream.spliterator import Spliterator
 from snakestream.terminals import (
     CountSink,
@@ -45,6 +45,7 @@ from snakestream.type import (
     Predicate,
     Supplier,
 )
+from snakestream.unseeded import UNSET
 
 
 if TYPE_CHECKING:
@@ -52,8 +53,8 @@ if TYPE_CHECKING:
 
 
 # Sentinel for "argument omitted", used only to detect which of reduce()'s
-# slots the caller supplied. Distinct from sink.py's UNSET, which means "no
-# value yet" for an unseeded fold: every `is _MISSING` test here compares
+# slots the caller supplied. Distinct from unseeded.py's UNSET, which means
+# "no value yet" for an unseeded fold: every `is _MISSING` test here compares
 # against a default this module wrote for this function, so its identity
 # never needs to cross a module boundary. See design Decision 1 of
 # split-arity-and-seed-sentinels.

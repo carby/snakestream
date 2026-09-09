@@ -2,7 +2,7 @@
 id = "async-with-on-stream"
 title = "`async with` on `Stream`"
 bucket = "now"
-rank = 2
+rank = 1
 filed = 2026-08-31
 updated = 2026-09-08
 gate = "a delta to the `stream-close-handling` capability first — `CloseHandler` widened to permit an awaitable and `close()` given an async twin — with `__aenter__`/`__aexit__` following from it, not bolted on ahead of it"

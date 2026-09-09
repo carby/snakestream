@@ -19,22 +19,6 @@ from snakestream.callable_dispatch import maybe_await
 from snakestream.ordering import Ordering
 from snakestream.type import StateMap, T
 
-# Sentinel for "no value yet": distinguishes an unseeded reduction/accumulation
-# from one seeded with a legitimately falsy identity. Lives here rather than in
-# terminals.py or collectors.py because both need it and neither is downstream
-# of the other, so neither is a plausible host.
-UNSET = object()
-
-
-def unseeded(container: Any) -> Any:
-    """The rule stated once: an accumulation that never saw an element
-    finishes as None. A function rather than five inlined comparisons because
-    it is the only mechanism that reaches both terminals.py's sinks (through
-    UnseededSink below) and collectors.py's closures, which are dataclass
-    boxes rather than sinks and so cannot share a base class with them - see
-    design Decision 3 of collapse-unseeded-accumulation-rule."""
-    return None if container is UNSET else container
-
 
 class Sink[T](ABC):
     """Push-based op protocol: begin(state_map) / accept(element) / end(),
@@ -247,21 +231,6 @@ class TerminalSink(Sink[T]):
         concurrently - so an implementation needs no locking of its own.
         Only called where can_partition() is True."""
         raise NotImplementedError
-
-
-class UnseededSink(TerminalSink[T]):
-    """A terminal that starts with no value: _create_container() is UNSET and
-    _finish() applies the rule unseeded() states. Not folded into
-    TerminalSink's own default - see design Decision 1 of
-    collapse-unseeded-accumulation-rule for why: most TerminalSink subclasses
-    can never hold UNSET, and a universal default would assert the rule on
-    all of them regardless."""
-
-    def _create_container(self) -> Any:
-        return UNSET
-
-    def _finish(self, container: Any) -> Any:
-        return unseeded(container)
 
 
 class GeneratorBridgeSink(TerminalSink[T]):
