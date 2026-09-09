@@ -50,7 +50,8 @@ Segment = tuple[KeyExtractor, bool] | tuple[KeyExtractorComparator, bool]
 
 
 def _reject_async_comparator(comparator: Comparator) -> None:
-    """Construction-time half of Decision 2/3: an async supplied comparator
+    """Construction-time half of `add-comparator-segments` Decision 2/3: an
+    async supplied comparator
     has no key a sort tuple can hold, so it is refused here rather than
     falling back to a slower whole-chain path. The wrapper sort.py builds
     around a comparator segment's column (`_checked_segment_comparator`)
@@ -111,105 +112,105 @@ def _null_sign(a: Any, b: Any, placement: NullPlacement) -> int:
     return -1 if b is None else 1
 
 
-def _extract_pair_sync(a: Any, b: Any, extractor: KeyExtractor | None, nulls: NullPlacement) -> tuple[Any, Any]:
-    """Both operands' keys, or the operands themselves. One call per segment
-    rather than two, so the async twin below allocates one coroutine per
-    segment instead of a pair.
+def _build_extract(extractor: KeyExtractor | None, nulls: NullPlacement, is_async: bool) -> Any:
+    """The `(a, b) -> (ea, eb)` half of a segment, chosen once at construction.
 
-    Three cases collapse into one expression per side. A bare comparator
-    segment (`extractor is None`) compares the elements themselves. A tolerant
-    segment passes a `None` element straight through without ever calling the
-    extractor, which is what makes a null element sort by placement rather
-    than crash inside user code. Everything else extracts.
+    Every question this half used to re-ask per comparison - is there an
+    extractor, does this segment await, does it pass `None` through - is a
+    constant for the life of the comparator, so it is answered here and
+    burned into a closure. The sync/async twinning survives only in the two
+    keyed builders, which is the one place a segment can await.
 
     `NullPlacement.ABSENT` deliberately does **not** pass `None` through: it is
     the intolerant comparator every `comparing()` call builds, and calling the
-    extractor on `None` - and raising out of it - is the behaviour it has
-    always had.
+    extractor on `None` - and raising out of it - is the behaviour it has always
+    had. That is now structural: no tolerant builder is reachable when `nulls`
+    is `ABSENT`.
+    """
+    if extractor is None:
+        # A bare comparator segment compares the elements themselves, and can
+        # never await - there is no extractor to be async.
+        return lambda a, b: (a, b)
+    f = extractor
+    if nulls is NullPlacement.ABSENT:
+        if is_async:
 
-    Returning `Any` is load-bearing. It is what lets both callers share one
-    unconditional `nulls is not ABSENT and (ea is None or eb is None)` guard;
-    the compound condition no type checker can narrow through costs nothing
-    when there is nothing left to narrow."""
-    return (
-        a if extractor is None or (a is None and nulls is not NullPlacement.ABSENT) else extractor(a),
-        b if extractor is None or (b is None and nulls is not NullPlacement.ABSENT) else extractor(b),
-    )
+            async def extract_keyed_async(a: Any, b: Any) -> tuple[Any, Any]:
+                return (await f(a), await f(b))
 
+            return extract_keyed_async
+        return lambda a, b: (f(a), f(b))
+    if is_async:
 
-async def _extract_pair_async(
-    a: Any, b: Any, extractor: KeyExtractor | None, nulls: NullPlacement, is_async: bool
-) -> tuple[Any, Any]:
-    """`_extract_pair_sync`'s twin, awaiting the extractor only when `is_async`
-    says this segment's needs it. Falls straight through to the sync helper
-    when it does not, so a sync extractor on an otherwise-async chain pays one
-    call rather than a second dispatch."""
-    if not is_async:
-        return _extract_pair_sync(a, b, extractor, nulls)
-    return (
-        a if extractor is None or (a is None and nulls is not NullPlacement.ABSENT) else await extractor(a),
-        b if extractor is None or (b is None and nulls is not NullPlacement.ABSENT) else await extractor(b),
-    )
+        async def extract_tolerant_async(a: Any, b: Any) -> tuple[Any, Any]:
+            return (a if a is None else await f(a), b if b is None else await f(b))
+
+        return extract_tolerant_async
+    return lambda a, b: (a if a is None else f(a), b if b is None else f(b))
 
 
-def _segment_sign_sync(
-    extractor: KeyExtractor | None, comparator: Comparator | None, a: Any, b: Any, nulls: NullPlacement
-) -> int:
-    """One segment's sign, sync. A key segment and a comparator segment are
-    the same operation - `comparator-key-comparator` requires a key segment
-    to be equivalent to a bare comparator that extracts both keys itself and
-    compares them - so `comparator is None` is the one branch this function
-    needs to tell them apart: it selects natural ordering,
-    `(ea > eb) - (ea < eb)`, returned **before** the `type(sign) is not int`
-    guard below, since natural ordering always produces an int and only a
-    user-supplied comparator can fail that check (Decision 3).
-
-    Which operands to extract from is `_extract_pair_sync`'s question, not
-    this one's, so the `nulls is ABSENT` split this function used to open with
-    is gone and the null check is shared unconditionally afterward. It reads
-    `ea`/`eb` rather than `a`/`b` on purpose: an extractor that *returns*
-    `None` for a non-`None` element makes a null key, which a tolerant
-    comparator places exactly as it places a null element. A both-`None` tie
-    folds into the ordinary `sign == 0` no-op the caller's loop already treats
-    as "continue" - `_null_sign()` decides that case itself along with the
-    one-sided ones, so there is nothing here to tell apart."""
-    ea, eb = _extract_pair_sync(a, b, extractor, nulls)
-    if nulls is not NullPlacement.ABSENT and (ea is None or eb is None):
-        return _null_sign(ea, eb, nulls)
+def _build_compare_tolerant(comparator: Comparator | None, nulls: NullPlacement) -> Any:
+    """The two null-tolerant leaves of `_build_compare`, split into their own
+    builder so the enclosing function's branch count stays under ruff's C901
+    ceiling - a shape question (design.md Risks), not a redesign. Both leaves
+    check `ea is None or eb is None` before anything else, which is what makes
+    a null *key* - not only a null element - sort by placement rather than
+    reach natural ordering or a user comparator."""
     if comparator is None:
-        return (ea > eb) - (ea < eb)
-    sign = comparator(ea, eb)
-    if type(sign) is not int:
-        raise ComparatorContractException(sign)
-    return sign
+
+        def compare_tolerant_natural(ea: Any, eb: Any) -> int:
+            if ea is None or eb is None:
+                return _null_sign(ea, eb, nulls)
+            return (ea > eb) - (ea < eb)
+
+        return compare_tolerant_natural
+    c = comparator
+
+    def compare_tolerant_checked(ea: Any, eb: Any) -> int:
+        if ea is None or eb is None:
+            return _null_sign(ea, eb, nulls)
+        sign = c(ea, eb)
+        if type(sign) is not int:
+            raise ComparatorContractException(sign)
+        return sign
+
+    return compare_tolerant_checked
 
 
-# One more parameter than _segment_sign_sync - is_async, carrying what _norm
-# already knows rather than re-deriving it per call.
-async def _segment_sign_async(  # noqa: PLR0913, PLR0917
-    extractor: KeyExtractor | None,
-    comparator: Comparator | None,
-    a: Any,
-    b: Any,
-    nulls: NullPlacement,
-    is_async: bool,
-) -> int:
-    """`_segment_sign_sync`'s async twin. The comparator is never awaited - it
-    is always sync, per Decision 2/3 of this change and
-    `_reject_async_comparator`'s construction-time check - so the await is
-    `_extract_pair_async`'s alone and everything below it is the sync twin
-    line for line. See `_segment_sign_sync` for why the null check is shared
-    rather than split, and `_extract_pair_sync` for why `ABSENT` is the one
-    placement that does not pass `None` through."""
-    ea, eb = await _extract_pair_async(a, b, extractor, nulls, is_async)
-    if nulls is not NullPlacement.ABSENT and (ea is None or eb is None):
-        return _null_sign(ea, eb, nulls)
+def _build_compare(comparator: Comparator | None, nulls: NullPlacement) -> Any:
+    """The `(ea, eb) -> sign` half of a segment, chosen once at construction.
+
+    Always sync: a comparator is never awaited (`add-comparator-segments`
+    Decision 2/3, enforced at construction by `_reject_async_comparator`), so
+    this half is shared by the sync and async loops rather than written twice.
+    That is what the closed roadmap item "Sharing the segment-sign tail costs
+    one frame, ~10-19ns" (`roadmap/decisions.md`) was asking for - the shared
+    tail costs no extra frame here, because it replaces the per-comparison
+    `comparator is None` and `nulls is not ABSENT` tests rather than sitting
+    behind them.
+
+    `comparator is None` selects natural ordering and returns before the
+    `type(sign) is not int` guard, since only a user-supplied comparator can
+    fail it. It reads `ea`/`eb` rather than `a`/`b` on purpose: an extractor
+    that *returns* `None` for a non-`None` element makes a null key, which a
+    tolerant comparator places exactly as it places a null element. A
+    both-`None` pair is a tie and folds into the ordinary `sign == 0` no-op the
+    caller's loop already treats as "continue". The two tolerant leaves live in
+    `_build_compare_tolerant`, one level down.
+    """
+    if nulls is not NullPlacement.ABSENT:
+        return _build_compare_tolerant(comparator, nulls)
     if comparator is None:
-        return (ea > eb) - (ea < eb)
-    sign = comparator(ea, eb)
-    if type(sign) is not int:
-        raise ComparatorContractException(sign)
-    return sign
+        return lambda ea, eb: (ea > eb) - (ea < eb)
+    c = comparator
+
+    def compare_checked(ea: Any, eb: Any) -> int:
+        sign = c(ea, eb)
+        if type(sign) is not int:
+            raise ComparatorContractException(sign)
+        return sign
+
+    return compare_checked
 
 
 def _constant_key(_: Any) -> int:
@@ -232,14 +233,16 @@ class KeyComparator:
 
     Each segment's extractor is classified sync/async independently
     (`callable-dispatch`), once here at construction rather than per element
-    or per comparison. `_norm` extends that principle one step further
-    (merge-segment-sign-on-natural-ordering, Decision 1/4): a tuple of
-    `(extractor, comparator_or_None, descending, is_async)` per segment, built
-    by unpacking each segment's `isinstance(payload, tuple)` exactly once
-    here rather than once per comparison as `_compare_sync`/`_compare_async`
-    used to. `.segments` remains untouched in shape - it is the tuple
-    `sort.py`'s `_segment_column()` reads to choose its decorate-sort-undecorate
-    fast path, and `_norm` is a derived view only `__call__` reads.
+    or per comparison. `_plan` (`specialize-comparator-segments`, Decision 1)
+    takes that one step further: a tuple of `(extract, compare, descending,
+    is_async)` per segment, where `extract` and `compare` are themselves
+    closures built by `_build_extract`/`_build_compare` - every question that
+    is constant for the life of the comparator (is there an extractor, does
+    this segment await, does it pass `None` through, is there a supplied
+    comparator) answered once here rather than re-asked on every comparison.
+    `.segments` remains untouched in shape - it is the tuple `sort.py`'s
+    `_segment_column()` reads to choose its decorate-sort-undecorate fast
+    path, and `_plan` is a derived view only `__call__` reads.
 
     `nulls` defaults to `NullPlacement.ABSENT`, so every `comparing(f)` call
     with no `nulls_first`/`nulls_last` in its history constructs exactly what
@@ -249,7 +252,7 @@ class KeyComparator:
     def __init__(self, segments: tuple[Segment, ...], nulls: NullPlacement = NullPlacement.ABSENT) -> None:
         self.segments = segments
         self.nulls = nulls
-        norm: list[tuple[KeyExtractor | None, Comparator | None, bool, bool]] = []
+        plan: list[tuple[Any, Any, bool, bool]] = []
         is_async: list[bool] = []
         for payload, descending in segments:
             if isinstance(payload, tuple):
@@ -261,9 +264,16 @@ class KeyComparator:
             # await, and a bare comparator segment (extractor None) never
             # does, which is what `extractor is not None` alone decides here.
             segment_is_async = extractor is not None and is_async_callable(extractor)
-            norm.append((extractor, comparator, descending, segment_is_async))
+            plan.append(
+                (
+                    _build_extract(extractor, nulls, segment_is_async),
+                    _build_compare(comparator, nulls),
+                    descending,
+                    segment_is_async,
+                )
+            )
             is_async.append(segment_is_async)
-        self._norm = tuple(norm)
+        self._plan = tuple(plan)
         self._any_async = any(is_async)
 
     def then_comparing(
@@ -326,10 +336,10 @@ class KeyComparator:
 
     def _compare_sync(self, a: Any, b: Any) -> int:
         # not self._any_async is what makes this branch reachable, so every
-        # segment's sync helper is the one that runs.
-        nulls = self.nulls
-        for extractor, comparator, descending, _is_async in self._norm:
-            sign = _segment_sign_sync(extractor, comparator, a, b, nulls)
+        # segment's extract half is a sync closure and none of them awaits.
+        for extract, compare, descending, _is_async in self._plan:
+            ea, eb = extract(a, b)
+            sign = compare(ea, eb)
             if descending:
                 sign = -sign
             if sign != 0:
@@ -337,9 +347,12 @@ class KeyComparator:
         return 0
 
     async def _compare_async(self, a: Any, b: Any) -> int:
-        nulls = self.nulls
-        for extractor, comparator, descending, is_async in self._norm:
-            sign = await _segment_sign_async(extractor, comparator, a, b, nulls, is_async)
+        # A chain reaches here when *any* segment awaits; a sync segment inside
+        # one still runs its sync closure directly rather than through a
+        # coroutine that awaits nothing.
+        for extract, compare, descending, is_async in self._plan:
+            ea, eb = await extract(a, b) if is_async else extract(a, b)
+            sign = compare(ea, eb)
             if descending:
                 sign = -sign
             if sign != 0:

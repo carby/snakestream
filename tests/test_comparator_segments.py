@@ -780,6 +780,50 @@ async def test_fast_path_and_call_agree_null_tolerant() -> None:
     assert fast == slow
 
 
+# --- 6.1 Load-bearing null behaviours (specialize-comparator-segments) ------
+
+
+def test_absent_placement_raises_out_of_extractor_rather_than_sorting_null_last() -> None:
+    # comparing(f) with no nulls_first()/nulls_last() in its history builds
+    # NullPlacement.ABSENT, which must not pass None through to a tolerant
+    # branch - it must reach the extractor and raise out of it. Attribute
+    # access on None raises AttributeError specifically, distinguishing "the
+    # extractor ran on None" from "None silently sorted last and never
+    # reached the extractor" - the latter would instead raise TypeError out
+    # of natural ordering comparing None against a dict.
+    class Rec:
+        def __init__(self, v: int) -> None:
+            self.v = v
+
+    def key(x: object) -> int:
+        return x.v  # type: ignore[attr-defined]
+
+    cmp = comparing(key)
+
+    with pytest.raises(AttributeError):
+        cmp(None, Rec(1))
+
+
+def test_tolerant_chain_with_bare_comparator_tie_break_still_tolerates_null_elements() -> None:
+    # A leading segment ties every pair (its extractor never distinguishes
+    # elements), so a both-None pair reaches the bare comparator tie-break
+    # (extractor is None, appended by then_comparing) still holding both
+    # original elements as None. That segment's null check has to run - if it
+    # only ran for keyed segments, this would call `natural(None, None)`
+    # directly instead of folding to the tie the null check already treats
+    # as "continue".
+    calls: list[tuple] = []
+
+    def natural(a: object, b: object) -> int:
+        calls.append((a, b))
+        return 0
+
+    cmp = nulls_first(comparing(lambda _: 0)).then_comparing(natural)
+
+    assert cmp(None, None) == 0
+    assert calls == []
+
+
 @pytest.mark.asyncio
 async def test_fast_path_and_call_agree_on_ties() -> None:
     outset = [("a", 1), ("b", 1), ("c", 0)]
