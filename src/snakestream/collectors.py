@@ -15,7 +15,6 @@ from snakestream.callable_dispatch import classify_step, is_async_callable, mayb
 from snakestream.collector import Characteristics, Collector
 from snakestream.comparator import is_new_extremum
 from snakestream.exception import IllegalStateException, StreamBuildException
-from snakestream.sink import UNSET, unseeded
 from snakestream.type import (
     C,
     M,
@@ -29,10 +28,11 @@ from snakestream.type import (
     Predicate,
     Supplier,
 )
+from snakestream.unseeded import UNSET, unseeded
 
 
 # Sentinel for "argument omitted", used only to detect which of reducing()'s
-# and grouping_by()'s slots the caller supplied. Distinct from sink.py's
+# and grouping_by()'s slots the caller supplied. Distinct from unseeded.py's
 # UNSET, which means "no value yet" for an unseeded fold: every `is _MISSING`
 # test here compares against a default this module wrote for this function,
 # so its identity never needs to cross a module boundary. See design
