@@ -46,7 +46,9 @@ type KeyExtractor[T] = Callable[[T], Any | Awaitable[Any]]
 # orders elements directly rather than an extracted key.
 type KeyExtractorComparator = tuple[KeyExtractor | None, Comparator]
 type Consumer[T] = Callable[[T], Awaitable[None] | None]
-type CloseHandler = Callable[[], None]
+# The nullary Consumer: on_close()'s handler, sync or async like every other
+# callable alias here.
+type CloseHandler = Callable[[], Awaitable[None] | None]
 
 # Terminals
 type Accumulator[T, R] = Callable[[T, T | R], T | R | Awaitable[T | R]]

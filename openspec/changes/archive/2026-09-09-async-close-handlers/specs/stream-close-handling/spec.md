@@ -1,8 +1,4 @@
-## Purpose
-
-Defines the `on_close()`/`close()`/`aclose()` close-handler contract on `Stream`, regardless of execution mode — Java's AutoClose equivalent, extended with an asynchronous closer Java has no counterpart for. Covers registering close handlers (sync or async), invoking them on `close()` or `aclose()`, `close()`'s refusal of a handler it cannot run to completion, and carrying registered handlers across `sequential()`/`parallel()` mode switches.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: on_close() registers a close handler
 
@@ -87,68 +83,7 @@ Where the awaitable is returned by a callable that is not itself declared asynch
 - **WHEN** `close()` is called on a stream with an async handler registered, both from inside a running event loop and from outside one
 - **THEN** the same `StreamBuildException` is raised in both cases, and no event loop is created or reached for
 
-### Requirement: close() preserves later handler failures as notes
-
-When more than one handler raised, `close()` SHALL NOT discard the later exceptions. `close()` SHALL attach one note per later exception to the exception it raises, in encounter order, each identifying that exception, so that the propagated traceback shows every failure. Which exception is raised SHALL remain the first one regardless: the notes are additional detail, not a change to what propagates.
-
-This SHALL be unconditional. `BaseException.add_note()` has existed since Python 3.11, and the supported floor has been at or above that since, so `close()` SHALL NOT branch on interpreter version and there is no supported interpreter on which it falls back to raising the first exception unmodified.
-
-`close()` SHALL NOT raise a composite exception (an `ExceptionGroup`) when more than one handler raised. Java's `AbstractPipeline.close()` composes its handlers through `Streams.composeWithExceptions()`, which runs every handler, calls `addSuppressed()` on the first exception for each later one, and rethrows that first exception; it never throws a composite. First-exception-wins-with-the-rest-attached is therefore the contract being matched, and `add_note()` is its Python spelling — the same exception propagates, the rest ride along as detail. Raising an `ExceptionGroup` would change which exception type escapes `close()`, and so would be a divergence in observable API behaviour rather than an internal one. This is a settled decision on that ground alone. It was additionally deferred once because the matrix still carried Python 3.10, which has no `ExceptionGroup`; that objection is now spent, and its expiry changes nothing about the decision.
-
-#### Scenario: The later exceptions' detail survives on the raised exception
-
-- **WHEN** `close()` is called on a stream with handlers `[bad_a, bad_b, bad_c]` registered in that order, all three of which raise distinguishable exceptions
-- **THEN** `close()` raises `bad_a`'s exception, and that exception carries notes identifying `bad_b`'s and `bad_c`'s exceptions, in that order
-
-#### Scenario: A single raising handler gains no notes
-
-- **WHEN** `close()` is called on a stream where exactly one handler raises
-- **THEN** the raised exception is that handler's exception with no notes added by `close()`
-
-#### Scenario: Note attachment is not conditioned on the interpreter
-
-- **WHEN** `close()` is called with two raising handlers on any interpreter the distribution supports
-- **THEN** the first exception is raised carrying a note for the second, with no version-dependent path that would raise it unmodified
-
-### Requirement: A stream is constructed with no close handlers
-
-`Stream(source)` SHALL initialize the new stream with an empty list of close
-handlers. There SHALL be no constructor argument for supplying handlers at
-construction time: `on_close()` is the only way to register one, and it works on
-a consumed reference, so nothing a caller could express through a constructor
-argument is lost.
-
-This holds whichever executor the resulting stream carries, and for every static
-factory that constructs a stream (`of()`, `empty()`, `iterate()`,
-`StreamBuilder.build()`).
-
-A stream assembled from other streams — `Stream.concat(a, b)` — is the one case
-that starts with a non-empty list, and it takes those handlers from its operands
-rather than from its caller; see the `stream-concat` capability.
-
-#### Scenario: Constructing a stream registers no handlers
-
-- **WHEN** `Stream(source)` is constructed
-- **THEN** `close()` on the resulting stream invokes nothing, and `on_close()` can still be used afterward to register handlers
-
-#### Scenario: A handler argument is rejected
-
-- **WHEN** `Stream(source, [handler])` is called
-- **THEN** a `TypeError` is raised by Python's argument binding, rather than the handler being silently accepted or ignored
-
-### Requirement: Close handlers propagate across sequential()/parallel() mode switches
-
-`Stream.sequential()` and `Stream.parallel()` SHALL carry the calling stream's current close handlers over to the new stream instance they return.
-
-#### Scenario: Close handlers survive a parallel() call
-
-- **WHEN** a stream with a registered close handler calls `.parallel()`
-- **THEN** the resulting stream's `close()` still invokes that handler
-
-#### Scenario: Close handlers survive a sequential() call
-
-- **WHEN** a parallel stream with a registered close handler calls `.sequential()`
-- **THEN** the resulting stream's `close()` still invokes that handler
+## ADDED Requirements
 
 ### Requirement: aclose() is the asynchronous twin of close()
 

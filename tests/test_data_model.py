@@ -11,12 +11,13 @@ would switch on Python's legacy iteration protocol behind everyone's back.
 
 import asyncio
 import copy
+from contextlib import aclosing
 
 import pytest
 
 from snakestream import Stream
 from snakestream.collectors import to_list
-from snakestream.exception import IllegalStateException
+from snakestream.exception import IllegalStateException, StreamBuildException
 
 
 # The refused protocols have to be exercised through helpers: a bare `1 in s`
@@ -140,6 +141,114 @@ def test_entering_an_extended_reference_does_not_raise() -> None:
 async def test_the_stream_is_usable_inside_the_block() -> None:
     with Stream([1, 2, 3]) as s:
         assert await s.map(lambda x: x * 2).collect(to_list()) == [2, 4, 6]
+
+
+def test_an_async_handler_is_refused_at_sync_block_exit() -> None:
+    # __exit__ delegates to close() rather than restating it, so a stream
+    # carrying a handler close() refuses is refused under `with` too, on
+    # exactly close()'s terms - pins that the delegation is total.
+    async def async_handler() -> None:
+        pass
+
+    with pytest.raises(StreamBuildException, match="async_handler"), Stream([1, 2, 3]).on_close(async_handler):
+        pass
+
+
+# --- async with: the asynchronous twin of with ------------------------------
+
+
+@pytest.mark.asyncio
+async def test_aenter_returns_the_stream_itself() -> None:
+    s = Stream([1, 2, 3])
+    async with s as entered:
+        assert entered is s
+
+
+@pytest.mark.asyncio
+async def test_an_async_close_handler_runs_on_block_exit() -> None:
+    calls: list[str] = []
+
+    async def async_handler() -> None:
+        calls.append("closed")
+
+    async with Stream([1, 2, 3]).on_close(async_handler):
+        assert calls == []
+    assert calls == ["closed"]
+
+
+@pytest.mark.asyncio
+async def test_async_handlers_still_run_when_the_block_raises() -> None:
+    calls: list[str] = []
+
+    async def async_handler() -> None:
+        calls.append("closed")
+
+    with pytest.raises(ValueError, match="boom"):
+        async with Stream([1, 2, 3]).on_close(async_handler):
+            raise ValueError("boom")
+    # closed, and the exception was not suppressed
+    assert calls == ["closed"]
+
+
+@pytest.mark.asyncio
+async def test_sync_handlers_work_under_async_with() -> None:
+    calls: list[str] = []
+    s = Stream([1, 2, 3]).on_close(lambda: calls.append("h1")).on_close(lambda: calls.append("h2"))
+    async with s:
+        pass
+    assert calls == ["h1", "h2"]
+
+
+@pytest.mark.asyncio
+async def test_async_with_every_handler_runs_and_first_failure_propagates() -> None:
+    calls: list[str] = []
+
+    def sync_bad() -> None:
+        calls.append("sync_bad")
+        raise ValueError("first")
+
+    async def async_bad() -> None:
+        calls.append("async_bad")
+        raise ValueError("second")
+
+    def sync_bad_2() -> None:
+        calls.append("sync_bad_2")
+        raise ValueError("third")
+
+    s = Stream([1, 2, 3]).on_close(sync_bad).on_close(async_bad).on_close(sync_bad_2)
+
+    with pytest.raises(ValueError, match="first") as exc_info:
+        async with s:
+            pass
+
+    assert calls == ["sync_bad", "async_bad", "sync_bad_2"]
+    assert len(exc_info.value.__notes__) == 2
+    assert "second" in exc_info.value.__notes__[0]
+    assert "third" in exc_info.value.__notes__[1]
+
+
+@pytest.mark.asyncio
+async def test_entering_an_extended_reference_asynchronously_does_not_raise() -> None:
+    calls: list[str] = []
+    s = Stream([1, 2, 3]).on_close(lambda: calls.append("closed"))
+    s.map(lambda x: x)
+    async with s:
+        pass
+    assert calls == ["closed"]
+
+
+@pytest.mark.asyncio
+async def test_the_stream_is_usable_inside_the_async_block() -> None:
+    async with Stream([1, 2, 3]) as s:
+        assert await s.map(lambda x: x * 2).collect(to_list()) == [2, 4, 6]
+
+
+@pytest.mark.asyncio
+async def test_contextlib_aclosing_works_mirroring_closing() -> None:
+    calls: list[str] = []
+    async with aclosing(Stream([1, 2, 3]).on_close(lambda: calls.append("closed"))):
+        assert calls == []
+    assert calls == ["closed"]
 
 
 # --- __repr__ ---------------------------------------------------------------

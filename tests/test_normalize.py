@@ -103,3 +103,68 @@ async def test_scalar_with_neither_dunder_is_one_element() -> None:
 
     # then
     assert it == [scalar]
+
+
+class FalsyAsyncIterable:
+    """An async iterable that is falsy -- __len__ returning 0 makes bool() of
+    it False, which a truthiness test in Stream.__init__ would read as "not an
+    async source" and silently divert onto the scalar path."""
+
+    def __init__(self, values):
+        self.values = iter(values)
+
+    def __len__(self):
+        return 0
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self.values)
+        except StopIteration:
+            raise StopAsyncIteration from None
+
+
+def test_falsy_async_iterable_really_is_falsy() -> None:
+    # guards the test below from passing for the wrong reason
+    assert not bool(FalsyAsyncIterable([1, 2, 3]))
+
+
+@pytest.mark.asyncio
+async def test_falsy_async_source_is_still_iterated() -> None:
+    # given
+    source = FalsyAsyncIterable([1, 2, 3])
+
+    # when
+    it = await Stream(source).collect(to_list())
+
+    # then
+    assert it == [1, 2, 3]
+
+
+def test_falsy_async_source_is_not_sized() -> None:
+    # _estimate_size() asks isinstance, not _accept(): a falsy AsyncIterable
+    # is an async source and so reports no size hint, and its __len__ of 0 is
+    # never read
+    assert Stream(FalsyAsyncIterable([1, 2, 3]))._size_hint is None
+
+
+def test_stream_source_is_composed_exactly_once(monkeypatch) -> None:
+    # _accept() unwraps a Stream source by composing it (iterator()), so any
+    # caller treating _accept() as a predicate would compose a second time and
+    # throw the result away -- _estimate_size() asks isinstance for that reason
+    compositions = []
+    original = Stream.iterator
+
+    def counting_iterator(self):
+        compositions.append(self)
+        return original(self)
+
+    monkeypatch.setattr(Stream, "iterator", counting_iterator)
+
+    # when
+    Stream(Stream([1, 2, 3]))
+
+    # then
+    assert len(compositions) == 1
