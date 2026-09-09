@@ -2,7 +2,7 @@
 id = "to-generator-as-a-factory"
 title = "to_generator is the one collector called without parens"
 bucket = "now"
-rank = 3
+rank = 2
 filed = 2026-09-09
 
 [refs]
