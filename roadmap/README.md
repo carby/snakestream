@@ -38,7 +38,7 @@ bucket.
 
 ### Now (3)
 
-1. [`async with` on `Stream`](items/async-with-on-stream.md) — filed 2026-08-31<br>  **Gate:** a delta to the `stream-close-handling` capability first — `CloseHandler` widened to permit an awaitable and `close()` given an async twin — with `__aenter__`/`__aexit__` following from it, not bolted on ahead of it
+1. [`async with` on `Stream`](items/async-with-on-stream.md) — filed 2026-08-31<br>  **Gate:** verify: async-close-handlers implemented the capability delta (widened `CloseHandler`, `aclose()`, `__aenter__`/`__aexit__`) and the source-slot unwrap it required; confirm on archive that the roadmap's guiding principle (no silent divergence in observable API behaviour) held before closing this item
 2. [Sharing anything between the segment-sign twins measures ~3%](items/segment-sign-sharing-cost.md) — filed 2026-09-08<br>  **Gate:** a shape that de-duplicates without paying the ~3%, or a measurement on other hardware that overturns it - not a tidier version of the same call
 3. [to_generator is the one collector called without parens](items/to-generator-as-a-factory.md) — filed 2026-09-09
 

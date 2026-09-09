@@ -94,6 +94,19 @@ async def _normalize(source: Any) -> AsyncGenerator:
 
 
 def _accept(source: Any) -> AsyncGenerator | None:
+    # A Stream is unwrapped to its iteration rather than passed through: a
+    # Stream is about to have its own aclose(), and source teardown
+    # (execution._maybe_aclose()) probes for exactly that attribute. Leaving
+    # a Stream in the source slot would make it the target of that probe,
+    # cascading an outer stream's consumption into firing an inner stream's
+    # close handlers - which close-handler firing is specified to require a
+    # caller's own close()/aclose() for (stream-close-handling). iterator()
+    # is non-destructive - it leaves the inner stream usable - but it does
+    # compose, so this branch is the one thing _accept() does that is not
+    # free, and the reason no caller may use _accept() as a mere predicate.
+    # _estimate_size() asks the same question with isinstance instead.
+    if isinstance(source, Stream):
+        return source.iterator()
     # one question, not two: AsyncGenerator is a subclass of AsyncIterable, so
     # the narrower check could never be the deciding one. Everything accepted
     # here is passed through untouched, so the consuming side must not assume
@@ -111,15 +124,37 @@ async def _concat(a: AsyncGenerator, b: AsyncGenerator) -> AsyncGenerator:
         yield j
 
 
+def _awaitable_handler_message(close_handler: CloseHandler) -> str:
+    return f"close() cannot run awaitable close handler {close_handler!r}: use aclose() or 'async with' instead"
+
+
+def _raise_first_failure(exceptions: list[Exception]) -> None:
+    """The shared close()/aclose() failure tail: nothing if no handler failed,
+    otherwise the first failure in encounter order, with each later one
+    attached to it as a note (stream-close-handling)."""
+    if not exceptions:
+        return
+    first = exceptions[0]
+    for later in exceptions[1:]:
+        first.add_note(f"also raised: {later!r}")
+    raise first
+
+
 def _estimate_size(source: Any) -> int | None:
     """spliterator()'s size hint, read off the *raw* source at construction
     time - before _normalize() erases it into an AsyncGenerator - by walking
     the same branches _normalize() does. An async source is never sized here
-    (matches _accept()); the scalar set spreads into exactly one element,
-    same as _normalize()'s first branch; a Sized Iterable reports its length;
-    everything else - a generator, a bare __next__ iterator, or a genuinely
-    bare object - is unknown or, for the final scalar-object branch, one."""
-    if _accept(source) is not None:
+    (matches _accept(), whose two branches - a Stream and any other
+    AsyncIterable - are both AsyncIterable, so one isinstance covers them);
+    the scalar set spreads into exactly one element, same as _normalize()'s
+    first branch; a Sized Iterable reports its length; everything else - a
+    generator, a bare __next__ iterator, or a genuinely bare object - is
+    unknown or, for the final scalar-object branch, one.
+
+    Asks that question directly rather than through _accept(): _accept()
+    answers it by composing a Stream source, and a composition built only to
+    be tested for None and discarded is one this function must not create."""
+    if isinstance(source, AsyncIterable):
         return None
     if isinstance(source, (dict, str, bytes, bytearray, memoryview)):
         return 1
@@ -141,7 +176,13 @@ _CARDINALITY_CHANGING_OPS = (FilterOp, FlatMapOp, DistinctOp, LimitOp, SkipOp)
 class Stream[T]:
     def __init__(self, source: Any) -> None:
         self._size_hint: int | None = _estimate_size(source)
-        self._source: AsyncGenerator[T] = _accept(source) or _normalize(source)
+        # `or` would be a truthiness test on the accepted source, and an
+        # AsyncIterable is free to define __len__ or __bool__: a falsy one
+        # would fall through to _normalize() and be yielded as a single scalar
+        # element instead of iterated. _accept() returns None for "not mine"
+        # precisely so this can be an identity test.
+        accepted = _accept(source)
+        self._source: AsyncGenerator[T] = accepted if accepted is not None else _normalize(source)
         self._chain: list[Op] = []
         self._close_handlers: list[CloseHandler] = []
         self._consumed: bool = False
@@ -188,6 +229,19 @@ class Stream[T]:
         from the body propagate. Every stream-close-handling rule applies
         unchanged, because this calls close() rather than restating it."""
         self.close()
+
+    async def __aenter__(self) -> Stream[T]:
+        """`async with stream as s:`, mirroring __enter__.
+
+        Makes contextlib.aclosing(stream) work by construction, the same way
+        __enter__/__exit__ make contextlib.closing(stream) work."""
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        """Awaits aclose(), and suppresses nothing, mirroring __exit__.
+        Every stream-close-handling rule aclose() carries applies unchanged,
+        because this delegates rather than restating it."""
+        await self.aclose()
 
     def __repr__(self) -> str:
         """Type, queued chain and execution mode, pulling nothing.
@@ -434,20 +488,66 @@ class Stream[T]:
         return self
 
     def close(self) -> None:
+        """See aclose() for the shared rules: registration order, a raising
+        handler does not stop the rest, and the first failure in encounter
+        order propagates with later ones attached as notes.
+
+        close() additionally refuses a handler it cannot run to completion:
+        it never awaits, so a handler whose result is awaitable is a failure
+        here rather than a silently un-awaited coroutine. The refusal is an
+        ordinary per-handler failure, not a special path - it takes its place
+        in the same encounter-ordered list, before the handler is called when
+        it is classified async, after when only its result reveals it."""
         exceptions: list[Exception] = []
         for close_handler in self._close_handlers:
             try:
-                close_handler()
-            except Exception as e:
                 # close() invokes *every* registered handler (stream-close-handling
                 # spec), so a raising handler must be caught per iteration rather
                 # than aborting the rest.
+                if is_async_callable(close_handler):
+                    raise StreamBuildException(_awaitable_handler_message(close_handler))
+                result = close_handler()
+                if isawaitable(result):
+                    # The side effect already happened; only completing it is
+                    # refused. Close the coroutine rather than leaving it to a
+                    # finalizer, which would raise "was never awaited" far from
+                    # this call site.
+                    maybe_close = getattr(result, "close", None)
+                    if maybe_close is not None:
+                        maybe_close()
+                    raise StreamBuildException(_awaitable_handler_message(close_handler))
+            except Exception as e:
                 exceptions.append(e)
-        if exceptions:
-            first = exceptions[0]
-            for later in exceptions[1:]:
-                first.add_note(f"close() also raised: {later!r}")
-            raise first
+        _raise_first_failure(exceptions)
+
+    async def aclose(self) -> None:
+        """The asynchronous twin of close(): the same handler list, in the
+        same registration order, one at a time - awaiting a handler's result
+        where it is awaitable rather than refusing it. A stream carrying only
+        sync handlers behaves under aclose() exactly as it does under close().
+
+        Handlers are never gathered: doing so would forfeit both the
+        registration-order guarantee and the definition of "the first
+        exception in encounter order". The failure contract is close()'s,
+        unchanged - every remaining handler still runs, the first failure in
+        encounter order still propagates, later ones still ride along as
+        notes, and a handler that fails by raising or while being awaited is
+        an ordinary failure either way.
+
+        aclose() closes handlers only: it does not touch, exhaust or cancel
+        the stream's source, and does not consume the stream. That is the one
+        observable difference from close() - whether an awaitable handler
+        result can be completed - and permitted on a consumed reference, as
+        on_close() and close() already are."""
+        exceptions: list[Exception] = []
+        for close_handler in self._close_handlers:
+            try:
+                result = close_handler()
+                if isawaitable(result):
+                    await result
+            except Exception as e:
+                exceptions.append(e)
+        _raise_first_failure(exceptions)
 
     def is_parallel(self) -> bool:
         return self._executor.is_parallel
