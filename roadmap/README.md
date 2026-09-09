@@ -38,7 +38,7 @@ bucket.
 
 ### Now (2)
 
-1. [Sharing the segment-sign tail costs one frame, ~10-19ns](items/segment-sign-sharing-cost.md) — filed 2026-09-08<br>  **Gate:** a shape that deletes the frame rather than paying for it - the cost is a constant, so any shape ending in one more call pays it at every denominator; or a decision to accept it, recorded as the constant and not as a percentage
+1. [Sharing the segment-sign tail costs one frame, ~10-19ns](items/segment-sign-sharing-cost.md) — filed 2026-09-08<br>  **Gate:** specialize-comparator-segments lands and measures negative in every shape - the shape that answers this was found and scaffolded; what remains is the implementation, not the decision
 2. [to_generator is the one collector called without parens](items/to-generator-as-a-factory.md) — filed 2026-09-09
 
 ### Next (0)

@@ -5,9 +5,10 @@ bucket = "now"
 rank = 1
 filed = 2026-09-08
 updated = 2026-09-09
-gate = "a shape that deletes the frame rather than paying for it - the cost is a constant, so any shape ending in one more call pays it at every denominator; or a decision to accept it, recorded as the constant and not as a percentage"
+gate = "specialize-comparator-segments lands and measures negative in every shape - the shape that answers this was found and scaffolded; what remains is the implementation, not the decision"
 
 [refs]
+changes = ["specialize-comparator-segments"]
 specs = ["comparator-contract", "comparator-null-ordering"]
 files = ["src/snakestream/comparator.py"]
 +++
@@ -81,7 +82,20 @@ decorate-sort-undecorate column instead. Within it the exposure is widest on
 plain sync `comparing(f)` - every `min()`, `max()`, `min_by()` and `max_by()`
 comparison, one per element.
 
-**The lead worth trying before accepting** is to stop paying for the frame
+**The lead was tried and it won** (2026-09-09), and is scaffolded as
+`specialize-comparator-segments`. Measured against a verbatim baseline it is
+negative in all nine shapes - -10% to -20% on sync and cheap-async chains,
+-3.4% to -6.3% on the canonical one - so the tail's frame is absorbed several
+times over. Two things about the answer are worth carrying forward, because
+neither is what this item expected. It does **not** reduce the tail to one
+copy: natural ordering and the contract guard each still appear twice, moved
+off the sync/async axis and onto tolerant/intolerant. And the justification is
+performance, not de-duplication - which reverses this item's own framing, where
+tidiness was the goal and cost the obstacle. See that change's design.md
+Decision 3 and benchmark-findings.md. The description below is the lead as it
+was stated before being measured.
+
+**The lead worth trying before accepting** was to stop paying for the frame
 rather than to place it better: specialize each segment into a closure at
 construction, as `callable-dispatch` already does for awaitability and `_norm`
 already does for `isinstance(payload, tuple)`. That deletes the
