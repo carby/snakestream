@@ -59,7 +59,7 @@ class AsyncDispatch:
 
     The state is per-sink, so classification never leaks across compositions,
     the same requirement the comment above places on the generator form's
-    locals. Fork/join's per-element sink (execution._run_element) breaks the
+    locals. Fork/join's per-element sink (fork_join._run_element) breaks the
     "a sink is built once per composition" premise this rests on - a sink
     built once per *element* would reclassify every element unless the
     classification itself is precomputed and handed in rather than
