@@ -262,7 +262,7 @@ async def test_map_classification_does_not_leak_across_compositions() -> None:
 @pytest.mark.asyncio
 async def test_classification_is_not_repeated_per_element_under_fork_join(monkeypatch) -> None:
     # Regression test for a real bug caught by cross-session review after this
-    # change's own audit gate missed it: execution._run_element() builds a
+    # change's own audit gate missed it: fork_join._run_element() builds a
     # fresh sink per element, so FilterOp/MapOp/PeekOp's sinks classifying
     # their own callable in AsyncDispatch._init_dispatch() reclassified once
     # per element rather than once per composition - measured at 1001 calls

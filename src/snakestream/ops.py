@@ -39,7 +39,7 @@ class _SinglePureCallableOp(StatelessOp):
     """A StatelessOp wrapping exactly one user callable at _args[0]
     (FilterOp/MapOp/PeekOp), classified once here rather than once per sink.
 
-    Under fork/join, execution._run_element() builds a fresh sink chain per
+    Under fork/join, fork_join._run_element() builds a fresh sink chain per
     element - one op.link() call per element, not once per composition -
     so an ordinary StatelessOp.link() would leave AsyncDispatch._init_dispatch()
     re-running is_async_callable() on every element, violating

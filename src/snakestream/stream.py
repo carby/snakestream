@@ -96,7 +96,7 @@ async def _normalize(source: Any) -> AsyncGenerator:
 def _accept(source: Any) -> AsyncGenerator | None:
     # A Stream is unwrapped to its iteration rather than passed through: a
     # Stream is about to have its own aclose(), and source teardown
-    # (execution._maybe_aclosing()) probes for exactly that attribute. Leaving
+    # (pipeline.maybe_aclosing()) probes for exactly that attribute. Leaving
     # a Stream in the source slot would make it the target of that probe,
     # cascading an outer stream's consumption into firing an inner stream's
     # close handlers - which close-handler firing is specified to require a
@@ -110,7 +110,7 @@ def _accept(source: Any) -> AsyncGenerator | None:
     # one question, not two: AsyncGenerator is a subclass of AsyncIterable, so
     # the narrower check could never be the deciding one. Everything accepted
     # here is passed through untouched, so the consuming side must not assume
-    # more than __aiter__ (see execution._fork_join_batches(), which calls
+    # more than __aiter__ (see fork_join._fork_join_batches(), which calls
     # aiter() itself for exactly this reason rather than assuming __anext__).
     if isinstance(source, AsyncIterable):
         return source

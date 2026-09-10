@@ -22,7 +22,7 @@ The written form `AsyncGenerator[T]` denotes the same type the spec previously w
 - **THEN** no error occurs, and only the elements actually pulled are computed through the chain
 
 ### Requirement: iterator() works identically for sequential and parallel streams, and is the only route to the composed generator
-`Stream.iterator()` SHALL work under either executor — sequential composition, linking the chain onto one sink via `_wrap_sink()`, or fork-join composition — without requiring any mode-specific override, relying on the executor's element-producing operation.
+`Stream.iterator()` SHALL work under either executor — sequential composition, linking the chain onto one sink via `wrap_sink()` in `pipeline.py`, or fork-join composition — without requiring any mode-specific override, relying on the executor's element-producing operation.
 
 `iterator()` hands raw elements to the caller, so the order they arrive in is
 definitionally observable. It SHALL therefore declare to the executor that it

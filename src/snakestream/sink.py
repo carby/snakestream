@@ -215,7 +215,7 @@ class TerminalSink(Sink[T]):
         back in. False by default, so a terminal that does not override
         new_partition()/merge_from() is untouched by partitioning (design
         decision 1, make-combiners-live) - the fork-join executor falls
-        through to today's single-container _drain() path for it."""
+        through to today's single-container drain() path for it."""
         return False
 
     def new_partition(self) -> TerminalSink[T]:

@@ -19,7 +19,8 @@ import pytest
 
 from snakestream import Stream
 from snakestream.collectors import to_list
-from snakestream.execution import FORK_JOIN, _fork_join_ordered_batches, _pull_round, _run_batch_async
+from snakestream.execution import FORK_JOIN
+from snakestream.fork_join import _fork_join_ordered_batches, _pull_round, _run_batch_async
 from snakestream.ops import DistinctOp, LimitOp, SkipOp, SortedOp
 from snakestream.ordering import OrderDemand, split_point
 from snakestream.spliterator import BATCH_SIZE, batch
@@ -418,8 +419,8 @@ async def test_a_short_circuiting_terminal_is_charged_the_climb_not_the_ceiling(
             i += 1
 
     with (
-        mock.patch("snakestream.execution.batch", spy_batch),
-        mock.patch("snakestream.execution.asyncio.to_thread", synchronous_dispatch),
+        mock.patch("snakestream.fork_join.batch", spy_batch),
+        mock.patch("snakestream.fork_join.asyncio.to_thread", synchronous_dispatch),
     ):
         result = await Stream(endless()).parallel().any_match(lambda n: n == 17)
 
@@ -470,7 +471,7 @@ async def test_a_draining_pipeline_reaches_the_ceiling_in_a_source_independent_n
             for i in range(n):
                 yield i
 
-        with mock.patch("snakestream.execution._pull_round", spy_pull_round):
+        with mock.patch("snakestream.fork_join._pull_round", spy_pull_round):
             agen = _fork_join_ordered_batches(aiter(source()), [], FORK_JOIN.workers, {})
             async for _ in agen:
                 pass
