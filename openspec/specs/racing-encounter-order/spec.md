@@ -86,8 +86,8 @@ A terminal operation SHALL declare whether it observes encounter order:
 
 - `collect(collector)` observes it unless the collector declares
   `Characteristics.UNORDERED`.
-- `collect(supplier, accumulator, combiner)`, `reduce()`, `to_array()`,
-  `collect(to_generator)` and `iterator()` observe it.
+- `collect(supplier, accumulator, combiner)`, `reduce()`, `to_array()` and
+  `iterator()` observe it.
 - `for_each_ordered()` observes it. Its encounter-order guarantee is exactly
   this requirement applied to a consumer rather than to a collected result, and
   it is released on an unordered pipeline for exactly the reason every other

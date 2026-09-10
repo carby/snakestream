@@ -295,7 +295,7 @@ def test_stream_over_an_already_consumed_stream_raises_at_construction() -> None
 @pytest.mark.asyncio
 async def test_inner_stream_handlers_survive_outer_exhaustion(mocker) -> None:
     # Pins stream-close-handling's "A stream consumed as another stream's
-    # source does not fire its close handlers": _accept()/_maybe_aclose()
+    # source does not fire its close handlers": _accept()/_maybe_aclosing()
     # must not treat consuming a Stream-as-source as closing it.
     handler = mocker.Mock()
     inner = Stream([1, 2, 3]).on_close(handler)
@@ -309,7 +309,7 @@ async def test_inner_stream_handlers_survive_outer_exhaustion(mocker) -> None:
 @pytest.mark.asyncio
 async def test_inner_stream_handlers_survive_short_circuited_outer(mocker) -> None:
     # Same pin as above, but under a short-circuiting terminal rather than
-    # exhaustion - see _accept()/_maybe_aclose().
+    # exhaustion - see _accept()/_maybe_aclosing().
     handler = mocker.Mock()
     inner = Stream([1, 2, 3]).on_close(handler)
     outer = Stream(inner)

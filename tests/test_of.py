@@ -7,7 +7,6 @@ from collections.abc import AsyncGenerator, Generator
 import pytest
 
 from snakestream import Stream
-from snakestream.collector import to_generator
 from snakestream.collectors import to_list
 
 
@@ -38,7 +37,7 @@ class AsyncIteratorImpl:
 @pytest.mark.asyncio
 async def test_input_list() -> None:
     # when
-    it = Stream([1, 2, 3, 4]).collect(to_generator)
+    it = Stream([1, 2, 3, 4]).iterator()
     # then
     assert await it.__anext__() == 1
     assert await it.__anext__() == 2
@@ -55,7 +54,7 @@ async def test_input_list() -> None:
 @pytest.mark.asyncio
 async def test_input_async_generator() -> None:
     # when
-    it = Stream(async_generator()).collect(to_generator)
+    it = Stream(async_generator()).iterator()
 
     # then
     assert await it.__anext__() == 1
@@ -74,7 +73,7 @@ async def test_input_async_generator() -> None:
 @pytest.mark.asyncio
 async def test_input_async_iterator() -> None:
     # when
-    it = Stream(AsyncIteratorImpl(5)).collect(to_generator)
+    it = Stream(AsyncIteratorImpl(5)).iterator()
 
     # then
     assert await it.__anext__() == 0

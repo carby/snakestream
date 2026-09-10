@@ -2,7 +2,7 @@ import asyncio
 import pytest
 
 from snakestream import Stream
-from snakestream.collector import Characteristics, Collector, to_generator
+from snakestream.collector import Characteristics, Collector
 from snakestream.collectors import grouping_by, partitioning_by, summing_int, to_list
 from snakestream.exception import StreamBuildException
 
@@ -163,19 +163,16 @@ async def test_grouping_by_with_async_accumulator_downstream() -> None:
 
 
 @pytest.mark.asyncio
-async def test_collect_to_generator_is_not_awaited() -> None:
-    it = Stream([1, 2, 3]).collect(to_generator)
+async def test_iterator_is_not_awaited() -> None:
+    it = Stream([1, 2, 3]).iterator()
     assert [x async for x in it] == [1, 2, 3]
 
 
-@pytest.mark.asyncio
-async def test_to_generator_directly_callable() -> None:
-    async def source():
-        for i in [1, 2, 3]:
-            yield i
-
-    it = to_generator(source())
-    assert [x async for x in it] == [1, 2, 3]
+def test_collect_rejects_non_collector_argument() -> None:
+    # collect() raises synchronously for a non-Collector argument - it never
+    # returns something to await, so there is nothing to await here.
+    with pytest.raises(StreamBuildException):
+        Stream([1, 2, 3]).collect(object())
 
 
 @pytest.mark.asyncio

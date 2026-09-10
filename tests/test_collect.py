@@ -2,30 +2,13 @@ from collections.abc import AsyncGenerator
 import pytest
 
 from snakestream import Stream
-from snakestream.collector import Characteristics, to_generator
+from snakestream.collector import Characteristics
 from snakestream.collectors import joining, to_list, to_set
 
 
 async def async_generator() -> AsyncGenerator:
     for i in range(1, 6):
         yield i
-
-
-class _AsyncIteratorNoAclose:
-    """A bare async iterator with no aclose(), unlike an async generator."""
-
-    def __init__(self, end: int) -> None:
-        self._end = end
-        self._i = 0
-
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self):
-        if self._i >= self._end:
-            raise StopAsyncIteration
-        self._i += 1
-        return self._i
 
 
 @pytest.mark.asyncio
@@ -35,66 +18,6 @@ async def test_to_list_simple() -> None:
     actual = await Stream(async_generator()).collect(to_list())
     # then
     assert actual == [1, 2, 3, 4, 5]
-
-
-@pytest.mark.asyncio
-async def test_to_generator_simple() -> None:
-    # when
-    actual = to_generator(async_generator())
-    # then
-    assert await actual.__anext__() == 1
-    assert await actual.__anext__() == 2
-    assert await actual.__anext__() == 3
-    assert await actual.__anext__() == 4
-    assert await actual.__anext__() == 5
-
-    with pytest.raises(StopAsyncIteration):
-        await actual.__anext__()
-
-
-@pytest.mark.asyncio
-async def test_to_generator_no_aclose_on_source() -> None:
-    # when
-    actual = to_generator(_AsyncIteratorNoAclose(3))
-    # then
-    assert [n async for n in actual] == [1, 2, 3]
-
-
-@pytest.mark.asyncio
-async def test_to_generator() -> None:
-    # when
-    it = Stream([1, 2, 3, 4]).collect(to_generator)
-    # then
-    assert await it.__anext__() == 1
-    assert await it.__anext__() == 2
-    assert await it.__anext__() == 3
-    assert await it.__anext__() == 4
-
-    with pytest.raises(StopAsyncIteration):
-        await it.__anext__()
-
-
-@pytest.mark.asyncio
-async def test_to_generator_with_null_in_stream() -> None:
-    # when
-    it = Stream([1, 2, None, 4]).collect(to_generator)
-    # then
-    assert await it.__anext__() == 1
-    assert await it.__anext__() == 2
-    assert await it.__anext__() is None
-    assert await it.__anext__() == 4
-
-    with pytest.raises(StopAsyncIteration):
-        await it.__anext__()
-
-
-@pytest.mark.asyncio
-async def test_to_generator_with_empty_list_input() -> None:
-    # when
-    it = Stream([]).collect(to_generator)
-    # then
-    with pytest.raises(StopAsyncIteration):
-        await it.__anext__()
 
 
 @pytest.mark.asyncio

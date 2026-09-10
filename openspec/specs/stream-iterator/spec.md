@@ -21,7 +21,7 @@ The written form `AsyncGenerator[T]` denotes the same type the spec previously w
 - **WHEN** a caller pulls only some elements from the object returned by `.iterator()` (e.g. by calling `__anext__()` a few times) and then stops
 - **THEN** no error occurs, and only the elements actually pulled are computed through the chain
 
-### Requirement: iterator() works identically for sequential and parallel streams
+### Requirement: iterator() works identically for sequential and parallel streams, and is the only route to the composed generator
 `Stream.iterator()` SHALL work under either executor — sequential composition, linking the chain onto one sink via `_wrap_sink()`, or fork-join composition — without requiring any mode-specific override, relying on the executor's element-producing operation.
 
 `iterator()` hands raw elements to the caller, so the order they arrive in is
@@ -32,8 +32,9 @@ stream produces. On a stream the caller has declared `unordered()`, it SHALL
 yield in whatever order the batches resolve elements, at the fork-join
 executor's unmodified cost.
 
-`collect(to_generator)`, which composes through the same element-producing
-operation, SHALL follow the same rule.
+`iterator()` SHALL be the only operation on `Stream` that returns the composed
+`AsyncGenerator` to the caller. No collector SHALL offer a second route to it,
+so the rule above has exactly one subject and cannot be stated twice and drift.
 
 #### Scenario: iterator() under RACING execution
 - **WHEN** `.iterator()` is called on a stream using `RACING` execution with a
@@ -48,10 +49,9 @@ operation, SHALL follow the same rule.
   resolve them, in no guaranteed order, following the fork-join executor's
   existing execution semantics
 
-#### Scenario: to_generator matches iterator()
-- **WHEN** `collect(to_generator)` is called on an ordered racing stream
-- **THEN** the returned `AsyncGenerator` yields in encounter order, as
-  `iterator()` on the same stream does
+#### Scenario: There is no second route to the composed generator
+- **WHEN** a caller wants the composed `AsyncGenerator` for a stream
+- **THEN** `iterator()` returns it, iterating the stream directly yields from it, and no argument to `collect()` produces one
 
 ### Requirement: iterator() does not consume or mutate the chain
 Calling `Stream.iterator()` SHALL follow the same non-destructive composition contract as other terminal operations: it SHALL NOT mutate or drain `self._chain`, so the stream instance remains valid for a subsequent call to `iterator()` or another terminal operation.

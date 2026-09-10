@@ -51,29 +51,24 @@ from snakestream.type import Aiter, StateMap, T
 WORKERS: int = 4
 
 
-async def _maybe_aclose(thing: AsyncIterator) -> None:
-    """Close an async source, if it is one of the closeable ones — some
-    accepted sources (e.g. a bare async iterator implementing only __anext__)
-    have no aclose(). Split out of maybe_aclosing() below so every closer asks
-    the same question in the same words."""
-    # getattr rather than hasattr so the widened annotation still type-checks;
-    # narrowing to isinstance(thing, AsyncGenerator) would type-check too but
-    # would stop closing a duck-typed closeable that is not a full generator.
-    aclose = getattr(thing, "aclose", None)
-    if aclose is not None:
-        await aclose()
-
-
 @asynccontextmanager
-async def maybe_aclosing(thing: Aiter) -> AsyncIterator[Aiter]:
+async def _maybe_aclosing(thing: Aiter) -> AsyncIterator[Aiter]:
     """Like contextlib.aclosing(), but a no-op on exit if the wrapped object
-    has no aclose(). The finally is load-bearing: the source must be closed on
-    the way out of a body that raised or broke early (limit, find_any,
-    any_match), not just one that ran to exhaustion."""
+    has no aclose() — some accepted sources (e.g. a bare async iterator
+    implementing only __anext__) have no aclose(). The finally is
+    load-bearing: the source must be closed on the way out of a body that
+    raised or broke early (limit, find_any, any_match), not just one that ran
+    to exhaustion."""
     try:
         yield thing
     finally:
-        await _maybe_aclose(thing)
+        # getattr rather than hasattr so the widened annotation still
+        # type-checks; narrowing to isinstance(thing, AsyncGenerator) would
+        # type-check too but would stop closing a duck-typed closeable that
+        # is not a full generator.
+        aclose = getattr(thing, "aclose", None)
+        if aclose is not None:
+            await aclose()
 
 
 def _wrap_sink(intermediaries: list[Op], terminal: Sink[Any]) -> Sink[Any]:
@@ -121,7 +116,7 @@ async def _stream_through(
         state_map = {}
     bridge: GeneratorBridgeSink = GeneratorBridgeSink()
     head = _wrap_sink(chain, bridge)
-    async with maybe_aclosing(source) as src:
+    async with _maybe_aclosing(source) as src:
         await head.begin(state_map)
         # same pre-first-pull guard as _copy_into(), which carries the
         # reasoning; this loop cannot share it because it has to yield
@@ -146,7 +141,7 @@ async def _feed_through(chain: list[Op], source: AsyncGenerator, terminal: Termi
     buffered on the way: the last intermediate sink pushes straight into the
     terminal, so no generator sits between them."""
     head = _wrap_sink(chain, terminal)
-    async with maybe_aclosing(source) as src:
+    async with _maybe_aclosing(source) as src:
         await _copy_into(head, src, {})
     return terminal.result()
 
@@ -155,7 +150,7 @@ async def _drain(elements: AsyncGenerator, terminal: TerminalSink[Any]) -> Any:
     """Accumulate an already-composed generator into a terminal sink. The
     terminal sits outside whatever produced `elements`, so cancellation reaches
     only this loop."""
-    async with maybe_aclosing(elements) as src:
+    async with _maybe_aclosing(elements) as src:
         await _copy_into(terminal, src, {})
     return terminal.result()
 
@@ -294,7 +289,7 @@ async def _fork_join_partitioned(chain: list[Op], source: AsyncGenerator, worker
 
     await head.begin(state_map)
     size = 1
-    async with maybe_aclosing(aiter(source)) as src:
+    async with _maybe_aclosing(aiter(source)) as src:
         # same pre-first-pull guard as _copy_into(): a terminal cancelled
         # before it has merged anything (none of today's partitioning
         # terminals short-circuit, but the protocol does not assume none
@@ -455,7 +450,7 @@ async def _fork_join_batches(chain: list[Op], source: AsyncGenerator, workers: i
         if state is not None:
             state_map[op] = state
 
-    async with maybe_aclosing(aiter(source)) as src:
+    async with _maybe_aclosing(aiter(source)) as src:
         through = _fork_join_ordered_batches if ordered else _fork_join_unordered_batches
         async for out in through(src, chain, workers, state_map):
             yield out

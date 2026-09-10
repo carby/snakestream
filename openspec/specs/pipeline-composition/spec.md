@@ -239,7 +239,7 @@ Note: this requirement covers only the build-time traversal that links the sink 
 
 ### Requirement: flat_map() closes its per-element inner generator on early termination
 
-`Stream.flat_map()`'s sink SHALL explicitly close the inner stream's composed generator for the outer element currently being processed, whether that inner generator is exhausted normally, raises, or is abandoned mid-iteration because downstream requested cancellation or the pipeline was torn down early (e.g. a downstream `.limit()`, or a short-circuiting terminal such as `any_match()` or `find_first()`). The inner stream SHALL be iterated through its own composition directly rather than through a `collect(to_generator)` wrapper, so there is a single generator layer to close.
+`Stream.flat_map()`'s sink SHALL explicitly close the inner stream's composed generator for the outer element currently being processed, whether that inner generator is exhausted normally, raises, or is abandoned mid-iteration because downstream requested cancellation or the pipeline was torn down early (e.g. a downstream `.limit()`, or a short-circuiting terminal such as `any_match()` or `find_first()`). The inner stream SHALL be iterated through its own composition directly, with no wrapper generator between it and the sink, so there is a single generator layer to close.
 
 `flat_map()`'s per-element inner loop SHALL stop as soon as downstream reports cancellation, regardless of whether that cancellation originated at a mid-chain `limit()` or at a terminal sink.
 

@@ -18,7 +18,7 @@ from collections import OrderedDict
 import pytest
 
 from snakestream import Stream
-from snakestream.collector import Characteristics, Collector, to_generator
+from snakestream.collector import Characteristics, Collector
 from snakestream.collectors import (
     counting,
     grouping_by,
@@ -122,16 +122,9 @@ async def test_the_three_argument_collect_delivers_in_encounter_order() -> None:
 async def test_iterator_yields_in_encounter_order() -> None:
     # given the escape hatch, which hands raw elements to the caller
     agen = Stream(SOURCE).parallel().map(_slow_head).iterator()
-    # then the order it yields in is observable, so it is owed
-    assert [x async for x in agen] == SOURCE
-
-
-@pytest.mark.asyncio
-async def test_to_generator_yields_in_encounter_order() -> None:
-    # given the streaming collector, which composes through iterator()
-    agen = Stream(SOURCE).parallel().map(_slow_head).collect(to_generator)
-    # then
-    assert [x async for x in agen] == SOURCE
+    # then the order it yields in is observable, so it is owed - matching
+    # collect(to_list()) on an equivalent stream, the guarantee this pins
+    assert [x async for x in agen] == SOURCE == await Stream(SOURCE).parallel().map(_slow_head).collect(to_list())
 
 
 # --- terminals that observe nothing -----------------------------------------

@@ -187,10 +187,16 @@ convention, a mutating `BiConsumer<R,R>` (`mutable-reduction-collect`).
 ### Requirement: `collect()` accepts a `Collector`, not an arbitrary callable
 
 The single-argument `Stream.collect(collector)` SHALL accept a `Collector`
-and drive the composed chain into it, returning an awaitable of the collected
-result. Passing a callable that is not a `Collector` SHALL raise
-`StreamBuildException`, with a message naming `Collector`, rather than being
-called as a stream-consuming function.
+and nothing else, and SHALL drive the composed chain into it, returning an
+awaitable of the collected result. There SHALL be no second accepted shape:
+every value `collect()` accepts in its single-argument form is a `Collector`,
+and every one returns an awaitable. Passing anything that is not a `Collector`
+SHALL raise `StreamBuildException`, with a message naming `Collector`, rather
+than being called as a stream-consuming function.
+
+A caller wanting a lazy, streaming handle on the pipeline SHALL use
+`iterator()`, or iterate the stream directly. `collect()` SHALL NOT offer a
+second route to one.
 
 Every collector the library ships SHALL be a factory returning a `Collector`,
 with no exception, and SHALL be importable from `snakestream.collectors` —
@@ -233,34 +239,17 @@ holds no per-collection state.
 - **THEN** each call returns its own independent list, unaffected by the other
 
 #### Scenario: A plain callable is rejected
-- **WHEN** `collect()` is passed a stream-consuming `async def` that is not a `Collector` and is not `to_generator`
+- **WHEN** `collect()` is passed a stream-consuming `async def` that is not a `Collector`
 - **THEN** `StreamBuildException` is raised, and the stream is not consumed
 
 #### Scenario: The 3-arg form is unaffected
 - **WHEN** `Stream([1, 2, 3]).collect(list, list.append, list.extend)` is awaited
 - **THEN** the result is `[1, 2, 3]`, exactly as before
 
-### Requirement: `to_generator` is the one non-`Collector` collector
+#### Scenario: A lazy handle comes from `iterator()`, not from `collect()`
+- **WHEN** a caller wants an `AsyncGenerator` over the composed pipeline rather than a collected value
+- **THEN** `iterator()` returns one, and no argument to `collect()` does — every single-argument `collect()` returns an awaitable
 
-`to_generator` SHALL keep its existing shape — a callable taking the composed
-`AsyncGenerator` and yielding its elements — and `collect(to_generator)` SHALL
-keep returning an `AsyncGenerator` directly rather than an awaitable. It is
-the documented exception to the rule above: it is lazy and streaming, and a
-supplier/accumulator/finisher quadruple can only produce a value after the
-source is exhausted.
-
-Because it is a `StreamingCollector` value rather than a factory,
-`to_generator` SHALL remain importable from `snakestream.collector`, alongside
-the `Collector` type, and SHALL NOT move to `snakestream.collectors`.
-
-#### Scenario: `collect(to_generator)` yields lazily
-- **WHEN** `Stream([1, 3, 4, 5, 6]).filter(p).map(f).collect(to_generator)` is called
-- **THEN** an `AsyncGenerator` is returned, not awaited, and iterating it yields the mapped elements in order
-
-#### Scenario: `to_generator` does not need awaiting
-- **WHEN** `collect(to_generator)` is called
-- **THEN** the returned value is directly usable in `async for` with no `await` on `collect()` itself
-
-#### Scenario: `to_generator` keeps its import path
-- **WHEN** `from snakestream.collector import to_generator` is executed
-- **THEN** it resolves, unchanged by the factory module split
+#### Scenario: Every single-argument `collect()` is awaitable
+- **WHEN** any value `collect()` accepts in its single-argument form is passed to it
+- **THEN** the returned value is an awaitable of the collected result, with no case in which it is an `AsyncGenerator` to iterate instead

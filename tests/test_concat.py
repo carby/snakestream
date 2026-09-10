@@ -2,7 +2,6 @@ import asyncio
 
 import pytest
 
-from snakestream.collector import to_generator
 from snakestream.collectors import to_list
 from snakestream.exception import IllegalStateException
 from snakestream.stream import Stream
@@ -14,7 +13,7 @@ async def test_concat_simple() -> None:
     a = Stream([1, 2, 3, 4])
     b = Stream([5, 6, 7])
 
-    generator = Stream.concat(a, b).collect(to_generator)
+    generator = Stream.concat(a, b).iterator()
 
     # then
     assert await generator.__anext__() == 1
@@ -35,7 +34,7 @@ async def test_concat_with_intermediaries() -> None:
     a = Stream([1, 2, 3, 4]).filter(lambda x: x < 3)
     b = Stream([5, 6, 7, 7]).distinct()
 
-    generator = Stream.concat(a, b).collect(to_generator)
+    generator = Stream.concat(a, b).iterator()
 
     # then
     assert await generator.__anext__() == 1
@@ -118,7 +117,7 @@ async def test_concat_leaves_the_second_stream_untouched_until_the_first_is_done
     generator = Stream.concat(
         Stream([1, 2]).peek(from_a.append),
         Stream([3, 4]).peek(from_b.append),
-    ).collect(to_generator)
+    ).iterator()
 
     # when
     assert await generator.__anext__() == 1
