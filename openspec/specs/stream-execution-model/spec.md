@@ -52,9 +52,9 @@ difference — the sequential one, which is ordered by construction — SHALL ac
 it and ignore it.
 
 The element-producing operation SHALL be the one used by `iterator()`,
-`collect(to_generator)`, `Stream.concat()` and the mode switches. The
-terminal-driving operation SHALL be the one used by every other terminal
-operation.
+`Stream.concat()` and the mode switches. The terminal-driving operation SHALL
+be the one used by every other terminal operation, `collect()` included with
+no exception.
 
 The terminal-driving operation SHALL have a single generic implementation —
 driving the element-producing operation's output into the terminal. The

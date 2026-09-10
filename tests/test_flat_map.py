@@ -2,7 +2,6 @@ import pytest
 import asyncio
 
 from snakestream import Stream
-from snakestream.collector import to_generator
 from snakestream.collectors import to_list
 from snakestream.exception import StreamBuildException
 
@@ -15,7 +14,7 @@ async def async_flat_map(x: int) -> int:
 @pytest.mark.asyncio
 async def test_flat_map() -> None:
     # when
-    it = Stream([[1, 2], [3, 4]]).flat_map(Stream).collect(to_generator)
+    it = Stream([[1, 2], [3, 4]]).flat_map(Stream).iterator()
 
     # then
     assert await it.__anext__() == 1
@@ -32,7 +31,7 @@ async def test_flat_map() -> None:
 
 @pytest.mark.asyncio
 async def test_flat_map_mixed_list() -> None:
-    it = Stream([[1, 2], [3, 4], 5, [6, 7], 8]).flat_map(Stream).collect(to_generator)
+    it = Stream([[1, 2], [3, 4], 5, [6, 7], 8]).flat_map(Stream).iterator()
 
     # then
     assert await it.__anext__() == 1
@@ -99,7 +98,7 @@ async def test_flat_map_still_closes_inner_generator_on_normal_exhaustion() -> N
 async def test_flat_map_async_function() -> None:
     # when
     try:
-        Stream([[1, 2], [3, 4], 5]).flat_map(async_flat_map).collect(to_generator)
+        Stream([[1, 2], [3, 4], 5]).flat_map(async_flat_map).iterator()
     except StreamBuildException:
         pass
     else:

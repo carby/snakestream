@@ -200,17 +200,15 @@ accumulating family (`summing_double`, `summarizing_double`, all three
 see each factory's own docstring and `collectors.py`'s module docstring for
 which and why. The two halves live in two modules, on Java's own naming:
 `collector.py` holds the *protocol* (`Collector`, `CollectorSink`,
-`StreamingCollector`, `to_generator`), and `collectors.py` holds the ~20
+`Characteristics`) and nothing else, and `collectors.py` holds the ~20
 *factories* (`to_list()`, `to_set()`, `counting()`, `grouping_by()`, ...).
 The import edge runs one way, `collectors` -> `collector`, never back. Every
 collector in `collectors.py` is a **factory** returning a `Collector`; there
-are no bare instances. The one exception is `to_generator`, a
-`StreamingCollector` wrapping a `(composition) -> AsyncGenerator` callable,
-which is why it sits in `collector.py` beside the type rather than with the
-factories: it is composed through the generator bridge instead of driven into
-a sink, and `collect(to_generator)` returns an `AsyncGenerator` directly
-rather than something to await. Passing anything else raises
-`StreamBuildException`.
+are no bare instances. `collect()` accepts only a `Collector` or the
+three-argument supplier/accumulator/combiner form; passing anything else
+raises `StreamBuildException`. A caller wanting a lazy, streaming handle on
+the pipeline uses `iterator()` instead — `collect()` offers no second route
+to one.
 
 ### Type aliases
 

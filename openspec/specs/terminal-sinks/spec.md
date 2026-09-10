@@ -122,18 +122,20 @@ therefore SHALL NOT be expected to stop on a terminal's behalf.
 - **WHEN** a `Collector` supplying a `combiner` collects a `.parallel()` stream spanning more than one batch
 - **THEN** the terminal's own `accept()` is never called, every element reaches a peer's `accept()` exactly once, and the merged result equals the sequential result
 
-### Requirement: Operations that need a generator use the executor's element-producing form
+### Requirement: `iterator()` and `concat()` use the executor's element-producing form
 
-`iterator()`, `collect(to_generator)` and `Stream.concat()` SHALL obtain an
-`AsyncGenerator` by composing the chain through the executor's
-element-producing operation, which is backed by the generator bridge.
+`iterator()` and `Stream.concat()` SHALL obtain an `AsyncGenerator` by
+composing the chain through the executor's element-producing operation, which
+is backed by the generator bridge. These are the only two operations that do:
+no form of `collect()` composes through the bridge.
 
 The single-`Collector` form of `collect()` — including `to_array()`'s
 `collect(to_list())` — SHALL NOT use the bridge when the stream's executor
 provides a fused drive: a `Collector` is driven through a terminal sink like
 every other terminal operation, so its elements are pushed straight into the
-accumulation container with nothing buffered on the way. `to_generator` remains
-bridge-backed, since it is lazy and streaming.
+accumulation container with nothing buffered on the way. This SHALL hold for
+every single-argument `collect()` without exception — there is no
+bridge-backed collector.
 
 `sequential()` and `parallel()` SHALL NOT compose the chain at all. A mode
 switch returns a new stream carrying the same source and the same queued chain
@@ -152,10 +154,6 @@ interface SHALL remain independent of how a stream executes: the same
 - **WHEN** `collect(collector)` is called with any `Collector` in the library
 - **THEN** the chain is pushed into a terminal sink that supplies, accumulates and finishes, and the collected result is returned
 
-#### Scenario: `to_generator` still composes through the bridge
-- **WHEN** `collect(to_generator)` is called
-- **THEN** the chain is composed to an `AsyncGenerator` through the bridge, and elements are yielded lazily as they are pulled
-
 #### Scenario: Collectors are unaffected by terminal-sink execution
 - **WHEN** the same `Collector` is used on a sequential and on a parallel stream over the same source
 - **THEN** both produce the result that collector defines, subject only to the ordering guarantees the stream's mode already gives — the collector itself is written against supplier/accumulator/finisher and never against a drive mechanism
@@ -163,3 +161,7 @@ interface SHALL remain independent of how a stream executes: the same
 #### Scenario: A mode switch does not compose
 - **WHEN** `sequential()` or `parallel()` is called mid-pipeline
 - **THEN** the new stream carries the same source and the same queued chain as the receiver, with no generator composed at the point of the switch, and a terminal on the new stream applies every queued operation under the new executor
+
+#### Scenario: No collector composes through the bridge
+- **WHEN** any value `collect()` accepts in its single-argument form is passed to it on a stream whose executor provides a fused drive
+- **THEN** the chain is driven into a terminal sink, and no bridge-backed generator is composed for it

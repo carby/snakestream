@@ -86,3 +86,26 @@ async def test_iterator_drains_a_buffering_sink_via_the_bridge() -> None:
     # sink directly and no longer touches the bridge's end-of-source flush.
     it = Stream([3, 1, 2]).sorted().iterator()
     assert [x async for x in it] == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_iterator_yields_a_none_element_unchanged() -> None:
+    # when
+    it = Stream([1, 2, None, 4]).iterator()
+    # then
+    assert await it.__anext__() == 1
+    assert await it.__anext__() == 2
+    assert await it.__anext__() is None
+    assert await it.__anext__() == 4
+
+    with pytest.raises(StopAsyncIteration):
+        await it.__anext__()
+
+
+@pytest.mark.asyncio
+async def test_iterator_on_empty_source_raises_immediately() -> None:
+    # when
+    it = Stream([]).iterator()
+    # then
+    with pytest.raises(StopAsyncIteration):
+        await it.__anext__()

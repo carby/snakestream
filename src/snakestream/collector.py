@@ -1,7 +1,7 @@
 """The collector protocol: Collector, the supplier/accumulator/combiner/
 finisher quadruple mirroring Java's Collector<T,A,R>; CollectorSink, which
-adapts one to the sink protocol; and StreamingCollector, the one collect()
-argument that is not a Collector. The factories that build Collectors live in
+adapts one to the sink protocol; and Characteristics, the traits a Collector
+declares about itself. The factories that build Collectors live in
 collectors.py, which imports from here - never the other way round."""
 
 from __future__ import annotations
@@ -9,9 +9,8 @@ from __future__ import annotations
 from enum import Enum, auto
 from inspect import isawaitable
 from typing import Any, cast
-from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Iterable
 
-from snakestream.execution import maybe_aclosing
 from snakestream.callable_dispatch import AsyncDispatch, maybe_await
 from snakestream.ordering import OrderDemand
 from snakestream.sink import TerminalSink
@@ -185,31 +184,3 @@ class CollectorSink(AsyncDispatch, TerminalSink[T]):
         merged = await maybe_await(combiner, self._container, cast("CollectorSink[T]", peer)._container)
         if merged is not None:
             self._container = merged
-
-
-class StreamingCollector:
-    """The one collect() argument that is not a Collector: wraps a
-    `(composition) -> AsyncGenerator` callable for a lazy, streaming result.
-    Composed through the generator bridge rather than driven to a terminal
-    sink, since a supplier/accumulator/finisher triple can only produce a
-    value once the source is exhausted, and this one must not wait for
-    that."""
-
-    __slots__ = ("_fn",)
-
-    def __init__(self, fn: Callable[[AsyncGenerator[Any]], AsyncGenerator[Any]]) -> None:
-        self._fn = fn
-
-    def __call__(self, composition: AsyncGenerator[Any]) -> AsyncGenerator[Any]:
-        return self._fn(composition)
-
-
-async def _stream(composition: AsyncGenerator) -> AsyncGenerator[Any]:
-    # maybe_aclosing, not aclosing: to_generator() also accepts a plain
-    # AsyncIterable with no aclose() (a custom __anext__-only iterator)
-    async with maybe_aclosing(composition) as src:
-        async for n in src:
-            yield n
-
-
-to_generator = StreamingCollector(_stream)

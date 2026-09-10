@@ -3,14 +3,13 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from snakestream import Stream
-from snakestream.collector import to_generator
 from snakestream.collectors import to_list
 
 
 @pytest.mark.asyncio
 async def test_map(int_2_letter) -> None:
     # when
-    it = Stream([1, 2, 3, 4]).map(lambda x: int_2_letter[x]).collect(to_generator)
+    it = Stream([1, 2, 3, 4]).map(lambda x: int_2_letter[x]).iterator()
 
     # then
     assert await it.__anext__() == "a"
@@ -28,7 +27,7 @@ async def test_map(int_2_letter) -> None:
 @pytest.mark.asyncio
 async def test_map_async_function(async_int_to_letter) -> None:
     # when
-    it = Stream([1, 2, 3, 4]).map(async_int_to_letter).collect(to_generator)
+    it = Stream([1, 2, 3, 4]).map(async_int_to_letter).iterator()
 
     # then
     assert await it.__anext__() == "a"

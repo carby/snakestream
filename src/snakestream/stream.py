@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, cast, overload
 from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Coroutine, Iterable, Sized
 
 from snakestream.callable_dispatch import is_async_callable
-from snakestream.collector import Collector, CollectorSink, StreamingCollector
+from snakestream.collector import Collector, CollectorSink
 from snakestream.collectors import to_list
 from snakestream.exception import IllegalStateException, StreamBuildException
 from snakestream.execution import FORK_JOIN, SEQUENTIAL, Executor
@@ -96,7 +96,7 @@ async def _normalize(source: Any) -> AsyncGenerator:
 def _accept(source: Any) -> AsyncGenerator | None:
     # A Stream is unwrapped to its iteration rather than passed through: a
     # Stream is about to have its own aclose(), and source teardown
-    # (execution._maybe_aclose()) probes for exactly that attribute. Leaving
+    # (execution._maybe_aclosing()) probes for exactly that attribute. Leaving
     # a Stream in the source slot would make it the target of that probe,
     # cascading an outer stream's consumption into firing an inner stream's
     # close handlers - which close-handler firing is specified to require a
@@ -430,8 +430,7 @@ class Stream[T]:
         self._check_not_consumed()
         # hands raw elements to the caller, so the order they arrive in is
         # definitionally observable - there is no way for this one to say no.
-        # collect(to_generator) and Stream.concat() compose through here and
-        # inherit the answer.
+        # Stream.concat() composes through here and inherits the answer.
         return self._executor.elements(self._chain, self._source, OrderDemand.IF_ORDERED)
 
     def spliterator(self) -> Spliterator[T]:
@@ -658,9 +657,6 @@ class Stream[T]:
     def collect(self, collector: Collector[T, Any, R]) -> Coroutine[Any, Any, R]: ...
 
     @overload
-    def collect(self, collector: StreamingCollector) -> AsyncGenerator[Any]: ...
-
-    @overload
     def collect(
         self, supplier: Supplier[R], accumulator: BiConsumer[R, T], combiner: BiConsumer[R, R]
     ) -> Coroutine[Any, Any, R]: ...
@@ -671,11 +667,9 @@ class Stream[T]:
             (collector,) = args
             if isinstance(collector, Collector):
                 return self._evaluate(CollectorSink(collector), collector.demand())
-            if isinstance(collector, StreamingCollector):
-                return collector(self.iterator())
             raise StreamBuildException(
-                "collect() requires a Collector (see snakestream.collector.Collector), "
-                "or to_generator for a lazy, streaming result"
+                "collect() requires a Collector (see snakestream.collector.Collector); "
+                "for a lazy, streaming result, use iterator() instead"
             )
         # 3-arg mutable reduction: supplier/accumulator/combiner, sync or
         # async, are exactly a Collector's supplier/accumulator/combiner.

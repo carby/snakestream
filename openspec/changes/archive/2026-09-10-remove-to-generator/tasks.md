@@ -1,0 +1,47 @@
+## 1. Remove the value and its type
+
+- [x] 1.1 Delete `StreamingCollector`, `_stream` and `to_generator` from `src/snakestream/collector.py`, and delete the now-dead `from snakestream.execution import maybe_aclosing` import; verify with `grep -n "execution" src/snakestream/collector.py` returning nothing — the protocol module must no longer depend on the execution layer (design Decision 1).
+- [x] 1.2 Rewrite `collector.py`'s module docstring: it currently names `StreamingCollector` as "the one collect() argument that is not a Collector". The module now holds `Collector`, `CollectorSink` and `Characteristics` and nothing else; verify by reading it back — no sentence describes an exception that no longer exists.
+- [x] 1.3 Remove the `StreamingCollector` overload (`stream.py:660-661`), its import (`stream.py:9`) and its `isinstance` branch (`stream.py:674-675`) from `Stream.collect()`; verify `uv run ty check src` passes and the remaining overloads are the `Collector` and 3-arg forms only.
+- [x] 1.4 Reword the `StreamBuildException` message in `Stream.collect()` (`stream.py:676-679`) to drop ", or to_generator for a lazy, streaming result" and point a caller wanting a lazy handle at `iterator()`; verify against `collector-protocol`'s "A plain callable is rejected" scenario.
+
+## 2. Migrate the tests
+
+- [x] 2.1 Replace `.collect(to_generator)` with `.iterator()` and delete the `to_generator` import in `tests/test_map.py`, `test_filter.py`, `test_flat_map.py`, `test_concat.py`, `test_of.py`, `test_iterate.py`, `test_integration.py`, `test_racing_delivery_order.py` and `test_collector.py`; verify `grep -rn to_generator tests/` returns only `tests/test_collect.py` before task 2.2 and nothing after it.
+  - Deviation from the proposal's stated fact: `test_collector.py:172` (`test_to_generator_directly_callable`) also called `to_generator(...)` directly as a standalone adapter — the same shape Decision 2 says only exists in `test_collect.py`. Applied Decision 2's own reasoning and deleted it too (no successor; `async for` is the replacement). Also deleted `test_racing_delivery_order.py`'s `test_to_generator_yields_in_encounter_order`, which after mechanical migration became a byte-for-byte duplicate of the adjacent `test_iterator_yields_in_encounter_order` — task 2.4 adds its intended replacement.
+- [x] 2.2 In `tests/test_collect.py`: migrate the four `collect(to_generator)` tests to `.iterator()`, and **delete** `test_to_generator_simple` and `test_to_generator_no_aclose_on_source` (`:41-62`) — those call `to_generator(source)` directly as a standalone adapter, which has no successor (design Decision 2); verify `uv run pytest tests/test_collect.py` passes.
+  - Also removed `_AsyncIteratorNoAclose`, left dead after its only caller (`test_to_generator_no_aclose_on_source`) was deleted.
+- [x] 2.3 Add a test asserting `from snakestream.collector import to_generator` raises `ImportError` and that `collect()` rejects a non-`Collector` argument with `StreamBuildException`, covering `collector-protocol`'s modified requirement; verify the new test fails against the pre-change tree and passes after.
+- [x] 2.4 Add a test pinning `iterator()` as the only route to the composed generator on an ordered `.parallel()` stream — the replacement for the deleted "to_generator matches iterator()" scenario in `stream-iterator`; verify it asserts encounter order, matching what the deleted test asserted.
+- [x] 2.5 Run `uv run pytest` and confirm the full suite passes on the GIL-enabled leg.
+
+## 3. Confirm the coverage gate still holds
+
+- [x] 3.1 Run `uv run pytest --cov-fail-under=98` and confirm it passes; if it fails, confirm the cause with a per-file report on `src/snakestream/execution.py`.
+- [x] 3.2 Confirm `maybe_aclosing`'s no-`aclose()` branch (`execution.py:57-68`) is still covered now that `test_to_generator_no_aclose_on_source` is gone — `tests/test_of.py:77` should reach it through the source path. If it does not, add a direct test of `maybe_aclosing` in `tests/test_execution_model.py` rather than restoring a public-API route to it (design Risks).
+
+## 4. Documentation
+
+- [x] 4.1 Update README's quickstart (`:9`, `:26`) to drop the `to_generator` import and use `.iterator()`; verify the snippet runs as written.
+- [x] 4.2 Update README's `collect` API-table row (`:200`) to state one contract — a `Collector`, returning something to `await` — with no exception clause, and update the Collectors-section paragraphs at `:247` and `:253` to stop describing `to_generator` and `StreamingCollector`; verify no `to_generator` mention survives outside the Migration log.
+- [x] 4.3 Add a README Migration entry in this same commit: `collect(to_generator)` and `StreamingCollector` are removed, the break is an `ImportError` at import time, the replacement is `.iterator()` (or `async for` over the stream), and it is faster. Do not edit the two existing entries that mention `to_generator` historically (`:335`, `:341`) — the log is append-only and those describe what was true then.
+- [x] 4.4 Update CLAUDE.md's Collectors paragraph (`:203-212`) to drop "The one exception is `to_generator`..." and state that `collector.py` holds the protocol with no instances; verify it no longer claims a placement rationale that the tree contradicts.
+
+## 5. Verify and close out
+
+- [x] 5.1 Run `uv run ruff check .`, `uv run ruff format --check .` and `uv run ty check src`; all three pass. Note that `ruff format --check` also inspects fenced code blocks in this change's markdown.
+- [x] 5.2 Run `uv run --python 3.14t pytest` and confirm the free-threaded leg passes, matching what CI runs.
+- [x] 5.3 Re-run the proposal's measurement to confirm the migration is not a regression: iterate a 200k-element `.map()` pipeline through `.iterator()` and confirm it is at or below the `collect(to_generator)` figure the proposal records (878 vs 1146 ns/element).
+  - Re-measured best of 5, 200k elements: 612.9 ns/element — below both the proposal's 878 ns/element `iterator()` figure and the 1146 ns/element `collect(to_generator)` figure it replaces.
+- [x] 5.4 Edit `roadmap/items/to-generator-as-a-factory.md` in place — restate its `gate` as this change, add `refs.changes = ["remove-to-generator"]`, and record that the analysis inverted the item's own fix (delete rather than add parens) and why. Do **not** move it to `decisions.md`: scaffolding is not closing, and it closes only when these tasks are done. Verify with `python tools/roadmap_index.py` and `uv run pytest tests/test_roadmap.py`.
+
+## 6. Peer review corrections (2026-09-10, post-apply)
+
+Not in the original task list; applied after an independent peer review found them.
+
+- [x] 6.1 `maybe_aclosing` (execution.py) lost its last cross-module caller when task 1.1 deleted collector.py's import — CLAUDE.md's naming rule then requires a leading underscore. Renamed to `_maybe_aclosing`, updated its five call sites (execution.py:124, 149, 158, 297, 458) and the docstring reference at :57. Not catchable by `tests/test_name_visibility.py`, which only enforces the decidable half of the rule. Recorded in `roadmap/items/to-generator-as-a-factory.md` as a second correction to the item's own reasoning.
+- [x] 6.2 `tests/test_collect.py` had three tests migrated body-only, still named for `to_generator`: `test_to_generator`, `test_to_generator_with_null_in_stream`, `test_to_generator_with_empty_list_input`. None called `collect()`. `test_to_generator` duplicated `tests/test_iterator.py::test_iterator_supports_partial_consumption` and was dropped; the None-element and empty-source cases were unique and moved to `test_iterator.py` as `test_iterator_yields_a_none_element_unchanged` and `test_iterator_on_empty_source_raises_immediately`.
+- [x] 6.3 Deleted `tests/test_collector.py::test_to_generator_is_no_longer_importable` (added by task 2.3) — it asserted `ImportError` for a name that exists in no module, so it can only fail if `to_generator` is deliberately reintroduced against the specs. Kept `test_collect_rejects_non_collector_argument`, which pins live `collect()` behaviour.
+- [x] 6.4 `tests/test_racing_delivery_order.py::test_iterator_is_the_only_route_to_the_composed_generator` (added by task 2.4) overclaimed "only route" in its name while its body only checked encounter-order parity with `collect(to_list())`, and duplicated the adjacent `test_iterator_yields_in_encounter_order` almost verbatim. Folded the `collect(to_list())` parity assertion into the neighbour and deleted the redundant test.
+- [x] 6.5 Two nits: removed a dead `await` in `test_collect_rejects_non_collector_argument` (`collect()` raises synchronously for a non-`Collector` argument, so nothing is ever awaited) and un-marked the test as async; added `Characteristics` to `collector.py`'s module docstring, which CLAUDE.md's rewritten Collectors paragraph (task 4.4) already names as one of the module's three exports.
+- [x] 6.6 `_maybe_aclose()` (execution.py, introduced by 6.1's rename) had exactly one caller, `_maybe_aclosing()`, once `to_generator`'s own `_stream()` helper was gone — its own docstring's stated reason for existing ("split out ... so every closer asks the same question") no longer held with a single closer left in the file. Inlined its body into `_maybe_aclosing()`'s `finally` block and deleted the function. Updated three stale comment references to `_maybe_aclose()` that survived: `stream.py:99` and two in `tests/test_close.py` (:298, :312).
