@@ -1,66 +1,144 @@
-# Snakestream
-*Streams like in java, but for snakes*
+<p align="center">
+  <img src="logo.png" alt="Snakestream" width="260">
+</p>
 
-Most programmers just want to see the code, so let's skip directly to a usage example:
+<h1 align="center">Snakestream</h1>
+
+<p align="center"><em>Streams like in Java, but for snakes</em></p>
+
+Snakestream is a [Java 8 Stream](https://docs.oracle.com/javase/8/docs/api/java/util/stream/Stream.html)-style
+API for Python, built from the ground up on `async`/`await`. Chain `map`, `filter`, `sorted`,
+`flat_map`, `distinct` and friends into a lazy pipeline, hand every one of them a **sync or an async**
+function interchangeably, and `await` a terminal operation to run it.
+
+```python
+names = await (
+    Stream(user_ids)
+    .parallel()
+    .map(fetch_user)  # async def — awaited for you, concurrently
+    .filter(lambda u: u.active)
+    .map(lambda u: u.name)  # plain def — same chain, no ceremony
+    .collect(to_list())
+)
+```
+
+## Install
+
+```bash
+pip install snakestream     # or: uv add snakestream
+```
+
+Python 3.14+.
+
+> [!NOTE]
+> This library is under development and has not reached version 1.0 yet. Backwards
+> compatibility can still be broken — every break is listed under [Migration](#migration).
+
+## Quick start
 
 ```python
 import asyncio
 from snakestream import Stream
-
-int_2_letter = {
-    1: "a",
-    2: "b",
-    3: "c",
-    4: "d",
-    5: "e",
-}
+from snakestream.collectors import to_list
 
 
-async def async_int_to_letter(x: int) -> str:
-    await asyncio.sleep(0.01)
-    return int_2_letter[x]
+async def fetch_user(user_id: int) -> dict:
+    await asyncio.sleep(0.05)  # pretend this is a network call
+    return {"id": user_id, "name": f"user-{user_id}", "active": user_id != 3}
 
 
-async def main():
-    it = Stream([1, 3, 4, 5, 6]).filter(lambda n: 3 < n < 6).map(async_int_to_letter).iterator()
-
-    async for x in it:
-        print(x)
+async def main() -> None:
+    names = await (
+        Stream([1, 2, 3, 4, 5])
+        .parallel()
+        .map(fetch_user)
+        .filter(lambda u: u["active"])
+        .map(lambda u: u["name"])
+        .collect(to_list())
+    )
+    print(names)  # ['user-1', 'user-2', 'user-4', 'user-5']
 
 
 asyncio.run(main())
 ```
-Notice how the stream returns a generator. We could also have awaited the stream and collected to a list just to give an idea of what could be done.
 
-When we run this code the output becomes:
+The five fetches overlap, and the result still comes back in encounter order.
 
-```bash
-~/t/test> python test.py
-d
-e
+## Why Snakestream?
+
+**Async and sync callables are interchangeable, everywhere.** Every user-supplied function —
+predicate, mapper, comparator, consumer, collector part, close handler — may be `def` or
+`async def`. You never wrap, never `gather`, never think about it. Awaitability is classified
+once per callable, not once per element.
+
+**Nothing runs until you ask for a value.** Intermediate operations queue work and return a new
+stream; a terminal operation drives it. Sources stay lazy all the way through, so an infinite
+generator with a `.limit(10)` downstream pulls ten elements.
+
+```python
+stream = Stream(count()).map(expensive).filter(is_valid)  # nothing has run yet
+first_ten = await stream.limit(10).collect(to_list())  # exactly ten pulls
 ```
 
-## What is Snakestream?
+**`.parallel()` is one word and it applies to the whole pipeline.** Contiguous batches of
+elements are dispatched onto their own OS threads, each batch racing its own elements
+concurrently. I/O-bound pipelines speed up on any interpreter; CPU-bound ones speed up for real
+on the free-threaded build (3.14t). Switch back with `.sequential()`. See
+[About `.parallel()`](#about-parallel).
 
-This is a python streaming api that tries to bring a similar feature set that came into Java 8 with it's streaming api.
+**It breaks apart nested comprehensions.** A fluent chain reads top-to-bottom, and adding a
+step in the middle is one line rather than a re-nesting.
 
-One situation where you can use it is to break apart those nested list comprehensions. Using a fluent interface syntax can bring better clarity in such complex cases and absolutely more resilitent to introduction new steps in the stream.
+```python
+by_team = await Stream(users).collect(grouping_by(lambda u: u.team, counting()))
+roster = await Stream(users).sorted(comparing(lambda u: u.name)).map(str).collect(joining(", "))
+```
 
-Once we reach some sort of feature parity with Java 8 then maybe we move on to implement the improvements in Java 9. However there will not be a complete feature parity because the languages are different. Prime example is that we dont really speak about arrays in python but, there we use lists or sets. Another example in java streams a major point are the functional interfaces, however python is a functional language, that means that Suppliers and Consumers and all of that stuff can be simply implemented in python with just regular functional programming. So that's the road map as of now, we will get as close as we can with a reasonable effort put into it.
+**The API is Java's, deliberately.** If you know `Stream`, `Collectors` and `Comparator` from
+Java 8, you already know this library — same method names, same semantics, same ordering
+guarantees. The [API tables](#api) below are *total* over Java 8's surface: every method has a
+row saying implemented, skipped-and-why, or not-yet.
+
+**It is pure Python with zero dependencies.**
 
 ## Features
 
-> [!NOTE]
-> This library is under development and has not reached version 1.0 yet. Backwards compatability can still be broken.
-
-- Create a stream from a List, Generator, AsyncGenerator, Itertor, AsyncIterator or just an object
-- Process your stream with both synchronous or asynchronous functions.
+- Create a stream from a List, Generator, AsyncGenerator, Iterator, AsyncIterator or just an object
+- Process your stream with both synchronous and asynchronous functions
 - Switch between parallel and sequential mode ([real parallelism on the free-threaded build](#about-parallel))
-- [Autoclose](#auto-close) streams with `with` or `contextlib`
+- Encounter order preserved under `.parallel()`, or opt out with `unordered()` for more throughput
+- ~20 [collectors](#collectors) and a composable [`comparator`](#comparator), both mirroring Java
+- [Autoclose](#auto-close) streams with `with`, `async with` or `contextlib`
 - [Pythonic protocols](#pythons-data-model) on top of the Java surface: `async for`, `with`, `a + b`
 - Generate indefinite streams [simpler than in Java](#the-generate-function)
 
-### About `.parallel()`
+## Scope
+
+This is a Python streaming API that brings over the feature set Java 8 introduced with its
+streams API. Once we reach some sort of feature parity with Java 8, maybe we move on to the
+improvements in Java 9. There will never be *complete* parity, because the languages differ:
+we don't really speak about arrays in Python, we use lists and sets; and where Java streams
+lean on functional interfaces, Python is already a functional language, so `Supplier`s,
+`Consumer`s and all of that are just regular functions here. So that's the road map as of now —
+we get as close as we can with a reasonable effort put into it.
+
+## Building a stream from a source
+
+`Stream(source)` is the normalizing constructor and the idiomatic way to build a stream from something you already have: a `List`, `Generator`, `AsyncGenerator`, `Iterator`, `AsyncIterator`, or a bare object. It spreads any of those into one element per item — `Stream([1, 2, 3])` is a stream of three elements — while `dict`, `str`, `bytes`, `bytearray` and `memoryview` values, and anything with neither `__iter__` nor `__next__`, are treated as a single scalar element instead. It is the same constructor every `Stream(...)` call in this README uses, called out here because it has no counterpart in the parity tables that follow.
+
+That absence is deliberate rather than an oversight. The tables are total over `Stream`, `BaseStream`, `Collectors` and `Comparator`, and `Stream(source)` is none of those — its closest Java counterparts, `Collection.stream()` and `Arrays.stream(T[])`, are methods on types this library does not have. `Stream.of(*args: T)` in the table below is the true parity row: it matches Java's `of(T...)` exactly, treating every argument as one element regardless of arity. Spreading a single iterable's items - what `Stream.of()` did through 0.3.5 - is `Stream(source)`, not `Stream.of(source)`.
+
+### The generate() function
+
+Java's `Stream.generate(supplier)` is omitted here, because Python already has generators — pass one straight to `Stream(...)` and it becomes the source:
+
+```python
+from itertools import count
+
+first_ten_squares = await Stream(count()).map(lambda n: n * n).limit(10).collect(to_list())
+```
+
+## About `.parallel()`
 
 Unlike Java's `parallelStream()`, snakestream's `.parallel()` does not use a process pool — there is no pickling boundary to cross, since a `Spliterator` decomposes the stream's own composed chain into batches that run in-process. But it does now run on separate OS threads: a `.parallel()` pipeline dispatches contiguous batches of elements via `asyncio.to_thread`, each batch running its own copy of the chain on its own thread, rather than racing `asyncio` tasks cooperatively over a shared generator on one thread the way it used to.
 
@@ -82,25 +160,29 @@ s = Stream([1, 2, 3]).parallel()
 count = await s.map(fetch).count()
 ```
 
-### Auto Close
+## Auto Close
 
-Contextlib already supports something that is very similar to the AutoClose from Java. Just as long as your class has the .close() attribute it will be called. In this case it's very fortunate that the Java API and contextlib play so nice together. Here is an example:
+`Stream` is Java's `AutoCloseable` and Python's context manager at once, so `with` on the
+stream directly runs whatever you registered with `on_close()`:
+
+```python
+with Stream(rows) as stream:
+    letters = await stream.map(to_letter).distinct().collect(to_list())
+```
+
+`contextlib.closing()` works too, and is what older examples use — it only needs a `.close()`
+attribute, which `Stream` has:
 
 ```python
 from contextlib import closing
 
-with closing(Stream([1, 2, 3, 4, 1, 2, 3, 4])) as stream:
-    it = await stream.map(lambda x: int_2_letter[x]).distinct().collect(to_list())
+with closing(Stream(rows)) as stream:
+    letters = await stream.map(to_letter).distinct().collect(to_list())
 ```
 
-A `Stream` is itself a context manager, so `closing()` is optional — `with` on the stream directly does the same thing:
-
-```python
-with Stream([1, 2, 3, 4, 1, 2, 3, 4]) as stream:
-    it = await stream.map(lambda x: int_2_letter[x]).distinct().collect(to_list())
-```
-
-This can be especially useful if you are subclassing Stream to do something that is kinda like IO related and you have some resource that needs to get relased after the stream. You would then just add the logic to do that in your .close() method and contextlib will handle the rest
+This is especially useful when you subclass `Stream` to wrap something IO-like that holds a
+resource needing release after the stream: put that logic behind `on_close()` and the `with`
+handles the rest.
 
 A close handler may be sync or async — `on_close()` accepts either. `close()` stays synchronous: it runs sync handlers and refuses one whose result is awaitable, raising `StreamBuildException` and pointing you at `aclose()`/`async with`. `aclose()` is the asynchronous twin — it awaits an awaitable handler's result and runs a sync handler exactly as `close()` does, one at a time, in registration order:
 
@@ -127,10 +209,6 @@ with closing(DsnStream("db://x")) as stream:
     rows = await stream.map(parse).filter(is_valid).collect(to_list())
 ```
 
-### The generate() function
-
-In snakestream this has been omitted since python has generators and those can be sent in as a source with `Stream(...)`
-
 ## Python's data model
 
 The parity tables below are total over Java 8's surface, and Python's dunder methods are not Java methods — so they live here rather than becoming rows nobody wrote.
@@ -151,12 +229,6 @@ Three of these are parity rather than expansion: Java's stream satisfies its own
 |   | ~~`__getitem__`~~ | Refused, and the one that could have worked — `s[10:20]` is lazy. Python synthesizes an iterator from `__getitem__` when `__iter__` is absent, so defining it would make `for x in stream` call `stream[0]`, get a `Stream` back, and loop forever. `.skip(10).limit(10)` is what Java offers and is clearer. |
 |   | ~~`__reversed__`~~ | Refused. A stream has no length and is single-pass. |
 |   | ~~`__eq__`~~ | Refused; identity comparison stands. Comparing contents would mean consuming both. |
-
-### Building a stream from a source
-
-`Stream(source)` is the normalizing constructor and the idiomatic way to build a stream from something you already have: a `List`, `Generator`, `AsyncGenerator`, `Iterator`, `AsyncIterator`, or a bare object. It spreads any of those into one element per item — `Stream([1, 2, 3])` is a stream of three elements — while `dict`, `str`, `bytes`, `bytearray` and `memoryview` values, and anything with neither `__iter__` nor `__next__`, are treated as a single scalar element instead. It is not new and not modified by anything in this README; it is the same constructor every `Stream(...)` call below already uses, called out here because it has no counterpart in the parity tables that follow.
-
-That absence is deliberate rather than an oversight. The tables are total over `Stream`, `BaseStream`, `Collectors` and `Comparator`, and `Stream(source)` is none of those — its closest Java counterparts, `Collection.stream()` and `Arrays.stream(T[])`, are methods on types this library does not have. `Stream.of(*args: T)` in the table below is the true parity row: it matches Java's `of(T...)` exactly, treating every argument as one element regardless of arity. Spreading a single iterable's items - what `Stream.of()` did through 0.3.5 - is `Stream(source)`, not `Stream.of(source)`.
 
 ## API
 
