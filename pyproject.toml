@@ -45,8 +45,8 @@ dev = [
 
 [tool.pytest.ini_options]
 addopts = "--cov snakestream --cov-report term-missing --verbose"
-norecursedirs = ["dist", "build", ".tox", ".virtualenv"]
 testpaths = ["tests"]
+filterwarnings = ["error"]
 
 [tool.coverage.run]
 # branch = true folds branch-arc coverage into the same "percent covered"

@@ -49,6 +49,11 @@ def _checked_segment_comparator(comparator: Comparator) -> Callable[[Any, Any], 
     def compare(a: Any, b: Any) -> int:
         sign = comparator(a, b)
         if isawaitable(sign):
+            # Close the coroutine rather than leaving it to a finalizer, which
+            # would raise "was never awaited" far from this call site.
+            maybe_close = getattr(sign, "close", None)
+            if maybe_close is not None:
+                maybe_close()
             raise StreamBuildException(ASYNC_COMPARATOR_MESSAGE)
         if type(sign) is not int:
             raise ComparatorContractException(sign)
