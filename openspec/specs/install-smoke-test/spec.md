@@ -12,7 +12,7 @@ The CI workflow SHALL build and install the `snakestream` distribution via `pip 
 - **THEN** the install SHALL complete without error on every matrix leg (currently Python 3.14)
 
 #### Scenario: Packaging regression fails CI
-- **WHEN** a change to `pyproject.toml` or the package layout breaks the build (e.g. `setuptools.build_meta` fails, or an included module is dropped from the built distribution)
+- **WHEN** a change to `pyproject.toml` or the package layout breaks the build (e.g. the `hatchling.build` backend fails, or an included module is dropped from the built distribution)
 - **THEN** the `pip install .` step SHALL fail, causing the CI job to fail
 
 #### Scenario: An unsupported interpreter is not covered

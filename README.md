@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo.png" alt="Snakestream" width="660">
+  <img src="https://raw.githubusercontent.com/carby/snakestream/master/logo.png" alt="Snakestream" width="660">
 </p>
 
 

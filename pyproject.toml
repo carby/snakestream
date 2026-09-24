@@ -1,18 +1,19 @@
 [build-system]
-requires = ["setuptools>=46.1.0", "setuptools_scm[toml]>=5"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
 
 [project]
 name = "snakestream"
 description = "Java like streams for snakes"
 readme = "README.md"
-license = { file = "LICENSE.txt" }
+license = "MIT"
+license-files = ["LICENSE.txt"]
 authors = [
     { name = "Tommy Derngren", email = "tommy.derngren@hiq.se" },
 ]
 requires-python = ">=3.14"
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Programming Language :: Python",
 ]
 dynamic = ["version"]
@@ -20,12 +21,16 @@ dynamic = ["version"]
 [project.urls]
 Documentation = "https://github.com/carby/snakestream/wiki"
 
-[tool.setuptools.packages.find]
-where = ["src"]
-exclude = ["tests"]
+[tool.hatch.version]
+source = "vcs"
+raw-options = { version_scheme = "no-guess-dev" }
 
-[tool.setuptools_scm]
-version_scheme = "no-guess-dev"
+[tool.hatch.build.targets.sdist]
+include = ["/src/snakestream", "/tests", "/README.md", "/CHANGELOG.md", "/LICENSE.txt", "/logo.png"]
+exclude = ["/tests/test_roadmap.py"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/snakestream"]
 
 [dependency-groups]
 dev = [
