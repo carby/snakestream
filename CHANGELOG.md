@@ -22,9 +22,7 @@ exception type raised where nothing was raised before, or a behaviour that was
 wrong and is now right. If you are upgrading and short on time, read the unmarked
 entries and skip the marked ones.
 
-Until release 1.0.0 the focus is on implementing features and changing things
-that do not align with how streams work in Java, so breaking changes are expected
-and this list is expected to grow. Entries are newest first.
+Entries are newest first.
 
 ## Migration log
 
