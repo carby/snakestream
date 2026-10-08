@@ -373,3 +373,7 @@ rather than settled here.
 Every breaking change is recorded in [CHANGELOG.md](CHANGELOG.md), newest first,
 with what changed, whether the break is loud or silent, and what to do about it.
 Until release 1.0.0, expect that list to grow.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).

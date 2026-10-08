@@ -235,7 +235,12 @@ README.md tracks Java Stream API parity in detail (implemented / not-yet-impleme
 ## Roadmap
 
 `roadmap/` is managed by the `roadmap` skill and its vendored script,
-`tools/roadmap.py`. Open items live one per file under `roadmap/items/` with
+`tools/roadmap.py`. The skill is a **required** dev dependency, pinned to
+v1.0.0 to match the vendored script (`python tools/roadmap.py --version`); it is
+not committed (`.claude/` is gitignored), so if `.claude/skills/roadmap/` is
+missing, install it as `CONTRIBUTING.md` says rather than editing
+`roadmap/` by hand. Upgrading the skill and re-vendoring `tools/roadmap.py` happen
+in one commit, so the two versions never disagree. Open items live one per file under `roadmap/items/` with
 `+++`-fenced TOML frontmatter (`bucket`, `rank`, `filed`, `gate`, `blocked_on`,
 and a `refs` table of openspec change ids, spec ids and source paths, the first
 two kinds declared in `roadmap/roadmap.toml`). The Now/Next/Later index in
