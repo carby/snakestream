@@ -19,7 +19,7 @@ already-implemented 2-arg `iterate(seed, next)`). `Collectors`:
 this item omitted until 2026-09-05.
 
 **Not gated on Java 8 any more — Java 8 is closed** (2026-09-05; see
-[`decisions.md`](../decisions.md): zero gap rows across all three README
+[`java-8-parity-closed`](../archive/java-8-parity-closed.md): zero gap rows across all three README
 tables). README gates Java 9 on "some sort of feature parity with Java 8" and
 that gate is now met outright rather than argued. What keeps this in **Later**
 is the bucket's own criterion: it is **undecided**, not blocked. Nobody has

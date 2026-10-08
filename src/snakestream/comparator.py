@@ -184,7 +184,8 @@ def _build_compare(comparator: Comparator | None, nulls: NullPlacement) -> Any:
     Decision 2/3, enforced at construction by `_reject_async_comparator`), so
     this half is shared by the sync and async loops rather than written twice.
     That is what the closed roadmap item "Sharing the segment-sign tail costs
-    one frame, ~10-19ns" (`roadmap/decisions.md`) was asking for - the shared
+    one frame, ~10-19ns" (`roadmap/archive/segment-sign-sharing-cost.md`) was
+    asking for - the shared
     tail costs no extra frame here, because it replaces the per-comparison
     `comparator is None` and `nulls is not ABSENT` tests rather than sitting
     behind them.

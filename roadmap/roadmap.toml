@@ -1,0 +1,11 @@
+# Roadmap configuration, read by roadmap.py.
+
+# What refs resolve against, relative to this directory. Default: the repo root.
+# root = ".."
+
+# Ref kinds beyond the built-in `files` (a path relative to root). Each kind
+# is a path template where {} is replaced by the ref's value. A list of
+# templates means any of them may match, and glob patterns are allowed.
+[refs]
+specs   = "openspec/specs/{}"
+changes = ["openspec/changes/{}", "openspec/changes/archive/*-{}"]

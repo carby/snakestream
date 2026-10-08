@@ -12,7 +12,7 @@ files = ["src/snakestream/spliterator.py", "src/snakestream/stream.py", "README.
 +++
 
 Surfaced 2026-09-08 while exploring
-[`stream-of-arity-semantics`](stream-of-arity-semantics.md), from the question of
+[`stream-of-arity-semantics`](../archive/stream-of-arity-semantics.md), from the question of
 whether `StreamSupport` belonged in README's parity tables. It did not — see
 "What the analysis corrected" below — but tracing why left a real gap behind.
 

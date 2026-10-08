@@ -234,26 +234,33 @@ README.md tracks Java Stream API parity in detail (implemented / not-yet-impleme
 
 ## Roadmap
 
-`roadmap/` holds the open queue, one file per item under `roadmap/items/` with
+`roadmap/` is managed by the `roadmap` skill and its vendored script,
+`tools/roadmap.py`. Open items live one per file under `roadmap/items/` with
 `+++`-fenced TOML frontmatter (`bucket`, `rank`, `filed`, `gate`, `blocked_on`,
-and a `refs` table of openspec change ids, spec ids and source paths). The
-Now/Next/Later index in `roadmap/README.md` is **generated** — edit an item and
-run `python tools/roadmap_index.py`, never the index block itself.
-`tests/test_roadmap.py` validates the schema, the bucket entry criteria, and
-that every ref resolves against `openspec/` and the tree, so a renamed spec or a
-deleted module fails the build instead of leaving a stale pointer.
+and a `refs` table of openspec change ids, spec ids and source paths, the first
+two kinds declared in `roadmap/roadmap.toml`). The Now/Next/Later index in
+`roadmap/README.md` and the closed-item index `roadmap/done.md` are
+**generated**: edit an item and run `python tools/roadmap.py index`, never the
+blocks themselves. File, reprioritise and close with `tools/roadmap.py new`,
+`move` and `close` rather than by hand. `tests/test_roadmap.py` runs
+`tools/roadmap.py check`, which validates the schema, the bucket entry criteria,
+the generated indexes, and that every ref resolves against `openspec/` and the
+tree, so a renamed spec or a deleted module fails the build instead of leaving a
+stale pointer.
 
-`roadmap/decisions.md` is the append-only history and specifically the
-*rejection* log: several entries record work that was measured and declined
-rather than shipped, which the openspec archive does not carry because a
-rejected change often has no archive at all. Read it before proposing a cleanup.
-Closing an item means moving its prose there as a new top entry and deleting the
-item file — but **only once the work is implemented or declined**. Scaffolding an
-item into an openspec change does not close it: a proposal and a design are
+`roadmap/archive/` is the append-only history and specifically the *rejection*
+log: several entries record work that was measured and declined rather than
+shipped, which the openspec archive does not carry because a rejected change
+often has no archive at all. Grep `roadmap/done.md` before proposing a cleanup,
+then open only the matching archive entry. Closing an item (`close --outcome
+shipped|declined`) moves it to the archive, and happens **only once the work is
+implemented or declined**, in the same branch as the code. Scaffolding an item
+into an openspec change does not close it: a proposal and a design are
 enlightenment about what has to be done, not the doing of it, and the item stays
 in its bucket until the tasks are actually complete. What scaffolding earns is an
 edit to the item in place — split it if it turned out to be two, restate its
 `gate` as what the work still has to clear, and record what the analysis
-corrected. Fix roadmap mistakes with a follow-up commit, never by rewriting
+corrected. An archived entry is never edited beyond a dated annotation on new
+lines. Fix roadmap mistakes with a follow-up commit, never by rewriting
 history; it is prose shared with concurrent sessions, and a `reset` to tidy it
 risks a peer's work for nothing.

@@ -73,6 +73,9 @@ exclude_lines = [
 [tool.ruff]
 line-length = 127
 target-version = "py314"
+# Vendored by the roadmap skill and replaced wholesale on upgrade, so it is
+# linted where it is maintained rather than here.
+extend-exclude = ["tools/roadmap.py"]
 
 [tool.ruff.lint]
 # Widened from E,F,W,C90,UP on 2026-08-26. The added families were trialled
