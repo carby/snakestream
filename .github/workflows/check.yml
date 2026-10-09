@@ -23,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.14", "3.14t"]
+        python-version: ["3.14", "3.14t", "3.15", "3.15t"]
 
     steps:
     - name: Check out the repo
@@ -47,18 +47,19 @@ jobs:
       run: uv run pytest
 
     # ty, pip-audit and the coverage threshold don't vary by interpreter
-    # build (GIL-enabled vs free-threaded), so with two legs they'd be
-    # redundant on the second; run them once, on the GIL-enabled leg.
+    # build (GIL-enabled vs free-threaded), so on every leg they'd be
+    # redundant; run them once, on the GIL-enabled leg of the newest
+    # supported version, where a new interpreter's differences first show.
     - name: Type check with ty
-      if: matrix.python-version == '3.14'
+      if: matrix.python-version == '3.15'
       run: uv run ty check src
 
     - name: Audit dependencies for vulnerabilities
-      if: matrix.python-version == '3.14'
+      if: matrix.python-version == '3.15'
       run: uv run --with pip-audit pip-audit
 
     - name: Enforce coverage threshold
-      if: matrix.python-version == '3.14'
+      if: matrix.python-version == '3.15'
       run: uv run pytest --cov-fail-under=98
 
   install_smoke_test:
@@ -67,7 +68,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.14"]
+        python-version: ["3.14", "3.15"]
 
     steps:
     - name: Check out the repo
@@ -79,7 +80,7 @@ jobs:
         python-version: ${{ matrix.python-version }}
 
     # A plain venv + `pip install .`, not `uv sync`, so this exercises the
-    # same build (setuptools.build_meta) and install path a real
+    # same build (hatchling.build) and install path a real
     # `pip install snakestream` user hits. `uv venv` is only used to
     # provision the venv with the matrix's Python version; `--seed` is
     # required so `pip` actually exists inside the venv (uv venv omits it
