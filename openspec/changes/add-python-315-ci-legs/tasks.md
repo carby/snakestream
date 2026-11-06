@@ -44,4 +44,4 @@
 ## Workflow follow-up
 
 - Archive the change (`/opsx:archive`). Then fix by hand the singular "its supported interpreter" in the Purpose line of `openspec/specs/free-threaded-support/spec.md`, which the delta can't reach.
-- The roadmap item `support-python-315` stays **open** until a CI run's setup-uv log shows `3.15.0` final, not an rc, on both 3.15 legs. Then add the outcome to its prose, replacing the stale rc2 paragraph, and run `python tools/roadmap.py close support-python-315 --outcome shipped --as add-python-315-ci-legs`, `index` and `check`.
+- The roadmap item `support-python-315` stays **open** until a CI run's setup-uv log shows `3.15.0` final, not an rc, on both 3.15 legs. Then add the outcome to its prose, replacing the stale rc2 paragraph, and run `roadmap close support-python-315 --outcome shipped --as add-python-315-ci-legs`, `index` and `check`.

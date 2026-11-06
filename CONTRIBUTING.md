@@ -3,15 +3,19 @@
 Development uses [uv](https://docs.astral.sh/uv/): `uv sync`, then `uv run pytest`.
 
 The open work queue lives in [`roadmap/`](roadmap/README.md) and is kept by the
-[roadmap skill](https://github.com/carby/simple-agentic-roadmap-skill) **v1.0.0**.
-Install it into the repo so an agent working here can file, move and close items:
+[roadmap skill](https://github.com/carby/simple-agentic-roadmap-skill), whose
+release is pinned by `version` in `roadmap/roadmap.toml`. It needs Node 22 or
+later. Install the CLI once per machine, then the skill into the repo so an agent
+working here can file, move and close items:
 
 ```bash
-git clone --branch v1.0.0 https://github.com/carby/simple-agentic-roadmap-skill.git .claude/skills/roadmap
+npm install -g simple-agentic-roadmap-skill
+roadmap update --tools claude
 ```
 
-`.claude/` is gitignored, so this is a per-clone step. Don't run the skill's `init`:
-the roadmap is already set up, and the test suite checks it through the committed
-copy of the skill's script, `tools/roadmap.py`, so CI needs no install. To upgrade,
-check out the new tag and copy its `scripts/roadmap.py` over `tools/roadmap.py` in
-the same commit.
+`.claude/` is gitignored, so the second step is per clone. Don't run `init`: the
+roadmap is already set up. `tests/test_roadmap.py` runs `roadmap check` at the
+pinned release through `npx`, so the test suite needs Node too; without `npx`
+it skips that test locally and fails it in CI. To upgrade, install the new
+release globally and run `roadmap update`, which moves the pin and refreshes
+the skill; commit the result.

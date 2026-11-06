@@ -235,21 +235,22 @@ README.md tracks Java Stream API parity in detail (implemented / not-yet-impleme
 
 ## Roadmap
 
-`roadmap/` is managed by the `roadmap` skill and its vendored script,
-`tools/roadmap.py`. The skill is a **required** dev dependency, pinned to
-v1.0.0 to match the vendored script (`python tools/roadmap.py --version`); it is
-not committed (`.claude/` is gitignored), so if `.claude/skills/roadmap/` is
-missing, install it as `CONTRIBUTING.md` says rather than editing
-`roadmap/` by hand. Upgrading the skill and re-vendoring `tools/roadmap.py` happen
-in one commit, so the two versions never disagree. Open items live one per file under `roadmap/items/` with
+`roadmap/` is managed by the `roadmap` skill and its CLI, `roadmap` (the
+`simple-agentic-roadmap-skill` npm package, Node 22 or later). Both are a
+**required** dev dependency, pinned by `version` in `roadmap/roadmap.toml`
+(compare `roadmap --version`); the skill is not committed (`.claude/` is
+gitignored), so if `.claude/skills/roadmap/` is missing, install it as
+`CONTRIBUTING.md` says rather than editing `roadmap/` by hand. `roadmap update`
+moves the pin and refreshes the skill together, so the two versions never
+disagree. Open items live one per file under `roadmap/items/` with
 `+++`-fenced TOML frontmatter (`bucket`, `rank`, `filed`, `gate`, `blocked_on`,
 and a `refs` table of openspec change ids, spec ids and source paths, the first
 two kinds declared in `roadmap/roadmap.toml`). The Now/Next/Later index in
 `roadmap/README.md` and the closed-item index `roadmap/done.md` are
-**generated**: edit an item and run `python tools/roadmap.py index`, never the
-blocks themselves. File, reprioritise and close with `tools/roadmap.py new`,
+**generated**: edit an item and run `roadmap index`, never the
+blocks themselves. File, reprioritise and close with `roadmap new`,
 `move` and `close` rather than by hand. `tests/test_roadmap.py` runs
-`tools/roadmap.py check`, which validates the schema, the bucket entry criteria,
+`roadmap check` at the pinned release through `npx`, which validates the schema, the bucket entry criteria,
 the generated indexes, and that every ref resolves against `openspec/` and the
 tree, so a renamed spec or a deleted module fails the build instead of leaving a
 stale pointer.
