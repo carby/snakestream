@@ -27,10 +27,6 @@ pip install snakestream     # or: uv add snakestream
 
 Python 3.14+.
 
-> [!NOTE]
-> This library is under development and has not reached version 1.0 yet. Backwards
-> compatibility can still be broken — every break is listed in [CHANGELOG.md](CHANGELOG.md).
-
 ## Quick start
 
 ```python
